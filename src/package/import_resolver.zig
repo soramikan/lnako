@@ -14,6 +14,7 @@ const project_trust = @import("project_trust.zig");
 const project_mod = @import("project.zig");
 const features_mod = @import("features.zig");
 const npm_resolver = @import("npm_resolver.zig");
+const npm_env = @import("npm_env.zig");
 
 const Allocator = std.mem.Allocator;
 pub const Value = std.json.Value;
@@ -128,7 +129,7 @@ pub const Resolver = struct {
         };
         const lock_root = asObject(parsed_lock.value) orelse return error.InvalidEnvironment;
         var writable_warning = false;
-        try validateEnvironmentLockBinding(storage, io, root, root_object, lock_root, options.writable_mode, &writable_warning);
+        const published_generation = try validateEnvironmentLockBinding(storage, io, root, root_object, lock_root, options.writable_mode, &writable_warning);
         // mutable path 依存の内容 digest も load 時に照合する。lockSha256 は
         // lock 文書の同一性だけを検証し、mutable path は宣言 dir を生参照する
         // 契約で内容変更を許すが、変更は lock・環境の再生成を要求する。
@@ -137,13 +138,36 @@ pub const Resolver = struct {
         try validateMutablePathDigestFreshness(storage, io, root, root_object, lock_root);
         const profile_value = get(root_object, "profile") orelse return error.InvalidEnvironment;
         if (profile_value != .string) return error.InvalidEnvironment;
+        // 公開済み世代の npm tree は project→.nako→env→<gen>→deps を各段
+        // no-follow で開いた固定ハンドルから特定・検証する（開けなければ
+        // cache fallback）。ACL 判定の path 再解決と読み出しの間の差し替えは
+        // project 所有権の信頼境界に含める（package source と同じ）。
+        // npmInstances を持たない環境では世代 npm tree を使わない。
+        const npm_relevant = npm_resolver.hasNpmInstances(lock_root, profile_value.string);
+        var generation_deps: ?std.Io.Dir = if (npm_relevant and published_generation != null)
+            try npm_env.openGenerationDeps(io, root, published_generation.?)
+        else
+            null;
+        errdefer if (generation_deps) |deps| deps.close(io);
+        if (generation_deps) |deps| {
+            // ACL 検査を実行できない deps は「検査済み」にせず世代 tree を使わない
+            // （cache 経路へ fallback。ハンドルはここで閉じる）。
+            const keep = try npm_env.validateGenerationDepsWritable(storage, io, root, deps, options.writable_mode, &writable_warning);
+            if (!keep) {
+                deps.close(io);
+                generation_deps = null;
+            }
+        }
+        const npm_state = try npm_resolver.State.load(storage, allocator, io, lock_root, profile_value.string, options.cache_root, generation_deps);
+        // 所有権を State へ移した後は errdefer で閉じない。
+        generation_deps = null;
         return .{
             .io = io,
             .project_root = root,
             .parsed = parsed,
             .owned = owned,
             .writable_warning = writable_warning,
-            .npm = try npm_resolver.State.load(storage, allocator, io, lock_root, profile_value.string, options.cache_root),
+            .npm = npm_state,
         };
     }
 
@@ -404,7 +428,7 @@ fn validateEnvironmentLockBinding(
     lock_root: std.json.ObjectMap,
     mode: project_trust.WritableMode,
     writable_warning: *bool,
-) !void {
+) !?[]const u8 {
     const profile_value = get(environment, "profile") orelse return error.InvalidEnvironment;
     if (profile_value != .string) return error.InvalidEnvironment;
     const environment_packages_value = get(environment, "packages") orelse return error.InvalidEnvironment;
@@ -572,6 +596,10 @@ fn validateEnvironmentLockBinding(
             }
         }
     }
+
+    // 検証済みの materialized 世代（package path から復元）。npm instance tree
+    // の再利用先として呼出し側へ渡す（null は世代非依存の環境）。
+    return shared_generation;
 }
 
 fn expectedMaterializedDirectories(allocator: Allocator, locked_packages: std.json.ObjectMap) !std.StringHashMap([]const u8) {

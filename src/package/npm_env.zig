@@ -15,6 +15,7 @@ const cache = @import("cache.zig");
 const environment = @import("environment.zig");
 const fetch = @import("fetch.zig");
 const lock_model = @import("lock_model.zig");
+const project_trust = @import("project_trust.zig");
 const materialize = @import("materialize.zig");
 const npm_esm = @import("npm_esm.zig");
 const unpack = @import("unpack.zig");
@@ -27,6 +28,15 @@ const Allocator = std.mem.Allocator;
 pub const dir_prefix = "npm_";
 /// dir 名に残す instance key の可読部分の上限（byte）。
 const max_readable_bytes: usize = 64;
+
+/// instance tree 直下に残す provenance marker。lock の正規化 sha256 を
+/// 1 行で記録し、compile 側が世代 tree を lock 束縛付きで再利用する根拠に
+/// する（無い・食い違う tree は使わず cache から作り直す）。package が
+/// 同名 file を同梱する場合は黙って上書きせず materialize を失敗させる。
+pub const provenance_file = ".lnako-npm-instance";
+/// marker として読む最大 byte 数（`sha256:<64hex>\n` に十分な余裕）。
+/// compile 側の読み込み上限もこの値に揃える。
+pub const max_provenance_bytes: usize = 128;
 
 pub const Error = fetch.Error || error{FileSystem};
 
@@ -74,6 +84,36 @@ pub fn instanceRelPath(arena: Allocator, generation_rel: []const u8, instance: l
     return std.fmt.allocPrint(arena, "{s}/deps/{s}", .{ generation_rel, name });
 }
 
+/// 世代 dir 絶対 path から instance tree（`<generation_dir>/deps/<dir>`）の
+/// 絶対 path を作る。dir 名の導出は `instanceDirName` を再利用する。
+pub fn instanceTreePath(allocator: Allocator, generation_dir: []const u8, instance: lock_model.NpmInstance) Allocator.Error![]u8 {
+    const name = try instanceDirName(allocator, instance);
+    defer allocator.free(name);
+    return std.fs.path.join(allocator, &.{ generation_dir, "deps", name });
+}
+
+/// instance tree の provenance marker 本文（`sha256:<hex>\n`）を作る。
+/// sha256 を持たない・正規化できない instance は `InvalidSource`。
+pub fn provenanceText(allocator: Allocator, instance: lock_model.NpmInstance) Error![]u8 {
+    var digest: [32]u8 = undefined;
+    const sha256 = instance.sha256 orelse return error.InvalidSource;
+    if (!lock_model.normalizeSha256(sha256, &digest)) return error.InvalidSource;
+    return std.fmt.allocPrint(allocator, "sha256:{s}\n", .{std.fmt.bytesToHex(digest, .lower)});
+}
+
+/// marker 本文が lock instance の sha256 と一致するか。前後の空白だけを
+/// 許容し、digest は正規化して比較する（無い・壊れた marker は不一致）。
+pub fn provenanceMatches(instance: lock_model.NpmInstance, text: []const u8) bool {
+    if (text.len > max_provenance_bytes) return false;
+    const trimmed = std.mem.trim(u8, text, " \t\r\n");
+    var expected: [32]u8 = undefined;
+    const sha256 = instance.sha256 orelse return false;
+    if (!lock_model.normalizeSha256(sha256, &expected)) return false;
+    var actual: [32]u8 = undefined;
+    if (!lock_model.normalizeSha256(trimmed, &actual)) return false;
+    return std.mem.eql(u8, &expected, &actual);
+}
+
 /// `instances` を世代 `deps/` へ materialize する。空なら何もしない。
 /// 途中で失敗した場合、生成済みの tree は世代ごと破棄される（公開しない）。
 ///
@@ -114,12 +154,24 @@ fn materializeOne(
         scratch.writeFile(params.io, .{ .sub_path = "blob", .data = archive }) catch |err| return mapFs(err);
     }
 
+    // marker は package tree 直下の予約名。package が同名 entry を同梱して
+    // いる場合に黙って上書き（archive と異なる tree を公開）しない。
+    if (reservedMarkerNameInTree(scratch, params.io) catch |err| return mapFs(err)) {
+        return params.session.fail(.invalid_source, .artifact, instance.key, "npm package \"{s}\" contains the reserved lnako provenance file \"{s}\"", .{ instance.key, provenance_file });
+    }
+
     // 同一世代内の再実行でも同じ結果になるようにする。
     environment.deleteTreeChecked(params.deps_dir, params.io, dir_name) catch {};
     params.deps_dir.createDirPath(params.io, dir_name) catch |err| return mapFs(err);
     var dest = params.deps_dir.openDir(params.io, dir_name, .{ .iterate = true, .follow_symlinks = false }) catch |err| return mapFs(err);
     defer dest.close(params.io);
     _ = materialize.copyTreeFromDirs(params.gpa, params.io, &scratch, &dest, .{}) catch |err| return mapTreeError(params, err, instance.key);
+    // 検証済み archive から作った tree であることを lock の sha256 で記録する。
+    // compile 側は marker が lock と一致する場合だけ世代 tree を再利用する。
+    // 世代は commit まで非公開なので、部分的な marker が公開世代に残らない。
+    const provenance = try provenanceText(params.gpa, instance);
+    defer params.gpa.free(provenance);
+    dest.writeFile(params.io, .{ .sub_path = provenance_file, .data = provenance }) catch |err| return mapFs(err);
 }
 
 /// lock の `sha256` と cache の raw archive を照合して bytes を返す。
@@ -179,6 +231,17 @@ fn readVerifiedArchive(
     return bytes;
 }
 
+/// `dir` 直下に予約 marker 名（ASCII 大小文字を畳んで比較）の entry が
+/// あるか。case-insensitive FS では別表記の entry を marker 書込みが黙って
+/// 上書きしてしまうため、case を無視して検出する。
+fn reservedMarkerNameInTree(dir: std.Io.Dir, io: std.Io) !bool {
+    var iterator = dir.iterate();
+    while (try iterator.next(io)) |entry| {
+        if (std.ascii.eqlIgnoreCase(entry.name, provenance_file)) return true;
+    }
+    return false;
+}
+
 fn looksLikeGzip(bytes: []const u8) bool {
     return bytes.len >= 2 and bytes[0] == 0x1f and bytes[1] == 0x8b;
 }
@@ -211,6 +274,150 @@ fn mapUnpackError(params: Params, err: anyerror, subject: []const u8) Error {
     };
 }
 
+/// `child` が `parent` の直系の子孫（separator 境界）か。Windows の
+/// realpath は `/`・`\\` のどちらも返し得るため `std.fs.path.isSep` で判定する。
+pub fn isStrictlyWithin(parent: []const u8, child: []const u8) bool {
+    if (child.len <= parent.len) return false;
+    if (!std.mem.startsWith(u8, child, parent)) return false;
+    return std.fs.path.isSep(child[parent.len]);
+}
+
+/// 公開済み世代の `deps` dir を project root から各段 no-follow で開いて
+/// 固定する。compile はこのハンドル相対で npm tree を特定・検証する（load 後の
+/// 中間 path 差し替えに左右されない）。返却後の module 読みは package source と
+/// 同じ path 解決で、load 時の ACL 検査と project 所有権を信頼する。
+/// 途中が symlink・不在なら null（世代 tree を使わず cache 経路へ fallback）。
+/// OOM/Canceled は fallback せず呼出し側へ伝播する。
+pub fn openGenerationDeps(io: std.Io, project_root: []const u8, generation: []const u8) !?std.Io.Dir {
+    // 単一の規範 path 成分であることを先に確認する（".." や separator を
+    // openDir に渡さない）。
+    if (!environment.validGenerationName(generation)) return null;
+    var project = std.Io.Dir.cwd().openDir(io, project_root, .{ .follow_symlinks = false }) catch |err| {
+        if (err == error.OutOfMemory) return error.OutOfMemory;
+        if (err == error.Canceled) return error.Canceled;
+        return null;
+    };
+    defer project.close(io);
+    var nako = project.openDir(io, environment.dir_name, .{ .follow_symlinks = false }) catch |err| {
+        if (err == error.OutOfMemory) return error.OutOfMemory;
+        if (err == error.Canceled) return error.Canceled;
+        return null;
+    };
+    defer nako.close(io);
+    var env = nako.openDir(io, environment.env_dir, .{ .follow_symlinks = false }) catch |err| {
+        if (err == error.OutOfMemory) return error.OutOfMemory;
+        if (err == error.Canceled) return error.Canceled;
+        return null;
+    };
+    defer env.close(io);
+    var generation_dir = env.openDir(io, generation, .{ .follow_symlinks = false }) catch |err| {
+        if (err == error.OutOfMemory) return error.OutOfMemory;
+        if (err == error.Canceled) return error.Canceled;
+        return null;
+    };
+    defer generation_dir.close(io);
+    // 呼出し側（ACL 検査）が iterate するため list 権限も付けて開く。
+    const deps = generation_dir.openDir(io, "deps", .{ .follow_symlinks = false, .iterate = true }) catch |err| {
+        if (err == error.OutOfMemory) return error.OutOfMemory;
+        if (err == error.Canceled) return error.Canceled;
+        return null;
+    };
+    return deps;
+}
+
+/// 固定した世代 `deps` ハンドルに対する writable 検査。compile は npm tree を
+/// nako package source と同じ信頼境界で読むため、package root に適用して
+/// いるのと同じ ACL 検査を、世代 `deps` 自身・その祖先（gen/env/.nako）・
+/// 配下の npm tree へ適用する。検査対象は実際に読み出す deps ハンドルの
+/// 実体 path から導出する（ACL 判定自体は path を再解決するため、判定と
+/// 読み出しの間に差し替えが起きる可能性は project 所有権の信頼に含める）。
+/// 戻り値 true=再利用可、false=検査不能のため cache 経路へ fallback。
+/// enforce/warn で unsafe と判定した場合は error.InvalidEnvironment。
+pub fn validateGenerationDepsWritable(
+    allocator: Allocator,
+    io: std.Io,
+    project_root: []const u8,
+    deps: std.Io.Dir,
+    mode: project_trust.WritableMode,
+    writable_warning: *bool,
+) !bool {
+    // project_root は呼出し側で realPath 済みの canonical path だが、Windows の
+    // junction/reparse point を no-follow open が追従し得るため、canonical な
+    // project root と deps 実体 path を突き合わせる。
+    var project_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    var project_dir = std.Io.Dir.cwd().openDir(io, project_root, .{ .follow_symlinks = false }) catch |err| {
+        if (err == error.OutOfMemory) return error.OutOfMemory;
+        if (err == error.Canceled) return error.Canceled;
+        return false;
+    };
+    defer project_dir.close(io);
+    const project_length = project_dir.realPath(io, &project_buffer) catch |err| {
+        if (err == error.OutOfMemory) return error.OutOfMemory;
+        if (err == error.Canceled) return error.Canceled;
+        return false;
+    };
+    const project_real = project_buffer[0..project_length];
+
+    var buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const deps_length = deps.realPath(io, &buffer) catch |err| {
+        if (err == error.OutOfMemory) return error.OutOfMemory;
+        if (err == error.Canceled) return error.Canceled;
+        return false;
+    };
+    const deps_real = buffer[0..deps_length];
+    // 世代外 tree を「検査済み」と誤認しない。検査不能として cache 経路へ
+    // fallback する（enforce/warn いずれも未検査 tree は使わない）。
+    if (!isStrictlyWithin(project_real, deps_real)) return false;
+    if (mode == .ignore) return true;
+
+    // deps 自身と祖先を検査する。実在する子を仮定して親方向を走査することで
+    // deps 自身の mode/owner も対象に含める（祖先だけでは deps が漏れる）。
+    const probe = try std.fs.path.join(allocator, &.{ deps_real, ".lnako-acl-probe" });
+    defer allocator.free(probe);
+    const unsafe_ancestors = project_trust.hasUnsafeWritableAncestors(allocator, io, probe, project_real) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+    };
+    if (project_trust.shouldRejectWritable(mode, unsafe_ancestors, writable_warning)) return error.InvalidEnvironment;
+
+    // 配下の npm tree 本体を検査する。entry.kind が unknown の FS では stat で
+    // 種別を確定し、確定できない場合も unsafe 側に倒す（fail-closed）。
+    var iterator = deps.iterate();
+    while (true) {
+        const next = iterator.next(io) catch |err| {
+            if (err == error.OutOfMemory) return error.OutOfMemory;
+            if (err == error.Canceled) return error.Canceled;
+            // 走査できない deps を「検査済み」にしない。世代 tree を使わず
+            // cache 経路へ fallback する（呼出し側が false でハンドルを捨てる）。
+            return false;
+        };
+        const entry = next orelse break;
+        // deps は大文字小文字を畳む FS があり得る。reuse 側の openRealDir は
+        // その FS で `NPM_*` も開けるため、検査対象も同じ規則で拾う。
+        if (!std.ascii.startsWithIgnoreCase(entry.name, dir_prefix)) continue;
+        var is_directory = entry.kind == .directory;
+        if (entry.kind == .unknown) {
+            const stat = deps.statFile(io, entry.name, .{ .follow_symlinks = false }) catch |err| {
+                if (err == error.OutOfMemory) return error.OutOfMemory;
+                if (err == error.Canceled) return error.Canceled;
+                if (project_trust.shouldRejectWritable(mode, true, writable_warning)) return error.InvalidEnvironment;
+                continue;
+            };
+            is_directory = stat.kind == .directory;
+        }
+        // 非 directory は reuse 側（openRealDir）が tree root として拒否する。
+        if (!is_directory) continue;
+        const tree_path = try std.fs.path.join(allocator, &.{ deps_real, entry.name });
+        defer allocator.free(tree_path);
+        const unsafe = project_trust.hasUnsafeWritableDirectory(allocator, io, tree_path) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.Canceled => return error.Canceled,
+            else => true,
+        };
+        if (project_trust.shouldRejectWritable(mode, unsafe, writable_warning)) return error.InvalidEnvironment;
+    }
+    return true;
+}
+
 // ---------------------------------------------------------------------------
 // tests
 // ---------------------------------------------------------------------------
@@ -238,6 +445,27 @@ fn buildNpmTarball(
     try tar_writer.setRoot("package");
     try tar_writer.writeFileBytes("package.json", package_json, .{});
     try tar_writer.writeFileBytes(entry_file, entry_bytes, .{});
+    try tar_writer.finishPedantically();
+
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    errdefer out.deinit();
+    try out.ensureUnusedCapacity(64);
+    var window_buf: [std.compress.flate.max_window_len]u8 = undefined;
+    var compress = try std.compress.flate.Compress.init(&out.writer, &window_buf, .gzip, .default);
+    try compress.writer.writeAll(tar_buffer.written());
+    try compress.finish();
+    return try out.toOwnedSlice();
+}
+
+/// 予約 marker 名を同梱する npm tarball（materialize 拒否の再現用）。
+fn buildNpmTarballWithMarkerCollision(gpa: Allocator) ![]u8 {
+    var tar_buffer: std.Io.Writer.Allocating = .init(gpa);
+    defer tar_buffer.deinit();
+    var tar_writer: std.tar.Writer = .{ .underlying_writer = &tar_buffer.writer };
+    try tar_writer.setRoot("package");
+    try tar_writer.writeFileBytes("package.json", "{\"name\":\"escape\",\"version\":\"1.2.3\",\"main\":\"index.js\"}", .{});
+    try tar_writer.writeFileBytes("index.js", "export default 1;\n", .{});
+    try tar_writer.writeFileBytes(provenance_file, "attacker", .{});
     try tar_writer.finishPedantically();
 
     var out: std.Io.Writer.Allocating = .init(gpa);
@@ -479,6 +707,21 @@ test "npm_env は lock の sha256 と食い違う cache bytes を materialize �
     const entry_rel = try std.fmt.allocPrint(arena, "{s}", .{dir_name});
     const entry_path = try h.depsPath(arena, entry_rel);
     try testing.expectError(error.FileNotFound, h.temporary.dir.access(testing.io, entry_path, .{}));
+}
+
+test "npm_env は provenance marker 名を同梱する tarball を拒否する" {
+    var h = try Harness.init();
+    defer h.deinit();
+    const gpa = testing.allocator;
+    const arena = h.arena_impl.allocator();
+
+    const tarball = try buildNpmTarballWithMarkerCollision(gpa);
+    defer gpa.free(tarball);
+    const instance = try testInstance(arena, gpa, tarball);
+    try h.publish(instance, tarball);
+
+    const params = h.params();
+    try testing.expectError(error.InvalidSource, materializeInstances(params, &.{instance}));
 }
 
 test "npm_env は sha256・url を持たない instance を invalid_source にする" {

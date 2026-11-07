@@ -4,20 +4,36 @@
 //!   tarball が無ければ `CacheMiss` で fail-closed。
 //! - registry は bare name 単位。同一 name の複数 instance（lock context 別）は
 //!   誤った版を黙って選ばないよう `AmbiguousInstances` で失敗する。
+//! - package 環境が公開済み世代（`.nako/env/<gen>`）を持つ場合、sync が
+//!   materialize した `<gen>/deps/npm_<instance>` を優先して使う（#54 env
+//!   materialize 連携）。tree 直下の provenance marker が lock の `sha256` と
+//!   一致する時だけ再利用し、cache の再検証・scratch への再展開を行わない。
+//!   marker が無い・古い・不一致なら下記の cache 経路へ fallback する。
 //! - cache の派生 `tree/` は entry marker の自己認証に過ぎず、lock 束縛を
 //!   証明しない（`npm_env.zig` と同じ方針）。lock の `sha256` で raw archive
 //!   を検証し、その bytes から private scratch へ tree を作り直す。
 //! - scratch は TMPDIR 配下の一意 dir。`Prepared.deinit` で再帰削除する。
 //!   path は realpath 化して保持する（`module_graph` の package 境界検査は
-//!   canonical path 同士の比較のため）。
+//!   canonical path 同士の比較のため）。世代 tree は環境の所有物なので
+//!   `Prepared.deinit` では削除しない。
 //! - scratch の寿命は compile 中のみ。IR/Program へは module source が dupe
 //!   されるため、compile 後に npm 由来 module の path を開き直さない契約。
 //! - instance の展開は bare name が要求されたときだけ行う。無関係な
 //!   instance の cache 欠落で、cache 済みの package の解決を止めない。
+//! - 信頼境界: 世代 tree は sync が lock の `sha256` で検証した archive から
+//!   materialize した環境スナップショットで、environment.json の
+//!   `lockSha256` が lock と世代を束縛する。compile は nako package source と
+//!   同じく公開世代を信頼し、tree 内容の digest は再計算しない（cache archive
+//!   を再読すると「再展開を避ける」という本連携の目的と矛盾する）。
+//!   provenance marker は sync 由来の識別子（lock instance の sha256）で
+//!   あって暗号的な内容完全性の証明ではない。書き込み可能性は
+//!   `import_resolver` が package tree と同じ `project_trust` の ACL 検査で
+//!   enforce する。
 //!
 //! cache key と instance の対応は `npm_esm.cacheKeyForInstance`、instance の
-//! 登録は `npm_esm.BareRegistry.registerInstance` を再利用する（key 計算を
-//! 二重実装しない）。`buildFromInstances` は npm_esm 自身のテスト用に残る。
+//! 登録は `npm_esm.BareRegistry.registerInstance`、世代 tree の path と
+//! provenance は `npm_env` の helper を再利用する（導出の二重実装をしない）。
+//! `buildFromInstances` は npm_esm 自身のテスト用に残る。
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -25,6 +41,7 @@ const cache_mod = @import("cache.zig");
 const environment = @import("environment.zig");
 const fetch = @import("fetch.zig");
 const lock_model = @import("lock_model.zig");
+const npm_env = @import("npm_env.zig");
 const npm_esm = @import("npm_esm.zig");
 const unpack = @import("unpack.zig");
 const module_graph = @import("../semantic/module_graph.zig");
@@ -39,23 +56,39 @@ const scratch_permissions: std.Io.File.Permissions = if (builtin.os.tag == .wind
 else
     .fromMode(0o700);
 
+/// 世代 tree の identity 検査で読む `package.json` の上限。
+const max_package_json_bytes: usize = 1024 * 1024;
+
 pub const Error = error{ CacheMiss, InvalidArchive, AmbiguousInstances, BareNotFound, Canceled, CacheUnavailable, ScratchUnavailable, OutOfMemory };
 
-/// 遅延構築する npm registry。scratch と cache store を所有し、bare name が
-/// 要求された instance だけを展開・登録する。
+/// 遅延構築する npm registry。bare name が要求された instance だけを展開・
+/// 登録し、cache store と scratch は cache 経路へ fallback した時だけ遅延生成
+/// する（世代 tree だけで完結する場合は cache dir・TMPDIR を触らない）。
 pub const Prepared = struct {
     gpa: Allocator,
     io: std.Io,
     instances: []const lock_model.NpmInstance,
+    /// 公開済み環境の `<gen>/deps` dir ハンドル。import_resolver が
+    /// project→`.nako`→`env`→`<gen>`→`deps` を各段 no-follow で開いて固定し、
+    /// tree の特定・検証もこのハンドル相対で行う（load 直後の中間 path
+    /// 差し替えに左右されない）。返却後の module 読みは package source と
+    /// 同じ path 解決で、load 時の ACL 検査と project 所有権を信頼する。
+    /// null なら世代 tree を使わず cache だけから構築する。所有は State。
+    generation_deps: ?std.Io.Dir = null,
+    /// cache 展開へ fallback した時だけ開く root（呼出し側所有）。null は
+    /// OS 標準 cache dir。
+    cache_root: ?[]const u8 = null,
     by_name: std.StringHashMapUnmanaged(usize) = .empty,
-    scratch: Scratch,
-    store: cache_mod.Store,
+    /// 世代 tree で解決できない instance を cache から展開する時だけ作る。
+    scratch: ?Scratch = null,
+    store: ?cache_mod.Store = null,
     registry: npm_esm.BareRegistry,
     extracted: std.StringHashMapUnmanaged(void) = .empty,
     /// name 単位の展開失敗（同一 name の再展開 I/O を避ける）。
     failed: std.StringHashMapUnmanaged(Error) = .empty,
 
     pub fn deinit(self: *Prepared) void {
+        // generation_deps は State 所有。ここでは閉じない（二重 close 防止）。
         var failed_it = self.failed.iterator();
         while (failed_it.next()) |entry| self.gpa.free(entry.key_ptr.*);
         self.failed.deinit(self.gpa);
@@ -64,8 +97,8 @@ pub const Prepared = struct {
         self.extracted.deinit(self.gpa);
         self.by_name.deinit(self.gpa);
         self.registry.deinit();
-        self.store.deinit();
-        self.scratch.deinit();
+        if (self.store) |*store| store.deinit();
+        if (self.scratch) |*scratch| scratch.deinit();
         self.* = undefined;
     }
 
@@ -103,35 +136,45 @@ pub const Prepared = struct {
     }
 
     /// lock の sha256 で検証した archive を scratch の `<scratch>/<cache key>`
-    /// へ展開し、tree root path を返す（呼出し側が free する）。
+    /// へ展開し、tree root path を返す（呼出し側が free する）。公開済み世代の
+    /// materialize 済み tree を再利用できる場合は cache を読まずにその path を
+    /// 返す。
     fn extractInstance(self: *Prepared, instance: lock_model.NpmInstance) anyerror![]u8 {
+        if (try self.reusedGenerationTree(instance)) |tree| return tree;
         const key = (try npm_esm.cacheKeyForInstance(self.gpa, instance)) orelse return error.CacheMiss;
         defer self.gpa.free(key);
         // scratch の dir 名に使うため、単一の規範 path 成分であることを検証する
         // （cache key は hash 由来だが、lock 材料が変わっても書き込み面を守る）。
         if (!isSafeCacheKey(key)) return error.CacheMiss;
-        if (self.extracted.contains(key)) return try std.fs.path.join(self.gpa, &.{ self.scratch.path, key });
-
         const sha256 = instance.sha256 orelse return error.CacheMiss;
-        const bytes = (self.store.readVerifiedSourceArchive(self.gpa, key, sha256) catch |err| switch (err) {
+        // 既に scratch へ展開済みの key は archive を読み直さない。
+        if (self.extracted.contains(key)) {
+            const scratch = self.scratch orelse return error.CacheMiss;
+            return try std.fs.path.join(self.gpa, &.{ scratch.path, key });
+        }
+        // ここから先だけが cache/scratch を必要とする（世代 tree だけで解決
+        // できた場合は TMPDIR も cache dir も触らない）。
+        const store = try self.ensureStore();
+        const bytes = (store.readVerifiedSourceArchive(self.gpa, key, sha256) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             else => return error.CacheMiss,
         }) orelse return error.CacheMiss;
         defer self.gpa.free(bytes);
+        const scratch = try self.ensureScratch();
 
         // 同一 key は `extracted` で早期 return するため、ここで既存 dir が
         // あるのは想定外（同一ユーザーの競合・残骸）。内容を検証できない dir を
         // package root として使わないよう fail-closed。
-        self.scratch.dir.createDir(self.io, key, scratch_permissions) catch |err| switch (err) {
+        scratch.dir.createDir(self.io, key, scratch_permissions) catch |err| switch (err) {
             error.PathAlreadyExists => return error.CacheMiss,
             else => return err,
         };
         // 展開・書き込み・map 登録の途中で OOM/Canceled 等が起きても、
         // 空の `<key>` dir を残さない。残すと再要求時に createDir が
         // PathAlreadyExists となり、元の失敗が CacheMiss に化ける。
-        errdefer self.scratch.dir.deleteTree(self.io, key) catch {};
+        errdefer scratch.dir.deleteTree(self.io, key) catch {};
         {
-            var tree = self.scratch.dir.openDir(self.io, key, .{ .iterate = true, .follow_symlinks = false }) catch |err| return err;
+            var tree = scratch.dir.openDir(self.io, key, .{ .iterate = true, .follow_symlinks = false }) catch |err| return err;
             defer tree.close(self.io);
             if (npm_esm.looksLikeGzip(bytes)) {
                 // npm tarball は `package/` 前置を持つ（cache 公開時と同じ strip）。
@@ -153,10 +196,131 @@ pub const Prepared = struct {
         // 残さない（errdefer と deinit の二重解放を避ける）。
         const key_copy = try self.gpa.dupe(u8, key);
         errdefer self.gpa.free(key_copy);
-        const tree_path = try std.fs.path.join(self.gpa, &.{ self.scratch.path, key });
+        const tree_path = try std.fs.path.join(self.gpa, &.{ scratch.path, key });
         errdefer self.gpa.free(tree_path);
         try self.extracted.put(self.gpa, key_copy, {});
         return tree_path;
+    }
+
+    /// cache store を必要になった時だけ開く（世代 tree だけで解決できる
+    /// compile は cache dir の存在・TMPDIR に依存しない）。
+    fn ensureStore(self: *Prepared) Error!*cache_mod.Store {
+        if (self.store == null) {
+            const root = if (self.cache_root) |explicit|
+                explicit
+            else
+                (cache_mod.defaultRoot(self.gpa) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                }) orelse return error.CacheUnavailable;
+            defer if (self.cache_root == null) self.gpa.free(root);
+            self.store = cache_mod.Store.open(self.gpa, self.io, root) catch |err| return mapCacheOpenIo(err);
+        }
+        return &self.store.?;
+    }
+
+    /// 展開用 scratch を必要になった時だけ作る。
+    fn ensureScratch(self: *Prepared) Error!*Scratch {
+        if (self.scratch == null) self.scratch = createScratch(self.gpa, self.io) catch |err| return mapScratchIo(err);
+        return &self.scratch.?;
+    }
+
+    /// 公開済み世代 `.nako/env/<gen>` の materialize 済み tree
+    /// （`<gen>/deps/npm_<instance>`）を再利用できるなら canonical path を
+    /// 返す。次の条件を全て満たす時だけ使い、満たさなければ null（cache
+    /// 経路へ fallback）にする:
+    /// - 世代 dir → `deps` → instance dir を各成分 no-follow で開ける
+    ///   （lexical path の一括 open は中間 symlink を追従し、検証後に世代外
+    ///   へ差し替えられ得るため）
+    /// - provenance marker が lock の `sha256` と一致する
+    /// - `package.json` の name/version が lock instance と一致する
+    /// - realpath が世代 root の実体配下に留まる
+    ///
+    /// marker は「sync が lock の sha256 で検証した archive から materialize
+    /// した tree である」ことの識別子で、内容の暗号的な完全性証明ではない。
+    /// 世代の内容は environment.json の lockSha256 と、package source と
+    /// 同じ project_trust の ACL 検査（import_resolver）で信頼する。
+    fn reusedGenerationTree(self: *Prepared, instance: lock_model.NpmInstance) Error!?[]u8 {
+        const deps = self.generation_deps orelse return null;
+        const dir_name = npm_env.instanceDirName(self.gpa, instance) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+        };
+        defer self.gpa.free(dir_name);
+        // 固定済み `deps` ハンドル相対で instance dir を no-follow で開く。
+        var tree = (try self.openRealDir(deps, dir_name)) orelse return null;
+        defer tree.close(self.io);
+
+        const marker = tree.readFileAlloc(self.io, npm_env.provenance_file, self.gpa, .limited(npm_env.max_provenance_bytes)) catch |err| {
+            if (err == error.OutOfMemory) return error.OutOfMemory;
+            if (err == error.Canceled) return error.Canceled;
+            return null;
+        };
+        defer self.gpa.free(marker);
+        if (!npm_env.provenanceMatches(instance, marker)) return null;
+        if (!try self.treeMatchesInstance(tree, instance)) return null;
+
+        // package 境界検査は canonical path 同士の比較なので realpath を返す。
+        // deps の実体配下に留まることも再確認する（reparse point 対策）。
+        var deps_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+        const deps_length = deps.realPath(self.io, &deps_buffer) catch |err| {
+            if (err == error.OutOfMemory) return error.OutOfMemory;
+            if (err == error.Canceled) return error.Canceled;
+            return null;
+        };
+        var tree_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+        const tree_length = tree.realPath(self.io, &tree_buffer) catch |err| {
+            if (err == error.OutOfMemory) return error.OutOfMemory;
+            if (err == error.Canceled) return error.Canceled;
+            return null;
+        };
+        if (!npm_env.isStrictlyWithin(deps_buffer[0..deps_length], tree_buffer[0..tree_length])) return null;
+        return try self.gpa.dupe(u8, tree_buffer[0..tree_length]);
+    }
+
+    /// `parent` 相対で 1 成分を no-follow で開き、実 directory
+    /// の時だけ返す。symlink/reparse point・不在・通常 file は null。
+    /// OOM/Canceled は fallback せず呼出し側へ伝播する。
+    fn openRealDir(self: *Prepared, parent: std.Io.Dir, name: []const u8) Error!?std.Io.Dir {
+        var dir = parent.openDir(self.io, name, .{ .follow_symlinks = false }) catch |err| {
+            if (err == error.OutOfMemory) return error.OutOfMemory;
+            if (err == error.Canceled) return error.Canceled;
+            return null;
+        };
+        const stat = dir.stat(self.io) catch |err| {
+            dir.close(self.io);
+            if (err == error.OutOfMemory) return error.OutOfMemory;
+            if (err == error.Canceled) return error.Canceled;
+            return null;
+        };
+        if (stat.kind != .directory) {
+            dir.close(self.io);
+            return null;
+        }
+        return dir;
+    }
+
+    /// 世代 tree の `package.json` が lock instance の name/version と一致する
+    /// か。世代 tree が別 instance の残骸でないことを確認する（内容そのものの
+    /// 完全性は marker と ACL 検査の信頼境界に委ねる）。
+    fn treeMatchesInstance(self: *Prepared, tree: std.Io.Dir, instance: lock_model.NpmInstance) Error!bool {
+        const bytes = tree.readFileAlloc(self.io, "package.json", self.gpa, .limited(max_package_json_bytes)) catch |err| {
+            if (err == error.OutOfMemory) return error.OutOfMemory;
+            if (err == error.Canceled) return error.Canceled;
+            return false;
+        };
+        defer self.gpa.free(bytes);
+        var parsed = std.json.parseFromSlice(Value, self.gpa, bytes, .{}) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return false,
+        };
+        defer parsed.deinit();
+        const object = switch (parsed.value) {
+            .object => |value| value,
+            else => return false,
+        };
+        const name = object.get("name") orelse return false;
+        const version = object.get("version") orelse return false;
+        if (name != .string or version != .string) return false;
+        return std.mem.eql(u8, name.string, instance.name) and std.mem.eql(u8, version.string, instance.version);
     }
 
     /// bare specifier を解決する。要求された name の instance だけを準備する。
@@ -197,6 +361,9 @@ pub const State = struct {
     backing_allocator: Allocator = undefined,
     instances: []const lock_model.NpmInstance = &.{},
     cache_root: ?[]const u8 = null,
+    /// 公開済み環境の `<gen>/deps` dir ハンドル。State が所有し deinit で閉じる。
+    /// null なら世代 tree を使わず cache 経路のみ。
+    generation_deps: ?std.Io.Dir = null,
     prepared: ?Prepared = null,
     /// prepare（scratch/cache 構築・lock 名の曖昧さ等）の失敗を記憶し、以後の
     /// import で再試行しない。Prepared 段階の instance 単位の失敗は
@@ -207,6 +374,9 @@ pub const State = struct {
     /// Resolver の arena に載っている parsed lock。`storage` は Resolver の
     /// arena（instance 文字列の寿命）、`backing_allocator` は registry/scratch
     /// 用の実 allocator（archive bytes を都度 free できる）を渡す。
+    /// `generation_deps` は公開済み環境の `<gen>/deps` dir ハンドル。成功時は
+    /// State が所有し deinit で閉じる。失敗時は所有権が移らないため呼出し側が
+    /// 閉じる。null は世代非依存の環境。
     pub fn load(
         storage: Allocator,
         backing_allocator: Allocator,
@@ -214,17 +384,20 @@ pub const State = struct {
         lock_root: std.json.ObjectMap,
         profile: []const u8,
         cache_root: ?[]const u8,
+        generation_deps: ?std.Io.Dir,
     ) !State {
         return .{
             .io = io,
             .backing_allocator = backing_allocator,
             .instances = try collectInstances(storage, lock_root, profile),
             .cache_root = if (cache_root) |explicit| try storage.dupe(u8, explicit) else null,
+            .generation_deps = generation_deps,
         };
     }
 
     pub fn deinit(self: *State) void {
         if (self.prepared) |*prepared| prepared.deinit();
+        if (self.generation_deps) |dir| dir.close(self.io);
         self.* = undefined;
     }
 
@@ -257,7 +430,7 @@ pub const State = struct {
         if (self.instances.len == 0) return error.BareNotFound;
         if (self.failure) |err| return err;
         if (self.prepared == null) {
-            self.prepared = prepare(self.backing_allocator, self.io, self.instances, self.cache_root) catch |err| {
+            self.prepared = prepare(self.backing_allocator, self.io, self.instances, self.cache_root, self.generation_deps) catch |err| {
                 // 失敗した compile 中で scratch/cache の再構築を繰り返さない。
                 self.failure = err;
                 return err;
@@ -303,6 +476,20 @@ pub fn selectLockedPackages(lock_root: std.json.ObjectMap, profile: []const u8) 
     }
     if (!std.mem.eql(u8, profile, input_profile.string)) return error.InvalidEnvironment;
     return get(lock_root, "packages") orelse return error.InvalidEnvironment;
+}
+
+/// 選択 profile の lock package が非空の `npmInstances` を持つか。
+pub fn hasNpmInstances(lock_root: std.json.ObjectMap, profile: []const u8) bool {
+    const selected = selectLockedPackages(lock_root, profile) catch return false;
+    const packages = asObject(selected) orelse return false;
+    var iterator = packages.iterator();
+    while (iterator.next()) |entry| {
+        const package = asObject(entry.value_ptr.*) orelse continue;
+        const instances_value = get(package, "npmInstances") orelse continue;
+        const instances = asObject(instances_value) orelse continue;
+        if (instances.count() > 0) return true;
+    }
+    return false;
 }
 
 /// lock の選択 profile から `npmInstances` を集め、key 昇順へ正規化する。
@@ -381,14 +568,20 @@ fn collectPeers(allocator: Allocator, value: ?Value) ![]const lock_model.PeerDep
     return try list.toOwnedSlice(allocator);
 }
 
-/// `instances` の name 索引と scratch/cache を用意する。instance の展開は
-/// 最初にその name が要求されたときに行う（無関係な instance の cache 欠落で
-/// 解決を止めない）。`cache_root == null` は OS 標準 cache dir。
+/// `instances` の name 索引を用意する。instance の展開は最初にその name が
+/// 要求されたときに行い、世代 tree で解決できなければ cache store と scratch
+/// をその時点で遅延生成する（世代 tree だけで完結する compile は cache dir・
+/// TMPDIR に依存しない）。`cache_root == null` は OS 標準 cache dir。
+/// `generation_deps` は公開済み環境の `<gen>/deps` dir ハンドル（呼出し側
+/// 所有。State 経由では State.deinit、直接 prepare するテストでは呼出し側が
+/// close する）。与えられた場合、その配下の materialize 済み tree を優先する。
+/// `cache_root` は本 Prepared の寿命中有効であること（borrow）。
 pub fn prepare(
     gpa: Allocator,
     io: std.Io,
     instances: []const lock_model.NpmInstance,
     cache_root: ?[]const u8,
+    generation_deps: ?std.Io.Dir,
 ) Error!Prepared {
     if (instances.len == 0) return error.BareNotFound;
     // registry は name 単位でしか解決できない。同一 name の複数 instance を
@@ -400,27 +593,15 @@ pub fn prepare(
         if (entry.found_existing) return error.AmbiguousInstances;
         entry.value_ptr.* = index;
     }
-    const root = if (cache_root) |explicit|
-        try gpa.dupe(u8, explicit)
-    else
-        (try cache_mod.defaultRoot(gpa)) orelse return error.CacheMiss;
-    defer gpa.free(root);
-
-    var scratch = createScratch(gpa, io) catch |err| return mapScratchIo(err);
-    errdefer scratch.deinit();
-
-    var store = cache_mod.Store.open(gpa, io, root) catch |err| return mapCacheOpenIo(err);
-    errdefer store.deinit();
-
     var registry = npm_esm.BareRegistry{ .gpa = gpa, .io = io };
     errdefer registry.deinit();
     return .{
         .gpa = gpa,
         .io = io,
         .instances = instances,
+        .generation_deps = generation_deps,
+        .cache_root = cache_root,
         .by_name = by_name,
-        .scratch = scratch,
-        .store = store,
         .registry = registry,
     };
 }
@@ -430,6 +611,10 @@ fn classifyExtraction(err: anyerror) Error {
         error.OutOfMemory => error.OutOfMemory,
         error.Canceled => error.Canceled,
         error.InvalidArchive => error.InvalidArchive,
+        // 環境レベル（cache dir/scratch を作れない）失敗は per-name の
+        // CacheMiss に潰さず、State の sticky 失敗として保持する。
+        error.CacheUnavailable => error.CacheUnavailable,
+        error.ScratchUnavailable => error.ScratchUnavailable,
         else => error.CacheMiss,
     };
 }
@@ -589,21 +774,29 @@ test "Prepared は要求された instance を cache から展開しサブパス
     defer gpa.free(key);
     try npm_esm.publishNpmTree(gpa, io, &store, key, tarball);
 
-    var prepared = try prepare(gpa, io, &.{instance}, cache_root);
+    var prepared = try prepare(gpa, io, &.{instance}, cache_root, null);
     var alive = true;
     defer if (alive) prepared.deinit();
-    const scratch_path = try gpa.dupe(u8, prepared.scratch.path);
-    defer gpa.free(scratch_path);
     const root = try prepared.resolveBare("left-pad");
     defer root.deinit(gpa);
     try testing.expect(std.mem.endsWith(u8, root.path, "index.js"));
     const sub = try prepared.resolveBare("left-pad/sub");
     defer sub.deinit(gpa);
     try testing.expect(std.mem.endsWith(u8, sub.path, "sub.js"));
+    // cache 展開時だけ scratch が作られる。
+    const scratch_path = try gpa.dupe(u8, prepared.scratch.?.path);
+    defer gpa.free(scratch_path);
     // deinit は scratch tree を残さない（TMPDIR の蓄積防止）。
     prepared.deinit();
     alive = false;
     try testing.expectError(error.FileNotFound, std.Io.Dir.cwd().statFile(io, scratch_path, .{}));
+}
+
+test "classifyExtraction は環境レベル失敗を CacheMiss に潰さない" {
+    try testing.expectEqual(@as(Error, error.CacheUnavailable), classifyExtraction(error.CacheUnavailable));
+    try testing.expectEqual(@as(Error, error.ScratchUnavailable), classifyExtraction(error.ScratchUnavailable));
+    try testing.expectEqual(@as(Error, error.InvalidArchive), classifyExtraction(error.InvalidArchive));
+    try testing.expectEqual(@as(Error, error.CacheMiss), classifyExtraction(error.FileNotFound));
 }
 
 test "Prepared は要求された instance の cache 欠落を fail-closed にする" {
@@ -622,7 +815,7 @@ test "Prepared は要求された instance の cache 欠落を fail-closed に�
         .sha256 = "sha256:0000000000000000000000000000000000000000000000000000000000000000",
         .url = "fixture://left-pad-1.0.0.tgz",
     };
-    var prepared = try prepare(gpa, io, &.{instance}, cache_root);
+    var prepared = try prepare(gpa, io, &.{instance}, cache_root, null);
     defer prepared.deinit();
     try testing.expectError(error.CacheMiss, prepared.resolveBare("left-pad"));
 }
@@ -660,7 +853,7 @@ test "Prepared は lock の sha256 と一致しない cache archive を拒否す
     // 同じ content key に別 bytes を公開する（cache 改ざん相当）。
     try npm_esm.publishNpmTree(gpa, io, &store, key, "tampered-tarball");
 
-    var prepared = try prepare(gpa, io, &.{instance}, cache_root);
+    var prepared = try prepare(gpa, io, &.{instance}, cache_root, null);
     defer prepared.deinit();
     try testing.expectError(error.CacheMiss, prepared.resolveBare("left-pad"));
 }
@@ -680,7 +873,7 @@ test "prepare は同一 name の複数 instance を AmbiguousInstances で拒否
         .sha256 = "sha256:1111111111111111111111111111111111111111111111111111111111111111",
         .url = "fixture://left-pad-2.0.0.tgz",
     };
-    try testing.expectError(error.AmbiguousInstances, prepare(testing.allocator, testing.io, &.{ a, b }, "/nonexistent"));
+    try testing.expectError(error.AmbiguousInstances, prepare(testing.allocator, testing.io, &.{ a, b }, "/nonexistent", null));
 }
 
 test "無関係な instance の cache 欠落は要求された package の解決を止めない" {
@@ -722,7 +915,7 @@ test "無関係な instance の cache 欠落は要求された package の解決
     defer gpa.free(key);
     try npm_esm.publishNpmTree(gpa, io, &store, key, tarball);
 
-    var prepared = try prepare(gpa, io, &.{ cached, missing }, cache_root);
+    var prepared = try prepare(gpa, io, &.{ cached, missing }, cache_root, null);
     defer prepared.deinit();
     // cache 済みの left-pad は、無関係な missing の欠落に影響されない。
     const entry = try prepared.resolveBare("left-pad");
@@ -848,6 +1041,234 @@ test "非 gzip fixture は blob として展開され入口解決は BareNotFoun
     defer state.deinit();
     // package.json が無いため root 入口は公開されない（安全側）。
     try testing.expectError(error.BareNotFound, state.resolveBare(gpa, "left-pad"));
+}
+
+/// 世代 tree（`<generation_root>/deps/<dir>`）と package 一式・provenance
+/// marker を作る。tree の絶対 path を返す（呼出し側が free する）。
+fn writeGenerationTree(
+    gpa: Allocator,
+    io: std.Io,
+    generation_root: []const u8,
+    instance: lock_model.NpmInstance,
+    marker: []const u8,
+) ![]u8 {
+    const tree = try npm_env.instanceTreePath(gpa, generation_root, instance);
+    errdefer gpa.free(tree);
+    try std.Io.Dir.cwd().createDirPath(io, tree);
+    var dir = try std.Io.Dir.cwd().openDir(io, tree, .{ .iterate = true });
+    defer dir.close(io);
+    // lock instance の identity 検査（name/version）を通すため package.json に
+    // 同じ name/version を書く。
+    const package_json = try std.fmt.allocPrint(
+        gpa,
+        "{{\"name\":\"{s}\",\"version\":\"{s}\",\"exports\":{{\".\":\"./index.js\",\"./sub\":\"./sub.js\"}}}}",
+        .{ instance.name, instance.version },
+    );
+    defer gpa.free(package_json);
+    try dir.writeFile(io, .{ .sub_path = "package.json", .data = package_json });
+    try dir.writeFile(io, .{ .sub_path = "index.js", .data = "export default 1;\n" });
+    try dir.writeFile(io, .{ .sub_path = "sub.js", .data = "export default 2;\n" });
+    // marker が空の場合は marker なし tree（旧世代相当）を再現する。
+    if (marker.len != 0) try dir.writeFile(io, .{ .sub_path = npm_env.provenance_file, .data = marker });
+    return tree;
+}
+
+/// 世代 dir の `deps` ハンドルを開く（prepare へ渡す固定ハンドル）。
+fn openDepsDir(io: std.Io, generation_root: []const u8) !std.Io.Dir {
+    var generation = try std.Io.Dir.cwd().openDir(io, generation_root, .{});
+    defer generation.close(io);
+    return try generation.openDir(io, "deps", .{ .iterate = true });
+}
+
+test "Prepared は世代 materialize 済み tree を cache/scratch の再展開なしで再利用する" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var temporary = test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    // cache は空。世代 tree だけが lock の sha256 を満たす。
+    try temporary.dir.createDirPath(io, "empty-cache");
+    try temporary.dir.createDirPath(io, "env/gen-test");
+    const cache_root = try temporary.dir.realPathFileAlloc(io, "empty-cache", gpa);
+    defer gpa.free(cache_root);
+    const generation_root = try temporary.dir.realPathFileAlloc(io, "env/gen-test", gpa);
+    defer gpa.free(generation_root);
+
+    const instance = lock_model.NpmInstance{
+        .key = "left-pad@1.0.0",
+        .name = "left-pad",
+        .version = "1.0.0",
+        .sha256 = "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        .url = "fixture://left-pad-1.0.0.tgz",
+    };
+    const marker = try npm_env.provenanceText(gpa, instance);
+    defer gpa.free(marker);
+    const tree = try writeGenerationTree(gpa, io, generation_root, instance, marker);
+    defer gpa.free(tree);
+
+    var deps_dir = try openDepsDir(io, generation_root);
+    defer deps_dir.close(io);
+    var prepared = try prepare(gpa, io, &.{instance}, cache_root, deps_dir);
+    defer prepared.deinit();
+    const root = try prepared.resolveBare("left-pad");
+    defer root.deinit(gpa);
+    try testing.expect(std.mem.endsWith(u8, root.path, "index.js"));
+    // cache から scratch へ展開していれば path は scratch 配下になる。
+    try testing.expect(std.mem.startsWith(u8, root.path, generation_root));
+    try testing.expect(std.mem.startsWith(u8, root.package_root, generation_root));
+    const sub = try prepared.resolveBare("left-pad/sub");
+    defer sub.deinit(gpa);
+    try testing.expect(std.mem.endsWith(u8, sub.path, "sub.js"));
+    // 世代 tree だけで解決したため cache store/scratch は作られない。
+    try testing.expect(prepared.scratch == null);
+    try testing.expect(prepared.store == null);
+}
+
+test "Prepared は世代 tree の provenance が lock と食い違えば cache 経路へ fallback する" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var temporary = test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "empty-cache");
+    try temporary.dir.createDirPath(io, "env/gen-test");
+    const cache_root = try temporary.dir.realPathFileAlloc(io, "empty-cache", gpa);
+    defer gpa.free(cache_root);
+    const generation_root = try temporary.dir.realPathFileAlloc(io, "env/gen-test", gpa);
+    defer gpa.free(generation_root);
+
+    const instance = lock_model.NpmInstance{
+        .key = "left-pad@1.0.0",
+        .name = "left-pad",
+        .version = "1.0.0",
+        .sha256 = "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        .url = "fixture://left-pad-1.0.0.tgz",
+    };
+    // 別世代の instance（sha256 が違う）の marker を置く（古い tree 相当）。
+    const stale = lock_model.NpmInstance{
+        .key = "left-pad@1.0.0",
+        .name = "left-pad",
+        .version = "1.0.0",
+        .sha256 = "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        .url = "fixture://left-pad-1.0.0.tgz",
+    };
+    const marker = try npm_env.provenanceText(gpa, stale);
+    defer gpa.free(marker);
+    const tree = try writeGenerationTree(gpa, io, generation_root, instance, marker);
+    defer gpa.free(tree);
+
+    var deps_dir = try openDepsDir(io, generation_root);
+    defer deps_dir.close(io);
+    var prepared = try prepare(gpa, io, &.{instance}, cache_root, deps_dir);
+    defer prepared.deinit();
+    // 世代 tree は使わず、空 cache からの構築に失敗する（fail-closed）。
+    try testing.expectError(error.CacheMiss, prepared.resolveBare("left-pad"));
+}
+
+test "Prepared は marker 欠落・壊れた marker の世代 tree を古いものとして扱う" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var temporary = test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "empty-cache");
+    const cache_root = try temporary.dir.realPathFileAlloc(io, "empty-cache", gpa);
+    defer gpa.free(cache_root);
+    const instance = lock_model.NpmInstance{
+        .key = "left-pad@1.0.0",
+        .name = "left-pad",
+        .version = "1.0.0",
+        .sha256 = "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        .url = "fixture://left-pad-1.0.0.tgz",
+    };
+    // marker 無し（旧 lnako が materialize した世代）と、空/解析不能 marker。
+    const cases = [_][]const u8{ "", "garbage\n" };
+    for (cases, 0..) |marker_text, index| {
+        const generation_rel = try std.fmt.allocPrint(gpa, "env/gen-{d}", .{index});
+        defer gpa.free(generation_rel);
+        try temporary.dir.createDirPath(io, generation_rel);
+        const generation_root = try temporary.dir.realPathFileAlloc(io, generation_rel, gpa);
+        defer gpa.free(generation_root);
+        const tree = try writeGenerationTree(gpa, io, generation_root, instance, marker_text);
+        defer gpa.free(tree);
+        var deps_dir = try openDepsDir(io, generation_root);
+        defer deps_dir.close(io);
+        var prepared = try prepare(gpa, io, &.{instance}, cache_root, deps_dir);
+        defer prepared.deinit();
+        try testing.expectError(error.CacheMiss, prepared.resolveBare("left-pad"));
+    }
+}
+
+test "Prepared は package.json identity が lock と違う世代 tree を再利用しない" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var temporary = test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "empty-cache");
+    try temporary.dir.createDirPath(io, "env/gen-test");
+    const cache_root = try temporary.dir.realPathFileAlloc(io, "empty-cache", gpa);
+    defer gpa.free(cache_root);
+    const generation_root = try temporary.dir.realPathFileAlloc(io, "env/gen-test", gpa);
+    defer gpa.free(generation_root);
+    const instance = lock_model.NpmInstance{
+        .key = "left-pad@1.0.0",
+        .name = "left-pad",
+        .version = "1.0.0",
+        .sha256 = "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        .url = "fixture://left-pad-1.0.0.tgz",
+    };
+    const marker = try npm_env.provenanceText(gpa, instance);
+    defer gpa.free(marker);
+    const tree = try writeGenerationTree(gpa, io, generation_root, instance, marker);
+    defer gpa.free(tree);
+    // marker は lock と一致するが、root package は別名の残骸。
+    var dir = try std.Io.Dir.cwd().openDir(io, tree, .{});
+    defer dir.close(io);
+    try dir.writeFile(io, .{ .sub_path = "package.json", .data = "{\"name\":\"other-pkg\",\"version\":\"1.0.0\",\"main\":\"index.js\"}" });
+
+    var deps_dir = try openDepsDir(io, generation_root);
+    defer deps_dir.close(io);
+    var prepared = try prepare(gpa, io, &.{instance}, cache_root, deps_dir);
+    defer prepared.deinit();
+    try testing.expectError(error.CacheMiss, prepared.resolveBare("left-pad"));
+}
+
+test "Prepared は世代 tree が symlink なら cache 経路へ fallback する" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var temporary = test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "empty-cache");
+    try temporary.dir.createDirPath(io, "env/gen-test/deps");
+    try temporary.dir.createDirPath(io, "external/gen/deps");
+    const cache_root = try temporary.dir.realPathFileAlloc(io, "empty-cache", gpa);
+    defer gpa.free(cache_root);
+    const generation_root = try temporary.dir.realPathFileAlloc(io, "env/gen-test", gpa);
+    defer gpa.free(generation_root);
+    const external_root = try temporary.dir.realPathFileAlloc(io, "external/gen", gpa);
+    defer gpa.free(external_root);
+
+    const instance = lock_model.NpmInstance{
+        .key = "left-pad@1.0.0",
+        .name = "left-pad",
+        .version = "1.0.0",
+        .sha256 = "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        .url = "fixture://left-pad-1.0.0.tgz",
+    };
+    const marker = try npm_env.provenanceText(gpa, instance);
+    defer gpa.free(marker);
+    const external_tree = try writeGenerationTree(gpa, io, external_root, instance, marker);
+    defer gpa.free(external_tree);
+    const dir_name = try npm_env.instanceDirName(gpa, instance);
+    defer gpa.free(dir_name);
+    const link_path = try std.fmt.allocPrint(gpa, "{s}/deps/{s}", .{ generation_root, dir_name });
+    defer gpa.free(link_path);
+    // symlink を作れない環境（権限不足等）は skip する。
+    std.Io.Dir.cwd().symLink(io, external_tree, link_path, .{ .is_directory = true }) catch return error.SkipZigTest;
+
+    var deps_dir = try openDepsDir(io, generation_root);
+    defer deps_dir.close(io);
+    var prepared = try prepare(gpa, io, &.{instance}, cache_root, deps_dir);
+    defer prepared.deinit();
+    // symlink を tree root として追従せず、空 cache からの構築失敗へ倒す。
+    try testing.expectError(error.CacheMiss, prepared.resolveBare("left-pad"));
 }
 
 /// tar entry を gzip 圧縮した byte 列を作る（`provider_test.zig` と同じ手法）。

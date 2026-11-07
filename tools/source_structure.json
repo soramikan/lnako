@@ -35,8 +35,8 @@
         "limitKb": 100
       },
       "src/package/import_resolver.zig": {
-        "reason": "manifest・lock・environment・filesystemを同一Resolverで相互検証する境界（監視対象・hard limit内）",
-        "limitKb": 84
+        "reason": "manifest・lock・environment・filesystemを同一Resolverで相互検証する境界。env materialize 連携で世代 deps の固定ハンドルと ACL 検査を配線した分を含む（監視対象・hard limit内）",
+        "limitKb": 86
       },
       "src/package/project.zig": {
         "reason": "path/git/http依存解決とlock生成の統合オーケストレーション（分割を継続検討・90KB上限）",
