@@ -93,10 +93,11 @@ fn validDirectCallee(program: ir.Program, instruction: ir.Instruction) bool {
 }
 
 /// `--compat-js` AOTが最小dispatchとして受けるJS命令。値・Promise・
-/// callback・GCの完全接続はfollow-upのため、現時点では `JS実行` だけを
-/// 許可する。通常AOT（compat_js=false）は従来どおり未対応のまま。
+/// callback・GCの完全接続はfollow-upのため、現時点では `JS実行` と
+/// `JS関数実行` だけを許可する。`JSメソッド実行` / `JSオブジェクト取得` と
+/// 通常AOT（compat_js=false）は従来どおり未対応のまま。
 fn isCompatJsCommand(name: []const u8) bool {
-    return std.mem.eql(u8, name, "JS実行");
+    return std.mem.eql(u8, name, "JS実行") or std.mem.eql(u8, name, "JS関数実行");
 }
 
 fn closureSupported(program: ir.Program, caller: ir.Function, instruction: ir.Instruction) bool {

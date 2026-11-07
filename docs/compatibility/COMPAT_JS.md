@@ -52,10 +52,23 @@ QuickJSとESM情報を収録しESM呼出しに成功することは、生成物�
 node tools/check_aot_quickjs_separation.mjs --compiler zig-out/bin/lnako
 ```
 
-現時点のAOT compat dispatchは `JS実行` の最小経路だけです。値・Promise・
-callback・GCの完全接続と `JS関数実行` / `JSメソッド実行` / `JSオブジェクト取得`
-のAOT対応はfollow-up（Issue #55）です。AOTの `JS実行` は専用ABIを直接呼ぶため、
-`LNAKO_DISPATCH_TRACE` のdispatch traceにはまだ記録されません（follow-up）。
+現時点のAOT compat dispatchは `JS実行` と `JS関数実行` の最小経路です。
+`JS関数実行` は第1引数の関数名（文字列）をglobal evalで解決し、数値・文字列・
+真偽値・null/undefinedの引数とプリミティブ戻り値だけを変換します。オブジェクト・
+配列・関数・BigInt・バイト列の引数はQuickJSへ渡す前に明示的な未対応エラーに
+します。呼出し時の `this` は official の `apply(null)` と異なり `undefined` です
+（lnako の QuickJS bridge 共通で、strict 関数でのみ観測できます）。
+Promise戻り値は未対応エラーですが、エラー判定前にmicrotaskをdrainするため、
+呼び出した関数が登録した継続は実行されてから失敗します。第1引数に
+関数値（`JS実行`の結果やcallable proxyなど）を渡す形もAOTでは未対応で、
+interpreter/officialとの意図的な差分です（Nako値がJS関数値を保持できるように
+なるfollow-up）。
+`JSメソッド実行` /
+`JSオブジェクト取得`、値・Promise・callback・GCの完全接続はfollow-up（Issue #55）
+です。AOTの `JS実行` / `JS関数実行` は専用ABIを直接呼ぶため、`LNAKO_DISPATCH_TRACE`
+のdispatch traceにはまだ記録されません（follow-up）。またAOT compat runtimeは
+interpreterのhost値bridgeを持たないため、`sys.__getSysVar`等はstrict stubとして
+失敗し、`console`などinterpreterがbootstrapするグローバルは存在しません。
 
 ### 配布アーカイブ
 
