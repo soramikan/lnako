@@ -22,3 +22,11 @@ JS関数実行(『()=>[]』, [])を表示
 JS関数実行(『()=>({x:10,y:20})』, [])を表示
 JS関数実行(『()=>({})』, [])を表示
 JS関数実行(『()=>["a",true,null]』, [])を表示
+# Promise戻り値は既存のdrain/await経路で解決値を待ってから変換する。
+JS関数実行(『()=>Promise.resolve(3)』, [])を表示
+JS関数実行(『()=>Promise.resolve([1,2])』, [])を表示
+JSON変換(JS関数実行(『()=>Promise.resolve({x:10})』, []))を表示
+JS関数実行(『()=>Promise.resolve("s")』, [])を表示
+JS関数実行(『()=>Promise.resolve(true)』, [])を表示
+JS関数実行(『()=>Promise.resolve(null)』, [])を表示
+JS関数実行(『()=>Promise.resolve()』, [])を表示

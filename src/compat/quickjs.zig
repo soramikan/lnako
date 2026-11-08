@@ -295,7 +295,7 @@ pub const unsupported_call_argument_message = "JS関数実行 does not support n
 
 /// `JS関数実行` の戻り値が浅い配列/辞書へ変換できないときの文言。
 /// AOT compat（`src/runtime/aot/compat_js.zig`）と同じ文言で失敗させる。
-pub const unsupported_call_result_message = "JS関数実行 does not support nested arrays or dictionaries, functions, promises, bigint, or bytes results yet";
+pub const unsupported_call_result_message = "JS関数実行 does not support nested arrays or dictionaries, functions, bigint, or bytes results yet";
 
 /// `JS関数実行` の戻り値（配列要素・辞書キー）を浅くコピーするときの上限。
 /// AOTの `safe_array_element_limit` と同じ値にして、疎配列の巨大lengthや
@@ -632,8 +632,9 @@ fn isCompatCommand(name: []const u8) bool {
 }
 
 /// `JS関数実行` のexternal関数呼出し。戻り値はプリミティブ＋浅い配列/辞書だけを
-/// 許可する（AOTと同じ変換規則・同じ文言）。Nako関数値の呼出しはこの経路を
-/// 通らないため制限しない。
+/// 許可する（AOTと同じ変換規則・同じ文言）。戻り値がPromiseなら `JS実行` と同じ
+/// drain/await経路で解決値を待ち、reject/pendingはbridgeの文言で明示エラーにする。
+/// Nako関数値の呼出しはこの経路を通らないため制限しない。
 fn callExternalCallResult(state: *State, runtime: *Runtime, callable: Value, arguments: []const Value) !Value {
     if (callable != .function or callable.function.kind != .external) return error.QuickJsValueNotCallable;
     const external = callable.function.kind.external;
@@ -642,10 +643,21 @@ fn callExternalCallResult(state: *State, runtime: *Runtime, callable: Value, arg
     const function: *RawValue = @ptrCast(@alignCast(external.binding.handle));
     const raw_arguments = try rawArguments(state, runtime, engine, arguments);
     defer freeRawArguments(runtime.allocator(), raw_arguments);
-    const result = lnako_qjs_call(engine, function, raw_arguments.ptr, raw_arguments.len) orelse return quickJsError(engine);
+    var result = lnako_qjs_call(engine, function, raw_arguments.ptr, raw_arguments.len) orelse return quickJsError(engine);
     if (lnako_qjs_drain_jobs(engine) < 0) {
         lnako_qjs_value_free(result);
         return quickJsError(engine);
+    }
+    // `callPlugin` と同じく、Promiseは解決値を待ってから引数の書き戻しと
+    // 戻り値変換を行う。rejectはreject理由、pendingは
+    // "QuickJS promise is still pending" が `quickJsError` の文言になる。
+    if (lnako_qjs_kind(result) == .promise) {
+        const promise = result;
+        result = lnako_qjs_await(engine, promise) orelse {
+            lnako_qjs_value_free(promise);
+            return quickJsError(engine);
+        };
+        lnako_qjs_value_free(promise);
     }
     for (arguments, raw_arguments) |argument, raw_argument| {
         refreshExternal(state, runtime, argument, @constCast(raw_argument)) catch |failure| {
@@ -864,8 +876,9 @@ fn fromRaw(state: *State, runtime: *Runtime, raw: *RawValue) !Value {
 
 /// `JS関数実行` の戻り値変換。プリミティブに加えて、JS配列→Nako配列・
 /// JSオブジェクト→Nako辞書の浅いコピーだけを許可する。要素/値はプリミティブに
-/// 限り、ネストした配列/辞書・関数・Promise・BigInt・bytesは明示的な未対応
+/// 限り、ネストした配列/辞書・関数・BigInt・bytesは明示的な未対応
 /// エラーにする（AOTと同じ規則）。JS参照は保持しない（浅いコピー）。
+/// Promiseは呼出し側（`callExternalCallResult`）がawaitしてから渡す。
 fn fromCallResultRaw(state: *State, runtime: *Runtime, raw: *RawValue) !Value {
     var conversion = Conversion{ .state = state, .runtime = runtime, .mode = .call_result };
     defer conversion.seen.deinit(runtime.allocator());
@@ -1313,6 +1326,25 @@ fn evalCallResult(runtime: *Runtime, engine: *Engine, source: []const u8) !Value
     return fromCallResultRaw(&state, runtime, raw);
 }
 
+/// `JS関数実行` の呼出し経路（`callExternalCallResult`）をPromise戻り値で評価する。
+/// engineの所有権は呼出し側に残す（`State.deinit` でreleaseしない）。
+fn evalCallResultPromise(runtime: *Runtime, engine: *Engine, source: []const u8) !Value {
+    var state = State.init(true);
+    state.engine = engine;
+    state.runtime = runtime;
+    defer {
+        state.engine = null;
+        state.deinit();
+    }
+    const raw = lnako_qjs_eval(engine, source.ptr, source.len, "<JS関数実行Promiseテスト>") orelse return error.QuickJsConversionFailed;
+    var callable = try fromRaw(&state, runtime, raw);
+    // 実経路（`call`）と同じく、呼出し中の割当てでcallableが回収されないようrootする。
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    try roots.protect(&callable);
+    return callExternalCallResult(&state, runtime, callable, &.{});
+}
+
 test "JS関数実行の戻り値は浅い配列・辞書だけをNako値へ変換する" {
     if (!build_options.quickjs_enabled) return error.SkipZigTest;
     var runtime = Runtime.init(std.testing.allocator);
@@ -1370,7 +1402,7 @@ test "JS関数実行の戻り値は浅い配列・辞書だけをNako値へ変�
     try std.testing.expectEqual(@as(f64, 1), surrogate_key_value.dictionary.get(surrogate_keys[0]).?.number);
 }
 
-test "JS関数実行のネスト・関数・Promise・BigInt・bytes戻り値は明示エラーにする" {
+test "JS関数実行のネスト・関数・BigInt・bytes戻り値は明示エラーにする" {
     if (!build_options.quickjs_enabled) return error.SkipZigTest;
     var runtime = Runtime.init(std.testing.allocator);
     defer runtime.deinit();
@@ -1380,7 +1412,6 @@ test "JS関数実行のネスト・関数・Promise・BigInt・bytes戻り値は
         "[1,[2]]",
         "({x:{y:1}})",
         "()=>1",
-        "Promise.resolve(1)",
         "1n",
         "new Uint8Array([1,2])",
         "new ArrayBuffer(4)",
@@ -1392,6 +1423,63 @@ test "JS関数実行のネスト・関数・Promise・BigInt・bytes戻り値は
     for (cases) |source| {
         try std.testing.expectError(error.QuickJsUnsupportedCallResult, evalCallResult(&runtime, engine, source));
     }
+}
+
+test "JS関数実行のPromise戻り値は解決値をawaitして変換する" {
+    if (!build_options.quickjs_enabled) return error.SkipZigTest;
+    const engine = lnako_qjs_new() orelse return error.SkipZigTest;
+    defer lnako_qjs_release(engine);
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+
+    const number_value = try evalCallResultPromise(&runtime, engine, "()=>Promise.resolve(3)");
+    try std.testing.expectEqual(@as(f64, 3), number_value.number);
+
+    const string_value = try evalCallResultPromise(&runtime, engine, "()=>Promise.resolve('s')");
+    try std.testing.expectEqualSlices(u16, &.{'s'}, string_value.string.units);
+
+    const boolean_value = try evalCallResultPromise(&runtime, engine, "()=>Promise.resolve(true)");
+    try std.testing.expect(boolean_value.boolean);
+
+    const null_value = try evalCallResultPromise(&runtime, engine, "()=>Promise.resolve(null)");
+    try std.testing.expect(std.meta.activeTag(null_value) == .null_value);
+
+    const undefined_value = try evalCallResultPromise(&runtime, engine, "()=>Promise.resolve()");
+    try std.testing.expect(std.meta.activeTag(undefined_value) == .undefined);
+
+    const array_value = try evalCallResultPromise(&runtime, engine, "()=>Promise.resolve([1,2])");
+    try std.testing.expectEqual(@as(usize, 2), array_value.array.items.items.len);
+    try std.testing.expectEqual(@as(f64, 1), array_value.array.items.items[0].number);
+    try std.testing.expectEqual(@as(f64, 2), array_value.array.items.items[1].number);
+    // 解決値も浅いコピーで、JS参照を保持しない。
+    try std.testing.expect(array_value.array.external == null);
+
+    const dictionary_value = try evalCallResultPromise(&runtime, engine, "()=>Promise.resolve({x:10})");
+    const keys = dictionary_value.dictionary.keys();
+    try std.testing.expectEqual(@as(usize, 1), keys.len);
+    try std.testing.expectEqualSlices(u16, &.{'x'}, keys[0].units);
+    try std.testing.expectEqual(@as(f64, 10), dictionary_value.dictionary.get(keys[0]).?.number);
+    try std.testing.expect(dictionary_value.dictionary.external == null);
+
+    // 解決値が未対応型なら、await後の変換で既存の未対応エラーになる。
+    try std.testing.expectError(
+        error.QuickJsUnsupportedCallResult,
+        evalCallResultPromise(&runtime, engine, "()=>Promise.resolve(1n)"),
+    );
+    try std.testing.expectError(
+        error.QuickJsUnsupportedCallResult,
+        evalCallResultPromise(&runtime, engine, "()=>Promise.resolve([1,[2]])"),
+    );
+
+    // rejectはreject理由、pendingはbridgeの文言で明示エラーにする（無限待機しない）。
+    try std.testing.expectError(
+        error.QuickJsExecutionFailed,
+        evalCallResultPromise(&runtime, engine, "()=>Promise.reject(new Error('x'))"),
+    );
+    try std.testing.expectError(
+        error.QuickJsExecutionFailed,
+        evalCallResultPromise(&runtime, engine, "()=>new Promise(()=>{})"),
+    );
 }
 
 test "JS関数実行の戻り値配列は疎配列の巨大lengthで一括変換しない" {
