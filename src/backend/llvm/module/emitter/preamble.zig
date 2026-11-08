@@ -541,3 +541,61 @@ fn writeLlvmByteString(writer: *std.Io.Writer, bytes: []const u8) !void {
         }
     }
 }
+
+test "compat ESM manifestは同梱packageの全fieldを転記する" {
+    const allocator = std.testing.allocator;
+    const modules = [_]ir.JavaScriptModule{
+        .{
+            .path = "/src/plugin.mjs",
+            .source = "export default {};\n",
+            .is_plugin = true,
+            .namespaces = &.{"leftpad"},
+            .package_root = "/src/packages/leftpad",
+            .bare_aliases = &.{"left-pad"},
+        },
+    };
+    const packages = [_]ir.BundledPackage{
+        .{
+            .name = "left-pad",
+            .version = "1.0.0",
+            .license = "MIT",
+            .root = "/deps/npm_left-pad",
+            .kind = .npm,
+            .entries = &.{ "index.js", "lib/a.js" },
+        },
+        .{
+            .name = "leftpad",
+            .version = "1.2.3",
+            .license = "Apache-2.0",
+            .root = "/src/packages/leftpad",
+            .kind = .nako,
+        },
+    };
+    const bytes = try buildCompatEsmManifest(allocator, &modules, &packages);
+    defer allocator.free(bytes);
+
+    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, bytes, .{});
+    defer parsed.deinit();
+    const document = parsed.value.object;
+    try std.testing.expectEqual(@as(i64, 2), document.get("schema").?.integer);
+    const module_items = document.get("modules").?.array.items;
+    try std.testing.expectEqual(@as(usize, 1), module_items.len);
+    const module = module_items[0].object;
+    try std.testing.expectEqualStrings("/src/plugin.mjs", module.get("path").?.string);
+    try std.testing.expect(module.get("is_plugin").?.bool);
+    try std.testing.expectEqual(@as(usize, 1), module.get("bare_aliases").?.array.items.len);
+
+    const package_items = document.get("packages").?.array.items;
+    try std.testing.expectEqual(@as(usize, 2), package_items.len);
+    const npm_package = package_items[0].object;
+    try std.testing.expectEqualStrings("left-pad", npm_package.get("name").?.string);
+    try std.testing.expectEqualStrings("1.0.0", npm_package.get("version").?.string);
+    try std.testing.expectEqualStrings("MIT", npm_package.get("license").?.string);
+    try std.testing.expectEqualStrings("/deps/npm_left-pad", npm_package.get("root").?.string);
+    try std.testing.expectEqualStrings("npm", npm_package.get("kind").?.string);
+    try std.testing.expectEqual(@as(usize, 2), npm_package.get("entries").?.array.items.len);
+    const nako_package = package_items[1].object;
+    try std.testing.expectEqualStrings("nako", nako_package.get("kind").?.string);
+    try std.testing.expectEqualStrings("Apache-2.0", nako_package.get("license").?.string);
+    try std.testing.expectEqual(@as(usize, 0), nako_package.get("entries").?.array.items.len);
+}

@@ -204,6 +204,10 @@ function validateSbom(sbomPath, expectedPackages) {
     if (record.licenseDeclared !== expected.license) {
       fail(`SBOM の ${expected.name} の licenseDeclared が ${expected.license} ではありません: ${record.licenseDeclared}`);
     }
+    // 同梱 source の解析は行わないため、宣言値を結論にしない。
+    if (record.licenseConcluded !== "NOASSERTION") {
+      fail(`SBOM の ${expected.name} の licenseConcluded が NOASSERTION ではありません: ${record.licenseConcluded}`);
+    }
     if (!record.externalRefs?.some((ref) => ref.referenceLocator === expected.purl)) {
       fail(`SBOM の ${expected.name} に purl ${expected.purl} がありません`);
     }
@@ -306,6 +310,8 @@ async function main() {
       fail(`AOT build が registry へ要求しました: ${registry.requests.slice(beforeBuild).join(", ")}`);
     }
     // 同梱した npm instance と path 依存 ESM plugin の license が SBOM に載る。
+    // leftpad には開発用 package.json（GPL-3.0 / 9.9.9 / 別名）を置いてあるため、
+    // path 依存の metadata が nako.toml から採られることも同時に固定する。
     validateSbom(sbomPath, [
       { name: "left-pad", version: "1.0.0", license: "MIT", purl: "pkg:npm/left-pad@1.0.0" },
       { name: "leftpad", version: "1.0.0", license: "MIT", purl: "pkg:nako/leftpad@1.0.0" },
@@ -323,6 +329,13 @@ async function main() {
     const overwrittenInput = await run(options.compiler, ["build", "aot-main.nako3", "--compat-js", "--backend", "aot", "-o", binary, "--sbom", "aot-main.nako3"], { cwd: app, env });
     if (overwrittenInput.status === 0 || !`${overwrittenInput.stdout}${overwrittenInput.stderr}`.includes("異なるパス")) {
       fail("--sbom が入力ファイルと同じパスを受け付けました");
+    }
+    // 入力の hardlink は path が違っても同じ file なので拒否する。
+    const hardlinkPath = path.join(app, "aot-main-hardlink.nako3");
+    fs.linkSync(path.join(app, "aot-main.nako3"), hardlinkPath);
+    const hardlinkedSbom = await run(options.compiler, ["build", "aot-main.nako3", "--compat-js", "--backend", "aot", "-o", binary, "--sbom", "aot-main-hardlink.nako3"], { cwd: app, env });
+    if (hardlinkedSbom.status === 0 || !`${hardlinkedSbom.stdout}${hardlinkedSbom.stderr}`.includes("異なるパス")) {
+      fail("--sbom が入力ファイルの hardlink を受け付けました");
     }
     // embedded（同梱を行わない backend）との組み合わせも拒否する。
     const embeddedSbom = await run(options.compiler, ["build", "aot-main.nako3", "--compat-js", "--sbom", "embedded.spdx.json", "-o", binary], { cwd: app, env });

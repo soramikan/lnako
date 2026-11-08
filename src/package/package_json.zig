@@ -51,6 +51,10 @@ pub const Manifest = struct {
     /// `{ "type": "MIT", "url": ... }`）。どちらでもない場合は null。
     /// SBOM の `licenseDeclared` に使う（Node の解決には使わない）。
     license_declared: ?[]const u8 = null,
+    /// 旧形式 `licenses` 配列の全宣言（`["MIT", {"type":"ISC"}]` の値）。
+    /// 複数ライセンスの選択肢を失わないため、先頭だけで打ち切らない。
+    /// SBOM 側で SPDX 式へ連結する（宣言そのものは Node の解決に使わない）。
+    license_alternatives: []const []const u8 = &.{},
 
     pub fn deinit(self: *Manifest) void {
         self.arena.deinit();
@@ -85,10 +89,42 @@ pub fn parse(gpa: Allocator, bytes: []const u8) Error!Manifest {
         else => return error.PackageJsonInvalid,
     };
 
+    // 古い npm package は `licenses` 配列で宣言する
+    // （`["MIT", { "type": "ISC", "url": ... }]`）。先頭だけで打ち切らず、
+    // 解釈できる宣言を全て保持する（選択肢を SBOM で表現するため）。
+    // arena の所有権を manifest へ移す前に確保を済ませる。
+    var license_alternatives: []const []const u8 = &.{};
+    if (object.get("licenses")) |field| {
+        if (field == .array) {
+            var alternatives: std.ArrayListUnmanaged([]const u8) = .empty;
+            for (field.array.items) |item| {
+                const declared = switch (item) {
+                    .string => |text| text,
+                    .object => |license_object| licenseType(license_object),
+                    else => null,
+                };
+                const text = declared orelse continue;
+                if (text.len == 0) continue;
+                // 重複した宣言は SPDX 式の冗長性を避けるため 1 回だけ載せる。
+                var listed = false;
+                for (alternatives.items) |existing| {
+                    if (std.mem.eql(u8, existing, text)) {
+                        listed = true;
+                        break;
+                    }
+                }
+                if (!listed) alternatives.append(arena.allocator(), text) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                };
+            }
+            license_alternatives = alternatives.items;
+        }
+    }
+
     // この時点で arena への追加確保は完了している。`errdefer` はローカルの
     // `arena` を解放するため、ここから先で arena に確保を足さないこと
     // （足す場合は copy より前に寄せる）。
-    var manifest = Manifest{ .arena = arena };
+    var manifest = Manifest{ .arena = arena, .license_alternatives = license_alternatives };
     // `name` / `type` は存在するなら string 必須（Node 実測: 非 string は
     // ERR_INVALID_PACKAGE_CONFIG）。空文字はどちらも受理される。
     if (object.get("name")) |field| manifest.name = try stringField(field);
@@ -118,25 +154,6 @@ pub fn parse(gpa: Allocator, bytes: []const u8) Error!Manifest {
             .object => |license_object| licenseType(license_object),
             else => null,
         };
-    }
-    // `license` が無い古い npm package は `licenses` 配列で宣言する
-    // （`[{ "type": "MIT" }, ...]`）。先頭の解釈できる宣言だけを採る。
-    if (manifest.license_declared == null) {
-        if (object.get("licenses")) |field| {
-            if (field == .array) {
-                for (field.array.items) |item| {
-                    const declared = switch (item) {
-                        .string => |text| text,
-                        .object => |license_object| licenseType(license_object),
-                        else => null,
-                    };
-                    if (declared) |text| {
-                        manifest.license_declared = text;
-                        break;
-                    }
-                }
-            }
-        }
     }
     return manifest;
 }
@@ -373,14 +390,19 @@ test "package_json: license 宣言を SBOM 用に文字列と旧形式objectの�
     var empty_object = try parse(gpa, "{\"name\":\"pkg\",\"license\":{}}");
     defer empty_object.deinit();
     try testing.expect(empty_object.license_declared == null);
-    // `license` が無い旧形式は `licenses` 配列の先頭の解釈できる値を使う。
+    // 旧形式 `licenses` 配列は先頭で打ち切らず全選択肢を保持する。
     var legacy = try parse(gpa, "{\"name\":\"pkg\",\"licenses\":[{\"type\":\"BSD-2-Clause\",\"url\":\"x\"},{\"type\":\"MIT\"}]}");
     defer legacy.deinit();
-    try testing.expectEqualStrings("BSD-2-Clause", legacy.license_declared.?);
-    var legacy_string = try parse(gpa, "{\"name\":\"pkg\",\"licenses\":[\"ISC\"]}");
+    try testing.expect(legacy.license_declared == null);
+    try testing.expectEqual(@as(usize, 2), legacy.license_alternatives.len);
+    try testing.expectEqualStrings("BSD-2-Clause", legacy.license_alternatives[0]);
+    try testing.expectEqualStrings("MIT", legacy.license_alternatives[1]);
+    var legacy_string = try parse(gpa, "{\"name\":\"pkg\",\"licenses\":[\"ISC\",\"ISC\"]}");
     defer legacy_string.deinit();
-    try testing.expectEqualStrings("ISC", legacy_string.license_declared.?);
-    // `license` が優先される（`licenses` は見ない）。
+    // 重複は 1 回だけ。
+    try testing.expectEqual(@as(usize, 1), legacy_string.license_alternatives.len);
+    try testing.expectEqualStrings("ISC", legacy_string.license_alternatives[0]);
+    // `license` が宣言されていればそちらが優先される（`licenses` は併存し得る）。
     var both = try parse(gpa, "{\"name\":\"pkg\",\"license\":\"MIT\",\"licenses\":[\"ISC\"]}");
     defer both.deinit();
     try testing.expectEqualStrings("MIT", both.license_declared.?);

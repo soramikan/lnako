@@ -34,6 +34,16 @@ pub const InputOptions = struct {
     report_uninspected_packages: bool = false,
 };
 
+/// module の package 帰属。npm instance は `package_owner` が package root
+/// 自身、nako path 依存は canonical id（`pkg:...`）になるため、その差で
+/// 依存の出自を後段（manifest/SBOM）へ引き継ぐ。
+fn attributionFor(allocator: std.mem.Allocator, module: *const lnako.semantic.module_graph.LoadedModule) !?lnako.ir.nako_ir.PackageAttribution {
+    const root = module.package_root orelse return null;
+    const owner = module.package_owner;
+    const npm = if (owner) |value| !std.mem.startsWith(u8, value, "pkg:") else false;
+    return .{ .root = try allocator.dupe(u8, root), .npm = npm };
+}
+
 pub fn compileInput(allocator: std.mem.Allocator, io: std.Io, path: []const u8, options: InputOptions, stderr: *std.Io.Writer) !?lnako.ir.nako_ir.Program {
     return compileInputTraced(allocator, io, path, options, stderr, false);
 }
@@ -265,6 +275,24 @@ fn compileInputWithProviderTimed(allocator: std.mem.Allocator, path: []const u8,
             if (existing.package_root == null) {
                 existing.package_root = if (module.package_root) |root| try ir_program.arena.allocator().dupe(u8, root) else null;
             }
+            // 同一 module path を複数 package が共有し得る（symlink 経由の
+            // 入れ子 package 等）。`package_root` は実行時の代表 1 件なので、
+            // 同梱 package の帰属は全 root を別に保持する。
+            if (try attributionFor(ir_program.arena.allocator(), module)) |attribution| {
+                var listed = false;
+                for (existing.package_attributions) |current| {
+                    if (std.mem.eql(u8, current.root, attribution.root)) {
+                        listed = true;
+                        break;
+                    }
+                }
+                if (!listed) {
+                    const grown = try ir_program.arena.allocator().alloc(lnako.ir.nako_ir.PackageAttribution, existing.package_attributions.len + 1);
+                    for (existing.package_attributions, grown[0..existing.package_attributions.len]) |current, *copy| copy.* = current;
+                    grown[existing.package_attributions.len] = attribution;
+                    existing.package_attributions = grown;
+                }
+            }
             for (plugin_namespaces[module.index].items) |namespace| {
                 var listed = false;
                 for (existing.namespaces) |current| {
@@ -283,12 +311,18 @@ fn compileInputWithProviderTimed(allocator: std.mem.Allocator, path: []const u8,
         }
         const namespaces = try ir_program.arena.allocator().alloc([]const u8, plugin_namespaces[module.index].items.len);
         for (plugin_namespaces[module.index].items, namespaces) |namespace, *copy| copy.* = try ir_program.arena.allocator().dupe(u8, namespace);
+        const attributions: []const lnako.ir.nako_ir.PackageAttribution = if (try attributionFor(ir_program.arena.allocator(), module)) |attribution| blk: {
+            const single = try ir_program.arena.allocator().alloc(lnako.ir.nako_ir.PackageAttribution, 1);
+            single[0] = attribution;
+            break :blk single;
+        } else &.{};
         try javascript_modules.append(ir_program.arena.allocator(), .{
             .path = try ir_program.arena.allocator().dupe(u8, module.path),
             .source = try ir_program.arena.allocator().dupe(u8, module.source),
             .is_plugin = plugin_modules[module.index],
             .namespaces = namespaces,
             .package_root = if (module.package_root) |root| try ir_program.arena.allocator().dupe(u8, root) else null,
+            .package_attributions = attributions,
             .bare_aliases = &.{},
         });
     }

@@ -112,7 +112,9 @@ pub fn render(allocator: std.mem.Allocator, io: std.Io, program: *const lnako.ir
             .name = if (item.name.len == 0) "unknown" else item.name,
             .versionInfo = if (item.version.len == 0) "NOASSERTION" else item.version,
             .filesAnalyzed = files.items.len > file_start,
-            .licenseConcluded = license.value,
+            // 同梱 source の解析は行わないため、宣言値を「確認済みの結論」と
+            // して出さない（SPDX 2.3 では NOASSERTION が未解析を表す）。
+            .licenseConcluded = unknown_license,
             .licenseDeclared = license.value,
             .comment = license.comment,
             .externalRefs = external_refs,
@@ -126,8 +128,12 @@ pub fn render(allocator: std.mem.Allocator, io: std.Io, program: *const lnako.ir
 
     // namespace は package と license file の一覧の digest から作る
     // （同じ入力 = 同じ値。license の bytes が変われば namespace も変わる）。
+    const artifact_name = std.fs.path.basename(artifact_path);
     var digest: [32]u8 = undefined;
     var hasher = std.crypto.hash.sha2.Sha256.init(.{});
+    // 同じ依存でも出力名（文書名）が違えば別文書なので namespace も変える。
+    hasher.update(artifact_name);
+    hasher.update("\x00");
     for (sorted) |item| {
         hasher.update(item.name);
         hasher.update("\x00");
@@ -154,7 +160,6 @@ pub fn render(allocator: std.mem.Allocator, io: std.Io, program: *const lnako.ir
     hasher.final(&digest);
     const digest_hex = std.fmt.bytesToHex(digest, .lower);
 
-    const artifact_name = std.fs.path.basename(artifact_path);
     const document = Document{
         .name = try std.fmt.allocPrint(temporary, "compat-aot-bundled-{s}", .{artifact_name}),
         .documentNamespace = try std.fmt.allocPrint(temporary, "https://github.com/soramikan/lnako/spdx/compat-aot/{s}", .{digest_hex}),
@@ -279,6 +284,10 @@ fn appendPercentEncoded(allocator: std.mem.Allocator, buffer: *std.ArrayListUnma
 /// 正規化した場合は元の宣言を `comment` に残す（追跡性を落とさない）。
 const LicenseField = struct { value: []const u8, comment: ?[]const u8 };
 
+/// 宣言 license を SPDX 2.3 の `licenseDeclared` に使える形へ正規化する。
+/// 解析は行わないため、SPDX の式として解釈できない宣言は推測せず
+/// `NOASSERTION` にし、元の宣言を `comment` に残す（`LicenseRef-...` は
+/// 対応する抽出ライセンス情報が必須なので、定義を出せないここでは使わない）。
 fn spdxLicense(allocator: std.mem.Allocator, declared: []const u8) !LicenseField {
     if (declared.len == 0) return .{ .value = unknown_license, .comment = null };
     if (std.ascii.eqlIgnoreCase(declared, "NOASSERTION")) return .{ .value = unknown_license, .comment = null };
@@ -288,71 +297,108 @@ fn spdxLicense(allocator: std.mem.Allocator, declared: []const u8) !LicenseField
         return .{ .value = "NONE", .comment = try commentFor(allocator, declared) };
     }
     if (isSpdxExpression(declared)) return .{ .value = declared, .comment = null };
-    return .{
-        .value = try licenseRef(allocator, declared),
-        .comment = try commentFor(allocator, declared),
-    };
+    return .{ .value = unknown_license, .comment = try commentFor(allocator, declared) };
 }
 
 fn commentFor(allocator: std.mem.Allocator, declared: []const u8) ![]const u8 {
     return std.fmt.allocPrint(allocator, "declared license: {s}", .{declared});
 }
 
-/// SPDX license expression の近似判定。括弧を除いた token が
-/// `AND`/`OR`/`WITH` で交互に連結された identifier（`[A-Za-z0-9][A-Za-z0-9.+-]*`）
-/// なら受理する。厳密な式パーサではなく、明らかに式でない表記
-/// （空白区切りの語、`/`、全角文字など）を弾くための境界。
+/// SPDX license expression の判定。Annex D の文法に沿って
+/// `primary (AND|OR primary)*`、`primary = "(" expr ")" | id ["+"] ["WITH" id]`
+/// を再帰下降で検査する。ライセンス ID 一覧との照合は行わない（宣言値の
+/// 構文妥当性だけを見る）。
 fn isSpdxExpression(declared: []const u8) bool {
-    // 括弧の対応を先に検査する（`(MIT` のような不平衡を式として通さない）。
-    var depth: usize = 0;
-    for (declared) |byte| {
-        if (byte == '(') {
-            depth += 1;
-        } else if (byte == ')') {
-            if (depth == 0) return false;
-            depth -= 1;
+    var tokens: [64][]const u8 = undefined;
+    var count: usize = 0;
+    var index: usize = 0;
+    while (index < declared.len) {
+        const byte = declared[index];
+        if (byte == ' ' or byte == '\t' or byte == '\r' or byte == '\n') {
+            index += 1;
+            continue;
         }
-    }
-    if (depth != 0) return false;
-    var tokens = std.mem.tokenizeAny(u8, declared, " \t()");
-    var expect_identifier = true;
-    var identifier_count: usize = 0;
-    while (tokens.next()) |token| {
-        if (token.len == 0) return false;
-        if (!expect_identifier) {
-            if (std.mem.eql(u8, token, "AND") or std.mem.eql(u8, token, "OR") or std.mem.eql(u8, token, "WITH")) {
-                expect_identifier = true;
-                continue;
-            }
-            return false;
+        if (count >= tokens.len) return false;
+        if (byte == '(' or byte == ')') {
+            tokens[count] = declared[index .. index + 1];
+            count += 1;
+            index += 1;
+            continue;
         }
-        if (!isSpdxIdentifier(token)) return false;
-        identifier_count += 1;
-        expect_identifier = false;
+        const start = index;
+        while (index < declared.len) : (index += 1) {
+            const current = declared[index];
+            if (current == ' ' or current == '\t' or current == '\r' or current == '\n' or current == '(' or current == ')') break;
+        }
+        tokens[count] = declared[start..index];
+        count += 1;
     }
-    return identifier_count > 0 and !expect_identifier;
+    if (count == 0) return false;
+    var parser = ExpressionParser{ .tokens = tokens[0..count] };
+    return parser.parseExpression() and parser.index == count;
 }
 
+const ExpressionParser = struct {
+    tokens: []const []const u8,
+    index: usize = 0,
+
+    fn peek(self: *const ExpressionParser) ?[]const u8 {
+        return if (self.index < self.tokens.len) self.tokens[self.index] else null;
+    }
+
+    fn parseExpression(self: *ExpressionParser) bool {
+        if (!self.parsePrimary()) return false;
+        while (self.peek()) |token| {
+            if (!isBinaryOperator(token)) break;
+            self.index += 1;
+            if (!self.parsePrimary()) return false;
+        }
+        return true;
+    }
+
+    fn parsePrimary(self: *ExpressionParser) bool {
+        const token = self.peek() orelse return false;
+        if (std.mem.eql(u8, token, "(")) {
+            self.index += 1;
+            if (!self.parseExpression()) return false;
+            const closing = self.peek() orelse return false;
+            if (!std.mem.eql(u8, closing, ")")) return false;
+            self.index += 1;
+            return true;
+        }
+        if (!isSpdxIdentifier(token)) return false;
+        self.index += 1;
+        if (self.peek()) |next| {
+            if (std.mem.eql(u8, next, "WITH")) {
+                self.index += 1;
+                const exception = self.peek() orelse return false;
+                if (!isSpdxIdentifier(exception)) return false;
+                self.index += 1;
+            }
+        }
+        return true;
+    }
+};
+
+fn isBinaryOperator(token: []const u8) bool {
+    return std.mem.eql(u8, token, "AND") or std.mem.eql(u8, token, "OR");
+}
+
+/// SPDX の `idstring`（LicenseRef を含む）。`+` は末尾の 1 個だけ許可する。
+/// 演算子や未対応の表記（空白区切りの語、全角、`/` 等）は識別子ではない。
 fn isSpdxIdentifier(token: []const u8) bool {
-    if (token.len == 0 or !std.ascii.isAlphanumeric(token[0])) return false;
-    for (token[1..]) |byte| {
-        if (std.ascii.isAlphanumeric(byte) or byte == '.' or byte == '-' or byte == '+') continue;
+    if (std.mem.eql(u8, token, "AND") or std.mem.eql(u8, token, "OR") or std.mem.eql(u8, token, "WITH")) return false;
+    var core = token;
+    if (std.mem.endsWith(u8, core, "+")) {
+        core = core[0 .. core.len - 1];
+        if (std.mem.endsWith(u8, core, "+")) return false;
+    }
+    if (core.len == 0 or !std.ascii.isAlphanumeric(core[0])) return false;
+    for (core[1..]) |byte| {
+        if (std.ascii.isAlphanumeric(byte) or byte == '.' or byte == '-') continue;
         return false;
     }
     return true;
-}
-
-/// SPDX の license list に無い表記を `LicenseRef-<sanitized>` へ退避する。
-fn licenseRef(allocator: std.mem.Allocator, declared: []const u8) ![]u8 {
-    var sanitized: std.ArrayListUnmanaged(u8) = .empty;
-    defer sanitized.deinit(allocator);
-    for (declared) |byte| {
-        const mapped = if (std.ascii.isAlphanumeric(byte) or byte == '.' or byte == '-') byte else '-';
-        try sanitized.append(allocator, mapped);
-    }
-    var trimmed = std.mem.trim(u8, sanitized.items, "-");
-    if (trimmed.len == 0) trimmed = "unknown";
-    return std.fmt.allocPrint(allocator, "LicenseRef-{s}", .{trimmed});
 }
 
 /// `LICENSE` / `LICENSE-MIT` / `COPYING` / `NOTICE` 等を license 関連 file と
@@ -536,7 +582,7 @@ test "license fileを持つpackageはfilesAnalyzed=trueになる" {
 
 test "宣言licenseをSPDXのlicense expressionへ正規化する" {
     const allocator = std.testing.allocator;
-    const valid = [_][]const u8{ "MIT", "Apache-2.0", "BSD-3-Clause", "MIT OR Apache-2.0", "GPL-2.0-only WITH Classpath-exception-2.0", "(MIT OR Apache-2.0) AND BSD-3-Clause" };
+    const valid = [_][]const u8{ "MIT", "Apache-2.0", "BSD-3-Clause", "MIT OR Apache-2.0", "GPL-2.0-only WITH Classpath-exception-2.0", "(MIT OR Apache-2.0) AND BSD-3-Clause", "GPL-2.0+", "(MIT)" };
     for (valid) |declared| {
         var arena = std.heap.ArenaAllocator.init(allocator);
         defer arena.deinit();
@@ -544,18 +590,14 @@ test "宣言licenseをSPDXのlicense expressionへ正規化する" {
         try std.testing.expectEqualStrings(declared, field.value);
         try std.testing.expect(field.comment == null);
     }
-    // npm 慣用の非SPDX表記は LicenseRef- へ退避し、元の宣言を comment に残す。
-    const cases = [_]struct { declared: []const u8, expected: []const u8 }{
-        .{ .declared = "MIT/X11", .expected = "LicenseRef-MIT-X11" },
-        .{ .declared = "(MIT", .expected = "LicenseRef-MIT" },
-        .{ .declared = "MIT and Apache-2.0", .expected = "LicenseRef-MIT-and-Apache-2.0" },
-        .{ .declared = "独自ライセンス", .expected = "LicenseRef-unknown" },
-    };
-    for (cases) |item| {
+    // 解析しないため、SPDX 式として解釈できない宣言は結論せず NOASSERTION にし、
+    // 元の宣言を comment に残す（未定義の LicenseRef は出力しない）。
+    const invalid = [_][]const u8{ "MIT/X11", "(MIT", "MIT ()", "AND MIT", "MIT AND", "MIT AND OR BSD", "MIT WITH", "独自ライセンス", "MIT and Apache-2.0", "GPL-2.0++", "MIT/Terms" };
+    for (invalid) |declared| {
         var arena = std.heap.ArenaAllocator.init(allocator);
         defer arena.deinit();
-        const field = try spdxLicense(arena.allocator(), item.declared);
-        try std.testing.expectEqualStrings(item.expected, field.value);
+        const field = try spdxLicense(arena.allocator(), declared);
+        try std.testing.expectEqualStrings("NOASSERTION", field.value);
         try std.testing.expect(field.comment != null);
     }
     var npm_arena = std.heap.ArenaAllocator.init(allocator);
@@ -570,6 +612,59 @@ test "宣言licenseをSPDXのlicense expressionへ正規化する" {
     const empty = try spdxLicense(npm_arena.allocator(), "");
     try std.testing.expectEqualStrings("NOASSERTION", empty.value);
     try std.testing.expect(empty.comment == null);
+}
+
+test "licenseConcludedは宣言値を結論にせずNOASSERTIONを出す" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var temporary = lnako.package.test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "npm_declared");
+    try temporary.dir.writeFile(io, .{ .sub_path = "npm_declared/LICENSE", .data = "MIT\n" });
+    const root = try temporary.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(root);
+    const package_root = try std.fs.path.join(allocator, &.{ root, "npm_declared" });
+    defer allocator.free(package_root);
+
+    var program = lnako.ir.nako_ir.Program{ .arena = std.heap.ArenaAllocator.init(allocator), .functions = &.{}, .module_entries = &.{} };
+    defer program.deinit();
+    program.bundled_packages = try program.arena.allocator().dupe(lnako.ir.nako_ir.BundledPackage, &.{
+        .{ .name = "declared", .version = "1.0.0", .license = "MIT", .root = package_root, .kind = .npm },
+    });
+    const bytes = try render(allocator, io, &program, "/tmp/out/app");
+    defer allocator.free(bytes);
+    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, bytes, .{});
+    defer parsed.deinit();
+    const package = parsed.value.object.get("packages").?.array.items[0].object;
+    // 宣言は licenseDeclared に残し、未解析の結論は NOASSERTION にする。
+    try std.testing.expectEqualStrings("MIT", package.get("licenseDeclared").?.string);
+    try std.testing.expectEqualStrings("NOASSERTION", package.get("licenseConcluded").?.string);
+}
+
+test "documentNamespaceは出力名と同梱entryで変わる" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var program = lnako.ir.nako_ir.Program{ .arena = std.heap.ArenaAllocator.init(allocator), .functions = &.{}, .module_entries = &.{} };
+    defer program.deinit();
+    program.bundled_packages = try program.arena.allocator().dupe(lnako.ir.nako_ir.BundledPackage, &.{
+        .{ .name = "pkg", .version = "1.0.0", .license = "MIT", .root = "/nonexistent/npm_pkg", .kind = .npm, .entries = &.{"index.js"} },
+    });
+    const first = try render(allocator, io, &program, "/tmp/out/app");
+    defer allocator.free(first);
+    const same = try render(allocator, io, &program, "/tmp/out/app");
+    defer allocator.free(same);
+    try std.testing.expectEqualStrings(first, same);
+    const other_name = try render(allocator, io, &program, "/tmp/out/other");
+    defer allocator.free(other_name);
+    try std.testing.expect(!std.mem.eql(u8, first, other_name));
+
+    program.bundled_packages[0].entries = &.{"index.js"};
+    const with_entries = try render(allocator, io, &program, "/tmp/out/app");
+    defer allocator.free(with_entries);
+    program.bundled_packages[0].entries = &.{};
+    const without_entries = try render(allocator, io, &program, "/tmp/out/app");
+    defer allocator.free(without_entries);
+    try std.testing.expect(!std.mem.eql(u8, with_entries, without_entries));
 }
 
 test "license file名はLICENSE系の変種を採りcode fileを除外する" {

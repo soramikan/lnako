@@ -105,6 +105,10 @@ pub fn sameDestination(allocator: std.mem.Allocator, io: std.Io, left: []const u
     const right_absolute = try absoluteForComparison(allocator, io, right);
     defer allocator.free(right_absolute);
     if (std.mem.eql(u8, left_absolute, right_absolute)) return true;
+    // 既存 file は path に加えてファイル識別子でも比較する。hardlink は
+    // 異なる path でも同じ file を指すため、path 比較だけでは --sbom が
+    // 入力や生成物を切り詰める指定を見逃す。
+    if (sameFileIdentity(io, left_absolute, right_absolute)) return true;
     // case-insensitive な FS（Windows、macOS の既定 APFS）では、まだ存在
     // しない出力先の大小文字違いを実体 path で区別できない。親 directory が
     // 同一で basename だけが大小文字で異なる場合は同じ file とみなす
@@ -118,6 +122,17 @@ pub fn sameDestination(allocator: std.mem.Allocator, io: std.Io, left: []const u
         }
     }
     return false;
+}
+
+/// 2 つの path が同じ file を指すか（hardlink 検出）。file 識別子は
+/// `Stat.inode`（POSIX は inode、Windows は FileIndex）を使う。どちらかが
+/// 存在しない・stat できない場合は「同一でない」として false を返し、
+/// 呼出し側は path 比較の結果を維持する。
+fn sameFileIdentity(io: std.Io, left: []const u8, right: []const u8) bool {
+    const left_stat = std.Io.Dir.cwd().statFile(io, left, .{}) catch return false;
+    const right_stat = std.Io.Dir.cwd().statFile(io, right, .{}) catch return false;
+    if (left_stat.kind != .file or right_stat.kind != .file) return false;
+    return left_stat.inode == right_stat.inode;
 }
 
 /// symlink を辿る上限。循環 link で無限再帰しないための固定値。
@@ -153,13 +168,15 @@ fn absoluteForComparisonDepth(allocator: std.mem.Allocator, io: std.Io, path: []
             return absoluteForComparisonDepth(allocator, io, target_absolute, depth + 1);
         } else |_| {}
     }
-    // 親 directory の実体 path + basename で比較する。
+    // 親 directory の実体 path + basename で比較する。basename は
+    // normalized への slice なので、join が終わるまで解放しない。
     const parent = std.fs.path.dirname(normalized) orelse return normalized;
     const basename = std.fs.path.basename(normalized);
     const real_parent = std.Io.Dir.cwd().realPathFileAlloc(io, parent, allocator) catch return normalized;
     defer allocator.free(real_parent);
+    const combined = try std.fs.path.join(allocator, &.{ real_parent, basename });
     allocator.free(normalized);
-    return std.fs.path.join(allocator, &.{ real_parent, basename });
+    return combined;
 }
 
 /// 相対 path は cwd 基準で絶対化し、`.`/`..` を正規化する（symlink は見ない）。
@@ -316,6 +333,28 @@ test "--sbomの出力先が生成物・入力と同じfileかを実体pathで判
     defer allocator.free(future_app);
     try std.testing.expect(try sameDestination(allocator, io, real_app, real_alias));
     try std.testing.expect(try sameDestination(allocator, io, future_app, real_dangling));
+
+    // 親 directory は実在し対象 file だけが未作成の場合は、親の実体 path と
+    // basename で比較する（basename は解放済み buffer を参照しない）。
+    const missing_a = try std.fs.path.join(allocator, &.{ root, "future-a" });
+    defer allocator.free(missing_a);
+    const missing_b = try std.fs.path.join(allocator, &.{ root, "future-b" });
+    defer allocator.free(missing_b);
+    try std.testing.expect(!try sameDestination(allocator, io, missing_a, missing_b));
+    try std.testing.expect(try sameDestination(allocator, io, missing_a, missing_a));
+    const missing_dot = try std.fs.path.join(allocator, &.{ root, ".", "future-a" });
+    defer allocator.free(missing_dot);
+    try std.testing.expect(try sameDestination(allocator, io, missing_a, missing_dot));
+
+    // hardlink は別 path でも同じ file として扱う（--sbom が入力/生成物を
+    // 切り詰める指定を拒否する）。
+    try temporary.dir.writeFile(io, .{ .sub_path = "source.nako3", .data = "値=1\n" });
+    try std.Io.Dir.hardLink(temporary.dir, "source.nako3", temporary.dir, "link.nako3", io, .{});
+    const source_path = try std.fs.path.join(allocator, &.{ root, "source.nako3" });
+    defer allocator.free(source_path);
+    const link_path = try std.fs.path.join(allocator, &.{ root, "link.nako3" });
+    defer allocator.free(link_path);
+    try std.testing.expect(try sameDestination(allocator, io, source_path, link_path));
 }
 
 test "buildの--sbom出力先を解析する" {

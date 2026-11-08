@@ -214,6 +214,14 @@ pub const NativePluginPackage = struct {
     namespace: []const u8,
 };
 
+/// JavaScript module を所有する package の帰属。`npm` は依存の出自
+/// （npm instance か path 依存の nako package か）を表し、同梱 package の
+/// metadata をどちらの manifest から読むかの判断に使う。
+pub const PackageAttribution = struct {
+    root: []const u8,
+    npm: bool = false,
+};
+
 pub const JavaScriptModule = struct {
     path: []const u8,
     source: []const u8,
@@ -234,6 +242,11 @@ pub const JavaScriptModule = struct {
     /// QuickJS module_normalize が package 所有 referrer から bare を
     /// この path へ写す。空なら bare 別名なし。
     bare_aliases: []const []const u8 = &.{},
+    /// この module を所有する package の全帰属。`package_root` は実行時の
+    /// 解決境界に使う代表 1 件だけなので、同一 ESM file を複数 package が
+    /// 共有する場合（symlink 経由の入れ子 package 等）の帰属は失われる。
+    /// 同梱 package の記録（manifest/SBOM）はこちらを使って全 root を拾う。
+    package_attributions: []const PackageAttribution = &.{},
 };
 
 /// 生成物へ source を同梱した package（`--compat-js` の crate 依存）。
@@ -326,6 +339,12 @@ pub const Program = struct {
             module.namespaces = try cloneStrings(allocator, module.namespaces);
             module.bare_aliases = try cloneStrings(allocator, module.bare_aliases);
             module.package_root = if (module.package_root) |root| try allocator.dupe(u8, root) else null;
+            const attributions = try allocator.alloc(PackageAttribution, module.package_attributions.len);
+            for (module.package_attributions, attributions) |source, *target| target.* = .{
+                .root = try allocator.dupe(u8, source.root),
+                .npm = source.npm,
+            };
+            module.package_attributions = attributions;
         }
         const bundled_packages = try allocator.alloc(BundledPackage, self.bundled_packages.len);
         for (self.bundled_packages, bundled_packages) |source_package, *target_package| {

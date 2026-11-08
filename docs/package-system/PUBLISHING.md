@@ -94,6 +94,8 @@ lnako package verify out.npkg --compat-js --feature http
 
 `build --compat-js --backend aot --sbom <path>` は、生成物へ同梱した npm/ESM package の
 license 一覧を SPDX 2.3 JSON として出力します（`--sbom` 無指定なら従来どおり何も出しません）。
+同梱 package の同一性は path ではなく file 識別子でも比較するため、生成物や入力 source の
+hardlink を `--sbom` に指定した場合も拒否します。
 
 lnako 自身の配布アーカイブは、通常 AOT runtime（`liblnako_runtime.a` / `lnako_runtime.lib`）と compat AOT runtime（`liblnako_runtime_compat.a` / `lnako_runtime_compat.lib`）の両方を `lib/` へ同梱します。`build --compat-js` の既定は embedded で、`--backend aot` は明示的な opt-in です。展開した配布物でも `--backend aot` が動作します。
 
