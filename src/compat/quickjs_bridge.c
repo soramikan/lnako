@@ -1094,6 +1094,41 @@ LnakoQuickJsValue *lnako_qjs_get_property(const LnakoQuickJsValue *value, const 
     return value && name ? wrap_owned(value->engine, JS_GetPropertyStr(value->engine->context, value->value, name)) : NULL;
 }
 
+LnakoQuickJsValue *lnako_qjs_get_own_property(const LnakoQuickJsValue *value, const char *name) {
+    if (!value || !name) return NULL;
+    JSContext *ctx = value->engine->context;
+    JSAtom atom = JS_NewAtom(ctx, name);
+    if (atom == JS_ATOM_NULL) {
+        set_error(value->engine);
+        return NULL;
+    }
+    JSPropertyDescriptor desc;
+    int result = JS_GetOwnProperty(ctx, &desc, value->value, atom);
+    JS_FreeAtom(ctx, atom);
+    if (result < 0) {
+        set_error(value->engine);
+        return NULL;
+    }
+    if (result == 0) return wrap_owned(value->engine, JS_UNDEFINED);
+    JS_FreeValue(ctx, desc.getter);
+    JS_FreeValue(ctx, desc.setter);
+    return wrap_owned(value->engine, desc.value);
+}
+
+int lnako_qjs_has_own_property(const LnakoQuickJsValue *value, const char *name) {
+    if (!value || !name) return -1;
+    JSContext *ctx = value->engine->context;
+    JSAtom atom = JS_NewAtom(ctx, name);
+    if (atom == JS_ATOM_NULL) {
+        set_error(value->engine);
+        return -1;
+    }
+    int result = JS_GetOwnProperty(ctx, NULL, value->value, atom);
+    JS_FreeAtom(ctx, atom);
+    if (result < 0) set_error(value->engine);
+    return result < 0 ? -1 : (result != 0);
+}
+
 int lnako_qjs_set_property(LnakoQuickJsValue *value, const char *name, const LnakoQuickJsValue *item) {
     if (!value || !item || value->engine != item->engine || !name) return -1;
     int result = JS_SetPropertyStr(value->engine->context, value->value, name, JS_DupValue(value->engine->context, item->value));
@@ -1116,6 +1151,66 @@ int lnako_qjs_clear_properties(LnakoQuickJsValue *value) {
     }
     js_free(value->engine->context, properties);
     if (result < 0) set_error(value->engine);
+    return result;
+}
+
+int lnako_qjs_define_property(LnakoQuickJsValue *value, const char *name, const LnakoQuickJsValue *item) {
+    if (!value || !item || value->engine != item->engine || !name) return -1;
+    JSContext *ctx = value->engine->context;
+    int result = JS_DefinePropertyValueStr(ctx, value->value, name, JS_DupValue(ctx, item->value), JS_PROP_C_W_E);
+    if (result < 0) set_error(value->engine);
+    return result;
+}
+
+int lnako_qjs_delete_property(LnakoQuickJsValue *value, const char *name) {
+    if (!value || !name) return -1;
+    JSContext *ctx = value->engine->context;
+    JSAtom atom = JS_NewAtom(ctx, name);
+    if (atom == JS_ATOM_NULL) {
+        set_error(value->engine);
+        return -1;
+    }
+    int result = JS_DeleteProperty(ctx, value->value, atom, JS_PROP_THROW);
+    JS_FreeAtom(ctx, atom);
+    if (result < 0) set_error(value->engine);
+    return result < 0 ? -1 : 0;
+}
+
+int lnako_qjs_has_index(const LnakoQuickJsValue *value, uint32_t index) {
+    if (!value) return -1;
+    JSContext *ctx = value->engine->context;
+    JSAtom atom = JS_NewAtomUInt32(ctx, index);
+    if (atom == JS_ATOM_NULL) {
+        set_error(value->engine);
+        return -1;
+    }
+    int result = JS_GetOwnProperty(ctx, NULL, value->value, atom);
+    JS_FreeAtom(ctx, atom);
+    if (result < 0) set_error(value->engine);
+    return result < 0 ? -1 : (result != 0);
+}
+
+int lnako_qjs_delete_index(LnakoQuickJsValue *value, uint32_t index) {
+    if (!value) return -1;
+    JSContext *ctx = value->engine->context;
+    JSAtom atom = JS_NewAtomUInt32(ctx, index);
+    if (atom == JS_ATOM_NULL) {
+        set_error(value->engine);
+        return -1;
+    }
+    int result = JS_DeleteProperty(ctx, value->value, atom, JS_PROP_THROW);
+    JS_FreeAtom(ctx, atom);
+    if (result < 0) set_error(value->engine);
+    return result < 0 ? -1 : 0;
+}
+
+int lnako_qjs_strict_equal(const LnakoQuickJsValue *left, const LnakoQuickJsValue *right) {
+    if (!left || !right || left->engine != right->engine) return 0;
+    int result = JS_StrictEq(left->engine->context, left->value, right->value);
+    if (result < 0) {
+        set_error(left->engine);
+        return -1;
+    }
     return result;
 }
 

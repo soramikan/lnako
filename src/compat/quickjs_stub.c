@@ -39,8 +39,15 @@ LnakoQuickJsValue *lnako_qjs_get_index(const LnakoQuickJsValue *value, uint32_t 
 int lnako_qjs_set_index(LnakoQuickJsValue *value, uint32_t index, const LnakoQuickJsValue *item) { (void)value; (void)index; (void)item; return -1; }
 int lnako_qjs_set_array_length(LnakoQuickJsValue *value, uint32_t length) { (void)value; (void)length; return -1; }
 LnakoQuickJsValue *lnako_qjs_get_property(const LnakoQuickJsValue *value, const char *name) { (void)value; (void)name; return 0; }
+LnakoQuickJsValue *lnako_qjs_get_own_property(const LnakoQuickJsValue *value, const char *name) { (void)value; (void)name; return 0; }
+int lnako_qjs_has_own_property(const LnakoQuickJsValue *value, const char *name) { (void)value; (void)name; return -1; }
 int lnako_qjs_set_property(LnakoQuickJsValue *value, const char *name, const LnakoQuickJsValue *item) { (void)value; (void)name; (void)item; return -1; }
 int lnako_qjs_clear_properties(LnakoQuickJsValue *value) { (void)value; return -1; }
+int lnako_qjs_define_property(LnakoQuickJsValue *value, const char *name, const LnakoQuickJsValue *item) { (void)value; (void)name; (void)item; return -1; }
+int lnako_qjs_delete_property(LnakoQuickJsValue *value, const char *name) { (void)value; (void)name; return -1; }
+int lnako_qjs_has_index(const LnakoQuickJsValue *value, uint32_t index) { (void)value; (void)index; return -1; }
+int lnako_qjs_delete_index(LnakoQuickJsValue *value, uint32_t index) { (void)value; (void)index; return -1; }
+int lnako_qjs_strict_equal(const LnakoQuickJsValue *left, const LnakoQuickJsValue *right) { (void)left; (void)right; return 0; }
 LnakoQuickJsKeys *lnako_qjs_keys(const LnakoQuickJsValue *value) { (void)value; return 0; }
 size_t lnako_qjs_keys_length(const LnakoQuickJsKeys *keys) { (void)keys; return 0; }
 const char *lnako_qjs_key(const LnakoQuickJsKeys *keys, size_t index, size_t *length) { (void)keys; (void)index; (void)length; return 0; }

@@ -59,8 +59,16 @@ extern fn lnako_qjs_set_property(value: *RawValue, name: [*:0]const u8, item: *c
 extern fn lnako_qjs_array_length(value: *const RawValue) u32;
 extern fn lnako_qjs_get_index(value: *const RawValue, index: u32) ?*RawValue;
 extern fn lnako_qjs_get_property(value: *const RawValue, name: [*:0]const u8) ?*RawValue;
+extern fn lnako_qjs_get_own_property(value: *const RawValue, name: [*:0]const u8) ?*RawValue;
+extern fn lnako_qjs_has_own_property(value: *const RawValue, name: [*:0]const u8) c_int;
 extern fn lnako_qjs_set_array_length(value: *RawValue, length: u32) c_int;
 extern fn lnako_qjs_clear_properties(value: *RawValue) c_int;
+extern fn lnako_qjs_define_property(value: *RawValue, name: [*:0]const u8, item: *const RawValue) c_int;
+extern fn lnako_qjs_delete_property(value: *RawValue, name: [*:0]const u8) c_int;
+extern fn lnako_qjs_has_index(value: *const RawValue, index: u32) c_int;
+extern fn lnako_qjs_delete_index(value: *RawValue, index: u32) c_int;
+extern fn lnako_qjs_strict_equal(left: *const RawValue, right: *const RawValue) c_int;
+extern fn lnako_qjs_value_engine(value: *const RawValue) ?*Engine;
 extern fn lnako_qjs_identity(value: *const RawValue) usize;
 extern fn lnako_qjs_keys(value: *const RawValue) ?*Keys;
 extern fn lnako_qjs_keys_length(keys: *const Keys) usize;
@@ -212,31 +220,68 @@ fn externalRaw(value: Value) !?*RawValue {
 /// 持たない入れ子の配列・辞書は再帰的にJSコピーを作る。Nako側の循環参照は
 /// `in_progress`（Nako Object pointer → 生成中のJS参照）で止める。
 /// 関数・BigInt・bytesは書き戻せないため`error.QuickJsUnsupportedArgument`にする。
+/// sync中の変換キャッシュ。in_progressは循環検出、completedは同期中に変換した
+/// 子を共有・再同期するために保持する。completedのRawValueはこの同期の終了時に
+/// まとめて解放する。
 const SyncState = struct {
     in_progress: std.AutoHashMapUnmanaged(usize, *RawValue) = .empty,
+    completed: std.AutoHashMapUnmanaged(usize, *RawValue) = .empty,
+
+    fn deinit(self: *SyncState, allocator: std.mem.Allocator) void {
+        var iterator = self.completed.valueIterator();
+        while (iterator.next()) |raw| lnako_qjs_value_free(raw.*);
+        self.completed.deinit(allocator);
+        self.in_progress.deinit(allocator);
+    }
 };
 
-fn syncExternalRaw(runtime: *state.Runtime, engine_value: *Engine, value: Value, raw: *RawValue) anyerror!void {
-    var sync = SyncState{};
-    defer sync.in_progress.deinit(runtime.allocator);
+fn aotIndexIsPresent(object: *state.Object, index: usize) bool {
+    if (index >= object.payload.array.items.len) return false;
+    return if (index < object.array_presence.items.len) object.array_presence.items[index] else true;
+}
+
+fn syncExternalRaw(runtime: *state.Runtime, engine_value: *Engine, value: Value, raw: *RawValue, sync: *SyncState) anyerror!void {
     const object = value.object() orelse return;
     try sync.in_progress.put(runtime.allocator, @intFromPtr(object), raw);
     defer _ = sync.in_progress.remove(@intFromPtr(object));
-    try syncContents(runtime, engine_value, value, raw, &sync);
+    try syncContents(runtime, engine_value, value, raw, sync, 0);
 }
 
-fn syncContents(runtime: *state.Runtime, engine_value: *Engine, value: Value, raw: *RawValue, sync: *SyncState) anyerror!void {
+fn syncContents(runtime: *state.Runtime, engine_value: *Engine, value: Value, raw: *RawValue, sync: *SyncState, depth: usize) anyerror!void {
+    if (depth >= max_interop_conversion_depth) return error.QuickJsNestingTooDeep;
     switch (@as(Tag, @fromBackingInt(value.tag))) {
         .array => {
             const object = value.object() orelse return;
-            const items = object.payload.array.items;
-            if (items.len > std.math.maxInt(u32)) return error.QuickJsCollectionTooLarge;
+            const source_items = object.payload.array.items;
+            if (source_items.len > std.math.maxInt(u32)) return error.QuickJsCollectionTooLarge;
+            if (source_items.len > 1_000_000) return error.QuickJsCollectionTooLarge;
+            // getter/host callbackによる再入でNako配列が再割当てされても安全なよう、
+            // 走査対象をローカルへ複製してrootする。
+            const items = try runtime.allocator.alloc(Value, source_items.len);
+            defer runtime.allocator.free(items);
+            @memcpy(items, source_items);
+            const presence = try runtime.allocator.alloc(bool, items.len);
+            defer runtime.allocator.free(presence);
+            @memset(presence, true);
+            const presence_len = @min(object.array_presence.items.len, items.len);
+            @memcpy(presence[0..presence_len], object.array_presence.items[0..presence_len]);
+            var items_frame: state.RootFrame = .{};
+            runtime.pushRoots(&items_frame, if (items.len == 0) null else items.ptr, items.len);
+            defer runtime.popRoots(&items_frame);
             if (lnako_qjs_set_array_length(raw, @intCast(items.len)) < 0) {
                 fail(runtime, engine_value);
                 return reported_engine_failure;
             }
             for (items, 0..) |item, index| {
-                const item_raw = try syncValueRaw(runtime, engine_value, item, sync);
+                // Nako側で穴になっているインデックスはJSでも穴のままにする。
+                if (!presence[index]) {
+                    if (lnako_qjs_delete_index(raw, @intCast(index)) < 0) {
+                        fail(runtime, engine_value);
+                        return reported_engine_failure;
+                    }
+                    continue;
+                }
+                const item_raw = try syncValueRaw(runtime, engine_value, item, sync, depth + 1);
                 defer lnako_qjs_value_free(item_raw);
                 if (lnako_qjs_set_index(raw, @intCast(index), item_raw) < 0) {
                     fail(runtime, engine_value);
@@ -246,16 +291,76 @@ fn syncContents(runtime: *state.Runtime, engine_value: *Engine, value: Value, ra
         },
         .dictionary => {
             const object = value.object() orelse return;
-            if (lnako_qjs_clear_properties(raw) < 0) {
-                fail(runtime, engine_value);
-                return reported_engine_failure;
+            // 走査中の再入で辞書が再割当てされても安全なよう、entriesを複製する。
+            const source_entries = object.payload.dictionary.entries.items;
+            const entries = try runtime.allocator.alloc(state.DictionaryEntry, source_entries.len);
+            defer runtime.allocator.free(entries);
+            @memcpy(entries, source_entries);
+            var entries_frame: state.RootFrame = .{};
+            runtime.pushRoots(&entries_frame, if (entries.len == 0) null else @ptrCast(entries.ptr), entries.len * 2);
+            defer runtime.popRoots(&entries_frame);
+            var names: std.ArrayListUnmanaged([]u8) = .empty;
+            defer {
+                for (names.items) |name| runtime.allocator.free(name);
+                names.deinit(runtime.allocator);
             }
-            for (object.payload.dictionary.entries.items) |entry| {
+            for (entries) |entry| {
                 const name = try dictionaryKeyNameZ(runtime, entry.key);
                 defer runtime.allocator.free(name);
-                const item_raw = try syncValueRaw(runtime, engine_value, entry.value, sync);
+                // 比較・削除はJSのkeys()と同じlossy UTF-8、定義/取得はWTF-8で行う。
+                const name_lossy = try dictionaryKeyNameLossyZ(runtime, entry.key);
+                defer runtime.allocator.free(name_lossy);
+                const owned_name = try runtime.allocator.dupe(u8, name_lossy);
+                names.append(runtime.allocator, owned_name) catch |failure| {
+                    runtime.allocator.free(owned_name);
+                    return failure;
+                };
+                const item_raw = try syncValueRaw(runtime, engine_value, entry.value, sync, depth + 1);
                 defer lnako_qjs_value_free(item_raw);
-                if (lnako_qjs_set_property(raw, name.ptr, item_raw) < 0) {
+                // 未変更のプロパティは再代入しない（Object.freeze等で不要な失敗を
+                // 起こさない）。変更されたキーだけをown data propertyとして定義する。
+                const has_own = lnako_qjs_has_own_property(raw, name.ptr);
+                if (has_own < 0) {
+                    fail(runtime, engine_value);
+                    return reported_engine_failure;
+                }
+                if (has_own != 0) {
+                    const current = lnako_qjs_get_own_property(raw, name.ptr) orelse {
+                        fail(runtime, engine_value);
+                        return reported_engine_failure;
+                    };
+                    defer lnako_qjs_value_free(current);
+                    const equal = lnako_qjs_strict_equal(current, item_raw);
+                    if (equal < 0) {
+                        fail(runtime, engine_value);
+                        return reported_engine_failure;
+                    }
+                    if (equal != 0) continue;
+                }
+                if (lnako_qjs_define_property(raw, name.ptr, item_raw) < 0) {
+                    fail(runtime, engine_value);
+                    return reported_engine_failure;
+                }
+            }
+            // Nako側から消えたキーはJS側でも削除する（own enumerableのみ）。
+            const keys = lnako_qjs_keys(raw) orelse return error.QuickJsConversionFailed;
+            defer lnako_qjs_keys_free(keys);
+            var index: usize = 0;
+            while (index < lnako_qjs_keys_length(keys)) : (index += 1) {
+                var name_length: usize = 0;
+                const name_pointer = lnako_qjs_key(keys, index, &name_length) orelse continue;
+                const name = name_pointer[0..name_length];
+                var listed = false;
+                for (names.items) |candidate| {
+                    if (std.mem.eql(u8, candidate, name)) {
+                        listed = true;
+                        break;
+                    }
+                }
+                if (listed) continue;
+                const name_z = try runtime.allocator.dupeSentinel(u8, name, 0);
+                defer runtime.allocator.free(name_z);
+                if (lnako_qjs_delete_property(raw, name_z.ptr) < 0) {
                     fail(runtime, engine_value);
                     return reported_engine_failure;
                 }
@@ -268,12 +373,21 @@ fn syncContents(runtime: *state.Runtime, engine_value: *Engine, value: Value, ra
 /// 同期用のJS値変換。external参照はdupし、externalを持たない配列・辞書は
 /// 新しいJS配列/オブジェクトへ再帰変換する（interpreterのtoRaw相当）。
 /// 変換できない値（関数・BigInt・bytes・Promise）は明示エラーにする。
-fn syncValueRaw(runtime: *state.Runtime, engine_value: *Engine, value: Value, sync: *SyncState) anyerror!*RawValue {
+fn syncValueRaw(runtime: *state.Runtime, engine_value: *Engine, value: Value, sync: *SyncState, depth: usize) anyerror!*RawValue {
+    if (depth >= max_interop_conversion_depth) return error.QuickJsNestingTooDeep;
     const tag = @as(Tag, @fromBackingInt(value.tag));
     if (tag != .array and tag != .dictionary) return primitiveRaw(runtime, engine_value, value);
     const object = value.object() orelse return error.QuickJsUnsupportedArgument;
     const identity = @intFromPtr(object);
     if (sync.in_progress.get(identity)) |existing| return lnako_qjs_dup(existing) orelse error.OutOfMemory;
+    if (sync.completed.get(identity)) |existing| {
+        // 同期中に同じNakoオブジェクトが再度現れた場合は、前回の変換結果を
+        // そのまま使わず最新の内容で再同期してから共有する。
+        try sync.in_progress.put(runtime.allocator, identity, existing);
+        defer _ = sync.in_progress.remove(identity);
+        try syncContents(runtime, engine_value, value, existing, sync, depth);
+        return lnako_qjs_dup(existing) orelse error.OutOfMemory;
+    }
     const raw = if (try externalRaw(value)) |external|
         external
     else switch (tag) {
@@ -283,9 +397,15 @@ fn syncValueRaw(runtime: *state.Runtime, engine_value: *Engine, value: Value, sy
     };
     errdefer lnako_qjs_value_free(raw);
     try sync.in_progress.put(runtime.allocator, identity, raw);
-    defer _ = sync.in_progress.remove(identity);
-    try syncContents(runtime, engine_value, value, raw, sync);
-    return raw;
+    errdefer _ = sync.in_progress.remove(identity);
+    try syncContents(runtime, engine_value, value, raw, sync, depth);
+    _ = sync.in_progress.remove(identity);
+    // dupを先に確保し、completed登録後のOOMでrawがerrdefer解放されても
+    // マップに解放済みポインタを残さない。
+    const shared = lnako_qjs_dup(raw) orelse return error.OutOfMemory;
+    errdefer lnako_qjs_value_free(shared);
+    try sync.completed.put(runtime.allocator, identity, raw);
+    return shared;
 }
 
 /// JS値でNako側コピーを再構築する（interpreterの`refreshExternal`相当）。
@@ -312,7 +432,14 @@ fn refreshFromRaw(runtime: *state.Runtime, value: Value, raw: *RawValue) anyerro
             defer runtime.popRoots(&fresh_frame);
             const fresh_object = fresh.object() orelse return error.QuickJsConversionFailed;
             for (0..length) |index| {
-                const item = lnako_qjs_get_index(raw, @intCast(index)) orelse return error.QuickJsConversionFailed;
+                const present = lnako_qjs_has_index(raw, @intCast(index));
+                if (present < 0) return conversionFailure(runtime, raw);
+                if (present == 0) {
+                    try runtime.aotArrayAppend(fresh_object, .{});
+                    _ = try runtime.aotArrayDeleteIndex(fresh_object, index);
+                    continue;
+                }
+                const item = lnako_qjs_get_index(raw, @intCast(index)) orelse return conversionFailure(runtime, raw);
                 try appendRefreshedItem(runtime, fresh_object, item, &seen);
             }
             std.mem.swap(std.ArrayList(Value), &object.payload.array, &fresh_object.payload.array);
@@ -334,7 +461,7 @@ fn refreshFromRaw(runtime: *state.Runtime, value: Value, raw: *RawValue) anyerro
                 const name = name_pointer[0..name_length];
                 const name_z = try runtime.allocator.dupeSentinel(u8, name, 0);
                 defer runtime.allocator.free(name_z);
-                const item = lnako_qjs_get_property(raw, name_z.ptr) orelse return error.QuickJsConversionFailed;
+                const item = lnako_qjs_get_property(raw, name_z.ptr) orelse return conversionFailure(runtime, raw);
                 try setRefreshedEntry(runtime, fresh_object, name, item, &seen);
             }
             std.mem.swap(state.AotDictionary, &object.payload.dictionary, &fresh_object.payload.dictionary);
@@ -344,7 +471,7 @@ fn refreshFromRaw(runtime: *state.Runtime, value: Value, raw: *RawValue) anyerro
 }
 
 fn appendRefreshedItem(runtime: *state.Runtime, object: *state.Object, item: *RawValue, seen: *std.AutoHashMapUnmanaged(usize, Value)) !void {
-    var roots = [_]Value{try convertResult(runtime, item, seen)};
+    var roots = [_]Value{try convertResult(runtime, item, seen, 0)};
     var frame: state.RootFrame = .{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -352,11 +479,15 @@ fn appendRefreshedItem(runtime: *state.Runtime, object: *state.Object, item: *Ra
 }
 
 fn setRefreshedEntry(runtime: *state.Runtime, object: *state.Object, name: []const u8, item: *RawValue, seen: *std.AutoHashMapUnmanaged(usize, Value)) !void {
-    var roots = [_]Value{ try wtf8Value(runtime, name), .{} };
+    // キー生成に失敗した場合はitemの所有権がまだ移っていないため、ここで解放する。
+    var roots = [_]Value{ wtf8Value(runtime, name) catch |failure| {
+        lnako_qjs_value_free(item);
+        return failure;
+    }, .{} };
     var frame: state.RootFrame = .{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
-    roots[1] = try convertResult(runtime, item, seen);
+    roots[1] = try convertResult(runtime, item, seen, 0);
     try runtime.setDictionary(&object.payload.dictionary, roots[0], roots[1]);
 }
 
@@ -374,26 +505,42 @@ fn reportRefreshFailure(runtime: *state.Runtime, failure: anyerror, message: []c
 /// external bindingを付与する。関数・BigInt・bytesはAOTに値の生成経路が無いため
 /// 明示的な未対応エラーにする（interpreterは関数/BigIntを変換できるが、最小
 /// dispatchの範囲外としてfollow-up）。rawは消費して解放する。
+/// JS→Nako結果変換のネスト上限。深い非循環オブジェクトでもスタック枯渇せず、
+/// 上限超過は`QuickJsNestingTooDeep`の明示エラーにする（interpreterと同値）。
+const max_interop_conversion_depth: usize = 64;
+
 fn resultFromRaw(runtime: *state.Runtime, raw: *RawValue) !Value {
     var seen: std.AutoHashMapUnmanaged(usize, Value) = .empty;
     defer seen.deinit(runtime.allocator);
-    return convertResult(runtime, raw, &seen);
+    return convertResult(runtime, raw, &seen, 0);
 }
 
-fn convertResult(runtime: *state.Runtime, raw: *RawValue, seen: *std.AutoHashMapUnmanaged(usize, Value)) anyerror!Value {
+/// 変換途中のQuickJS例外を失わずに報告する。bridgeがNULLを返した場合は
+/// engineのlast_errorをruntimeへ記録し、二重設定を避ける内部エラーを返す。
+fn conversionFailure(runtime: *state.Runtime, raw: *const RawValue) anyerror {
+    const engine_value = lnako_qjs_value_engine(raw) orelse return error.QuickJsConversionFailed;
+    fail(runtime, engine_value);
+    return reported_engine_failure;
+}
+
+fn convertResult(runtime: *state.Runtime, raw: *RawValue, seen: *std.AutoHashMapUnmanaged(usize, Value), depth: usize) anyerror!Value {
+    if (depth >= max_interop_conversion_depth) {
+        lnako_qjs_value_free(raw);
+        return error.QuickJsNestingTooDeep;
+    }
     defer lnako_qjs_value_free(raw);
     return switch (lnako_qjs_kind(raw)) {
         .undefined, .null_value, .boolean, .number, .string => primitiveFromRaw(runtime, raw),
-        .array => convertResultArray(runtime, raw, seen),
+        .array => convertResultArray(runtime, raw, seen, depth),
         .object => blk: {
             if (lnako_qjs_is_bytes(raw) != 0) return error.QuickJsUnsupportedResult;
-            break :blk convertResultDictionary(runtime, raw, seen);
+            break :blk convertResultDictionary(runtime, raw, seen, depth);
         },
         else => error.QuickJsUnsupportedResult,
     };
 }
 
-fn convertResultArray(runtime: *state.Runtime, raw: *RawValue, seen: *std.AutoHashMapUnmanaged(usize, Value)) anyerror!Value {
+fn convertResultArray(runtime: *state.Runtime, raw: *RawValue, seen: *std.AutoHashMapUnmanaged(usize, Value), depth: usize) anyerror!Value {
     const identity = lnako_qjs_identity(raw);
     if (seen.get(identity)) |existing| return existing;
     const length = lnako_qjs_array_length(raw);
@@ -407,19 +554,27 @@ fn convertResultArray(runtime: *state.Runtime, raw: *RawValue, seen: *std.AutoHa
     try seen.put(runtime.allocator, identity, result);
     const object = result.object() orelse return error.QuickJsConversionFailed;
     for (0..length) |index| {
-        const item = lnako_qjs_get_index(raw, @intCast(index)) orelse return error.QuickJsConversionFailed;
+        const present = lnako_qjs_has_index(raw, @intCast(index));
+        if (present < 0) return conversionFailure(runtime, raw);
+        if (present == 0) {
+            // JSの穴はNako側でもpresence=falseの穴として保持する。
+            try runtime.aotArrayAppend(object, .{});
+            _ = try runtime.aotArrayDeleteIndex(object, index);
+            continue;
+        }
+        const item = lnako_qjs_get_index(raw, @intCast(index)) orelse return conversionFailure(runtime, raw);
         var roots = [_]Value{.{}};
         var entry_frame: state.RootFrame = .{};
         runtime.pushRoots(&entry_frame, &roots, roots.len);
         defer runtime.popRoots(&entry_frame);
-        roots[0] = try convertResult(runtime, item, seen);
+        roots[0] = try convertResult(runtime, item, seen, depth + 1);
         try runtime.aotArrayAppend(object, roots[0]);
     }
     try attachExternal(result, raw);
     return result;
 }
 
-fn convertResultDictionary(runtime: *state.Runtime, raw: *RawValue, seen: *std.AutoHashMapUnmanaged(usize, Value)) anyerror!Value {
+fn convertResultDictionary(runtime: *state.Runtime, raw: *RawValue, seen: *std.AutoHashMapUnmanaged(usize, Value), depth: usize) anyerror!Value {
     const identity = lnako_qjs_identity(raw);
     if (seen.get(identity)) |existing| return existing;
     const keys = lnako_qjs_keys(raw) orelse return error.QuickJsConversionFailed;
@@ -437,13 +592,15 @@ fn convertResultDictionary(runtime: *state.Runtime, raw: *RawValue, seen: *std.A
         const name = name_pointer[0..name_length];
         const name_z = try runtime.allocator.dupeSentinel(u8, name, 0);
         defer runtime.allocator.free(name_z);
-        const item = lnako_qjs_get_property(raw, name_z.ptr) orelse return error.QuickJsConversionFailed;
-        // キー文字列を先に作ってrootし、値の変換でGCが走っても回収されないようにする。
-        var roots = [_]Value{ try wtf8Value(runtime, name), .{} };
+        // キー生成に失敗した場合にitemの所有権が未移転のまま漏れないよう、先に作る。
+        const key = try wtf8Value(runtime, name);
+        const item = lnako_qjs_get_property(raw, name_z.ptr) orelse return conversionFailure(runtime, raw);
+        // キー文字列をrootし、値の変換でGCが走っても回収されないようにする。
+        var roots = [_]Value{ key, .{} };
         var entry_frame: state.RootFrame = .{};
         runtime.pushRoots(&entry_frame, &roots, roots.len);
         defer runtime.popRoots(&entry_frame);
-        roots[1] = try convertResult(runtime, item, seen);
+        roots[1] = try convertResult(runtime, item, seen, depth + 1);
         try runtime.setDictionary(&result.object().?.payload.dictionary, roots[0], roots[1]);
     }
     try attachExternal(result, raw);
@@ -478,7 +635,7 @@ fn shallowArrayFromRaw(runtime: *state.Runtime, raw: *const RawValue) !Value {
     runtime.pushRoots(&frame, if (length == 0) null else items.ptr, length);
     defer runtime.popRoots(&frame);
     for (0..length) |index| {
-        const item = lnako_qjs_get_index(raw, @intCast(index)) orelse return error.QuickJsConversionFailed;
+        const item = lnako_qjs_get_index(raw, @intCast(index)) orelse return conversionFailure(runtime, raw);
         items[index] = try shallowResultElement(runtime, item);
     }
     return runtime.createArray(items);
@@ -503,7 +660,7 @@ fn shallowDictionaryFromRaw(runtime: *state.Runtime, raw: *const RawValue) !Valu
         const name = name_pointer[0..name_length];
         const name_z = try runtime.allocator.dupeSentinel(u8, name, 0);
         defer runtime.allocator.free(name_z);
-        const item = lnako_qjs_get_property(raw, name_z.ptr) orelse return error.QuickJsConversionFailed;
+        const item = lnako_qjs_get_property(raw, name_z.ptr) orelse return conversionFailure(runtime, raw);
         // 要素値を先に作ってpairs（root frame）へ載せ、その後キー文字列を作る。
         // 逆順だとキー生成中のGCで要素値が未rootのまま回収され得る。
         pairs[initialized + 1] = try shallowResultElement(runtime, item);
@@ -604,9 +761,11 @@ fn primitiveRaw(runtime: *state.Runtime, engine_value: *Engine, value: Value) !*
         .boolean => lnako_qjs_boolean(engine_value, @intFromBool(value.payload != 0)) orelse error.OutOfMemory,
         .number => lnako_qjs_number(engine_value, @bitCast(value.payload)) orelse error.OutOfMemory,
         .utf16_string, .static_utf8_string => blk: {
-            // interpreterのtoRawと同じ方針。utf16_stringは孤立サロゲートを
-            // 置換し、static_utf8_stringはソース由来のUTF-8をそのまま渡す。
-            const text = try state.stringUtf8Alloc(runtime, value);
+            // interpreterのtoRawと同じく、孤立サロゲートを置換せずWTF-8で渡す
+            // （QuickJSのUTF-8デコーダはサロゲート符号点を16bit単位として受理する）。
+            const units = try state.valueUtf16Alloc(runtime, value);
+            defer runtime.allocator.free(units);
+            const text = try std.unicode.wtf16LeToWtf8Alloc(runtime.allocator, units);
             defer runtime.allocator.free(text);
             break :blk lnako_qjs_string(engine_value, text.ptr, text.len) orelse error.OutOfMemory;
         },
@@ -645,14 +804,16 @@ fn dictionaryEntries(value: Value) ?[]const state.DictionaryEntry {
 /// `lnako_qjs_set_property` はNUL終端の名前を取る。interpreterのtoRawと同じく
 /// 辞書キーをlossy UTF-8へ変換する（辞書キーは通常は文字列）。
 fn dictionaryKeyNameZ(runtime: *state.Runtime, key: Value) ![:0]u8 {
-    const text = switch (@as(Tag, @fromBackingInt(key.tag))) {
-        .utf16_string, .static_utf8_string => try state.stringUtf8Alloc(runtime, key),
-        else => blk: {
-            const units = try state.valueUtf16Alloc(runtime, key);
-            defer runtime.allocator.free(units);
-            break :blk try std.unicode.utf16LeToUtf8Alloc(runtime.allocator, units);
-        },
-    };
+    // 孤立サロゲートを置換せずWTF-8で渡す（JS→Nakoのキー保持と往復させる）。
+    const units = try state.valueUtf16Alloc(runtime, key);
+    defer runtime.allocator.free(units);
+    const text = try std.unicode.wtf16LeToWtf8Alloc(runtime.allocator, units);
+    defer runtime.allocator.free(text);
+    return runtime.allocator.dupeSentinel(u8, text, 0);
+}
+
+fn dictionaryKeyNameLossyZ(runtime: *state.Runtime, key: Value) ![:0]u8 {
+    const text = try state.stringUtf8Alloc(runtime, key);
     defer runtime.allocator.free(text);
     return runtime.allocator.dupeSentinel(u8, text, 0);
 }
@@ -674,12 +835,12 @@ fn dictionaryArgumentRaw(runtime: *state.Runtime, engine_value: *Engine, value: 
     return result;
 }
 
-fn callArgumentRaw(runtime: *state.Runtime, engine_value: *Engine, value: Value) !*RawValue {
+fn callArgumentRaw(runtime: *state.Runtime, engine_value: *Engine, value: Value, sync: *SyncState) !*RawValue {
     // JS由来のexternal bindingは、要素を再構築せず同じJSオブジェクトを渡す。
     // interpreterのtoRawと同じく、Nako側の変更をJSへ書き戻してからdupする。
     if (try externalRaw(value)) |raw| {
         errdefer lnako_qjs_value_free(raw);
-        try syncExternalRaw(runtime, engine_value, value, raw);
+        try syncExternalRaw(runtime, engine_value, value, raw, sync);
         return raw;
     }
     return switch (@as(Tag, @fromBackingInt(value.tag))) {
@@ -758,6 +919,8 @@ pub export fn lnako_aot_compat_js_call(out: *Value, arguments: ?[*]const Value, 
     defer runtime.popRoots(&values_frame);
     // bridgeが返すRawValueはQuickJSの参照カウントで保持され、他のJS値割当てを
     // またいでも有効。lnako_qjs_value_freeまで明示的に解放しない。
+    var sync = SyncState{};
+    defer sync.deinit(runtime.allocator);
     const raw_arguments = runtime.allocator.alloc(*const RawValue, values.len) catch |failure| {
         runtime.setFailure(failure);
         return;
@@ -768,7 +931,7 @@ pub export fn lnako_aot_compat_js_call(out: *Value, arguments: ?[*]const Value, 
         runtime.allocator.free(raw_arguments);
     }
     for (values, 0..) |value, index| {
-        raw_arguments[index] = callArgumentRaw(runtime, engine_value, value) catch |failure| {
+        raw_arguments[index] = callArgumentRaw(runtime, engine_value, value, &sync) catch |failure| {
             switch (failure) {
                 error.QuickJsUnsupportedArgument => runtime.setFailureText(unsupported_argument_message),
                 // bridgeの文言はarrayArgumentRaw/dictionaryArgumentRawが
@@ -783,7 +946,14 @@ pub export fn lnako_aot_compat_js_call(out: *Value, arguments: ?[*]const Value, 
     // 空配列はゼロ長allocのptrをC ABIへ渡さずnullにする（count=0で参照されない）。
     const raw_pointer: [*c]const *const RawValue = if (raw_arguments.len == 0) null else raw_arguments.ptr;
     var raw = lnako_qjs_call(engine_value, callable, raw_pointer, raw_arguments.len) orelse {
-        fail(runtime, engine_value);
+        const saved_error = lnako_qjs_take_error(engine_value);
+        for (values, raw_arguments[0..initialized]) |value, argument_raw| {
+            refreshFromRaw(runtime, value, @constCast(argument_raw)) catch {};
+        }
+        if (saved_error) |text| {
+            defer lnako_qjs_free_string(text);
+            runtime.setFailureText(std.mem.span(text));
+        } else fail(runtime, engine_value);
         return;
     };
     if (lnako_qjs_drain_jobs(engine_value) < 0) {
@@ -839,7 +1009,7 @@ fn copyValues(runtime: *state.Runtime, source: []const Value) ![]Value {
 /// `eval_string` が真（`JSメソッド実行`）のときだけ、文字列をJSソースとして評価する
 /// （interpreter/officialの既存経路）。`JSオブジェクト取得` は文字列をJSの
 /// プリミティブとして扱う（"abc"の"0"は"a"）。
-fn receiverRaw(runtime: *state.Runtime, engine_value: *Engine, value: Value, eval_string: bool) !*RawValue {
+fn receiverRaw(runtime: *state.Runtime, engine_value: *Engine, value: Value, eval_string: bool, sync: *SyncState) !*RawValue {
     if (eval_string and isStringValue(value)) {
         const source = state.stringUtf8Alloc(runtime, value) catch |failure| return failure;
         defer runtime.allocator.free(source);
@@ -848,7 +1018,7 @@ fn receiverRaw(runtime: *state.Runtime, engine_value: *Engine, value: Value, eva
             return reported_engine_failure;
         };
     }
-    return callArgumentRaw(runtime, engine_value, value);
+    return callArgumentRaw(runtime, engine_value, value, sync);
 }
 
 /// プロパティ名/メソッド名をNUL終端のlossy UTF-8へ変換する。interpreterの
@@ -905,7 +1075,9 @@ pub export fn lnako_aot_compat_js_object_get(out: *Value, arguments: ?[*]const V
         runtime.setFailure(failure);
         return;
     };
-    const raw_object = receiverRaw(runtime, engine_value, rooted[0], false) catch |failure| {
+    var sync = SyncState{};
+    defer sync.deinit(runtime.allocator);
+    const raw_object = receiverRaw(runtime, engine_value, rooted[0], false, &sync) catch |failure| {
         reportUnsupported(runtime, failure, unsupported_object_get_message);
         return;
     };
@@ -924,6 +1096,12 @@ pub export fn lnako_aot_compat_js_object_get(out: *Value, arguments: ?[*]const V
         fail(runtime, engine_value);
         return;
     }
+    // getter/jobがレシーバを変更した場合に備え、取得後もNakoコピーを再同期する。
+    refreshFromRaw(runtime, rooted[0], raw_object) catch |failure| {
+        lnako_qjs_value_free(result);
+        reportRefreshFailure(runtime, failure, unsupported_object_get_message);
+        return;
+    };
     out.* = resultFromRaw(runtime, result) catch |failure| {
         reportUnsupported(runtime, failure, unsupported_object_get_message);
         return;
@@ -954,7 +1132,9 @@ pub export fn lnako_aot_compat_js_method_call(out: *Value, arguments: ?[*]const 
         runtime.setFailure(failure);
         return;
     };
-    const raw_object = receiverRaw(runtime, engine_value, rooted[0], true) catch |failure| {
+    var sync = SyncState{};
+    defer sync.deinit(runtime.allocator);
+    const raw_object = receiverRaw(runtime, engine_value, rooted[0], true, &sync) catch |failure| {
         reportUnsupported(runtime, failure, unsupported_method_message);
         return;
     };
@@ -989,17 +1169,29 @@ pub export fn lnako_aot_compat_js_method_call(out: *Value, arguments: ?[*]const 
         runtime.allocator.free(raw_arguments);
     }
     for (values, 0..) |value, index| {
-        raw_arguments[index] = callArgumentRaw(runtime, engine_value, value) catch |failure| {
+        raw_arguments[index] = callArgumentRaw(runtime, engine_value, value, &sync) catch |failure| {
             reportUnsupported(runtime, failure, unsupported_method_message);
             return;
         };
         initialized += 1;
     }
     const raw_pointer: [*c]const *const RawValue = if (raw_arguments.len == 0) null else raw_arguments.ptr;
-    const result = lnako_qjs_call_method(engine_value, raw_object, method.ptr, raw_pointer, raw_arguments.len) orelse {
-        fail(runtime, engine_value);
+    const call_result = lnako_qjs_call_method(engine_value, raw_object, method.ptr, raw_pointer, raw_arguments.len);
+    if (call_result == null) {
+        // 失敗しても呼出し途中のJS側変更をNakoへ反映する。refreshがlast_errorを
+        // 上書きし得るため、元の例外文言を保存してから復元する。
+        const saved_error = lnako_qjs_take_error(engine_value);
+        refreshFromRaw(runtime, rooted[0], raw_object) catch {};
+        for (values, raw_arguments[0..initialized]) |value, argument_raw| {
+            refreshFromRaw(runtime, value, @constCast(argument_raw)) catch {};
+        }
+        if (saved_error) |text| {
+            defer lnako_qjs_free_string(text);
+            runtime.setFailureText(std.mem.span(text));
+        } else fail(runtime, engine_value);
         return;
-    };
+    }
+    const result = call_result.?;
     if (lnako_qjs_drain_jobs(engine_value) < 0) {
         lnako_qjs_value_free(result);
         fail(runtime, engine_value);
@@ -1572,13 +1764,13 @@ fn testExternalRelease(_: ?*anyopaque, _: ?*anyopaque) callconv(.c) void {
 test "compat AOT runtimeはObjectのexternal bindingをGCで1回だけ解放する" {
     var runtime = state.Runtime{ .allocator = std.testing.allocator };
     var sentinel: u8 = 0;
-    var value = try runtime.createArray(&.{});
+    const value = try runtime.createArray(&.{});
     value.object().?.external = .{ .handle = @ptrCast(&sentinel), .release = testExternalRelease };
     test_external_releases = 0;
     _ = runtime.collect();
     try std.testing.expectEqual(@as(usize, 1), test_external_releases);
     // 2個目はrootして残し、runtime.deinitでも解放されることを確認する。
-    var second = try runtime.createArray(&.{});
+    const second = try runtime.createArray(&.{});
     second.object().?.external = .{ .handle = @ptrCast(&sentinel), .release = testExternalRelease };
     var roots = [_]Value{second};
     var frame: state.RootFrame = .{};
@@ -1733,6 +1925,28 @@ test "compat AOT runtimeはJSメソッド実行をexternal binding経由でdispa
     state.lnako_aot_array_new(&unsupported_arguments[2], null, 0);
     lnako_aot_compat_js_method_call(&out, &unsupported_arguments, 3);
     try expectPendingFailureContains(&state.active_runtime.?, "JSメソッド実行 does not support");
+}
+
+test "compat AOT runtimeは深いJS結果の変換を深度上限で明示エラーにする" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    var values = [_]Value{ .{}, .{}, .{} };
+    var frame: state.RootFrame = .{};
+    state.active_runtime.?.pushRoots(&frame, &values, values.len);
+    defer state.active_runtime.?.popRoots(&frame);
+    values[0] = try testString(&state.active_runtime.?, "({deep(){let o={};for(let i=0;i<70;i++)o={a:o};return o}})");
+    values[1] = try testString(&state.active_runtime.?, "deep");
+    state.lnako_aot_array_new(&values[2], null, 0);
+    var out: Value = .{};
+    lnako_aot_compat_js_method_call(&out, &values, 3);
+    try expectPendingFailureContains(&state.active_runtime.?, "QuickJsNestingTooDeep");
 }
 
 test "compat AOT runtimeはメソッド実行後にexternal値をJS側の内容で再同期する" {

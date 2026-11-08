@@ -77,8 +77,22 @@ LnakoQuickJsValue *lnako_qjs_get_index(const LnakoQuickJsValue *value, uint32_t 
 int lnako_qjs_set_index(LnakoQuickJsValue *value, uint32_t index, const LnakoQuickJsValue *item);
 int lnako_qjs_set_array_length(LnakoQuickJsValue *value, uint32_t length);
 LnakoQuickJsValue *lnako_qjs_get_property(const LnakoQuickJsValue *value, const char *name);
+/// own propertyのみを取得する（継承プロパティ/getterを辿らない）。存在しなければundefined。
+LnakoQuickJsValue *lnako_qjs_get_own_property(const LnakoQuickJsValue *value, const char *name);
+/// own propertyとして存在するか（1/0、例外は-1）。
+int lnako_qjs_has_own_property(const LnakoQuickJsValue *value, const char *name);
 int lnako_qjs_set_property(LnakoQuickJsValue *value, const char *name, const LnakoQuickJsValue *item);
 int lnako_qjs_clear_properties(LnakoQuickJsValue *value);
+/// 継承された setter を呼ばず、自身のデータプロパティとして名前を定義する。
+int lnako_qjs_define_property(LnakoQuickJsValue *value, const char *name, const LnakoQuickJsValue *item);
+/// 自身のプロパティを削除する（存在しなければ成功扱い）。
+int lnako_qjs_delete_property(LnakoQuickJsValue *value, const char *name);
+/// 配列インデックスの存在（穴でないこと）を返す。
+int lnako_qjs_has_index(const LnakoQuickJsValue *value, uint32_t index);
+/// 配列インデックスを削除して穴にする。
+int lnako_qjs_delete_index(LnakoQuickJsValue *value, uint32_t index);
+/// 2つのJS値が strict equal かどうか（1/0、例外は-1）。
+int lnako_qjs_strict_equal(const LnakoQuickJsValue *left, const LnakoQuickJsValue *right);
 
 LnakoQuickJsKeys *lnako_qjs_keys(const LnakoQuickJsValue *value);
 size_t lnako_qjs_keys_length(const LnakoQuickJsKeys *keys);

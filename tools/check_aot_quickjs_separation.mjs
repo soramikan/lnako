@@ -108,7 +108,7 @@ try {
   expectEqual(objectOutput, interpreterObject.stdout.trim(), "JSオブジェクト取得/JSメソッド実行のAOT/インタプリタ一致");
   expectEqual(
     objectOutput,
-    "10\n1\n1-2\n1-2-3\n7\n5\n1\n9\na\n8\n2\n1-3\ntrue\n5\n1,2,9\n2\n1\n20\ntrue",
+    "10\n1\n1-2\n1-2-3\n7\n5\n1\n9\na\n8\n2\n1-3\ntrue\n5\n1,2,9\n2\n1\n20\ntrue\ntrue\n1,,3\ntrue\n1\nfalse\n7\n1\nundefined\ntrue",
     "JSオブジェクト取得/JSメソッド実行のexternal binding結果",
   );
 
@@ -124,6 +124,8 @@ try {
     ["JSメソッド実行の関数戻り値", 'JSメソッド実行(『({f(){return ()=>{}}})』,"f",[])を表示\n', "JSメソッド実行 does not support"],
     ["JSメソッド実行のPromise戻り値", 'JSメソッド実行(『({f(){return Promise.resolve(1)}})』,"f",[])を表示\n', "JSメソッド実行 does not support"],
     ["JSメソッド実行の巨大length戻り値", 'JSメソッド実行(『({f(){const a=[];a.length=10000000;return a}})』,"f",[])を表示\n', "QuickJsCollectionTooLarge"],
+    ["JSメソッド実行のbytesレシーバ", 'B=3のランダム配列生成\nA=JS関数実行("()=>[1]",[])\nA[0]=B\nJSメソッド実行(A,"join",["-"])を表示\n', "JSメソッド実行 does not support"],
+    ["JSメソッド実行の深い戻り値", 'JSメソッド実行(『({deep(){let o={};for(let i=0;i<70;i++)o={a:o};return o}})』,"deep",[])を表示\n', "QuickJsNestingTooDeep"],
   ];
   for (const [index, [label, source, expected]] of unsupportedObjectCases.entries()) {
     const unsupportedSource = join(work, `compat-js-unsupported-object-${index}.nako3`);

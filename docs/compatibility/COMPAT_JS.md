@@ -85,10 +85,8 @@ AOT経路と同じくdrain後に `lnako_qjs_await` で解決値を待ち、解�
 Map/Set/Date/RegExpなどは空辞書へ変換されます（浅いコピー契約の帰結）。
 Symbolなど未分類のJS値は既存の `lnako_qjs_kind` と同じく `undefined` として扱います。
 NULを含む辞書キーは既存の `convertObject` / `syncExternal` と同じ制限を継承します。
-`JS実行` の戻り値文字列は既存どおりstrict UTF-8で変換するため、孤立サロゲートを
-含むJS文字列はinterpreterで変換エラー・AOTで保持という既存差分が残ります
-（`JS関数実行` と `JSオブジェクト取得` / `JSメソッド実行` の戻り値だけ本スライスで
-WTF-8に統一。follow-up）。
+`JS実行` を含むJS→Nakoの文字列変換はWTF-8（孤立サロゲート可逆）に統一し、
+Nako→JSの文字列・辞書キーもWTF-8で渡します。
 interpreterで `JS実行` が
 返した配列・辞書は既存のJSオブジェクトを参照渡しし（Nako側の内容を書き戻す）、
 浅いコピーになるのはNakoネイティブ値と `JS関数実行` の戻り値だけです。
@@ -136,8 +134,20 @@ external bindingに限定し、戻り値のPromise・関数・BigInt・bytesを�
 個数検査だけに作用します。
 
 external値の書き戻し・再同期はown enumerableプロパティを再構築するため、
-JS側のgetter/setter（accessor property）は取得時の値に置き換わります。
-external値の再同期で作る辞書キーはWTF-8（孤立サロゲート可逆）です。配列の
+JS側のgetter/setter（accessor property）は取得前の同期でNakoコピーのown data
+propertyへ置き換わります（getterの副作用は観測しません）。
+external値の再同期で作る辞書キーはWTF-8（孤立サロゲート可逆）です。
+文字列はNako→JS・JS→Nakoの両方向でWTF-8（孤立サロゲート可逆）を使います。
+配列の穴（sparse）は同期前後で保持し、辞書の同期は未変更プロパティを再代入せず、
+変更されたキーだけをown data propertyとして定義します（`__proto__` もown data
+propertyとして復元し、frozenオブジェクトの未変更プロパティで失敗しません）。
+同期中に同じNakoオブジェクトが複数回現れた場合は同じJS参照を再利用し、JS側で
+消えたキーは削除します。プロパティ取得後はgetter/jobによるレシーバ変更を
+Nakoコピーへ再同期します。externalコンテナ内のNako bytesは書き戻せないため
+明示エラーにします。JS結果の再帰変換とNako→JSの書き戻しは深さ64を上限とし、
+超過は`QuickJsNestingTooDeep` の明示エラーにします（AOT/interpreter共通）。
+疎配列の穴はJS→Nako・Nako→JSの両方向でpresenceとして保持し、往復後も
+`hasOwnProperty` で穴と判定できます。配列の
 index要素と`length`だけを同期し、JS配列のnamed property（`a.x=1`など）と
 Nako側の`Array.properties`は相互に同期しません。外部関数値のgeneric呼出し
 （`externalCall`）は結果をfull変換しますが、値・Promise接続の完全化はfollow-upです。
