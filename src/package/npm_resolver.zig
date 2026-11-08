@@ -56,6 +56,15 @@ const scratch_permissions: std.Io.File.Permissions = if (builtin.os.tag == .wind
 else
     .fromMode(0o700);
 
+/// scratch dir 名の前置。scratch は `<base>/lnako-npm-<hex>` に作られるため、
+/// 所属判定（テスト含む）はこの定義を単一の源として path component を照合する。
+pub const scratch_dir_prefix = "lnako-npm-";
+/// scratch dir 名の hex 部分の長さ（`createScratch` の 8 byte random を小文字
+/// hex 化した長さ）。判定側が名前の形を検証する時の単一の源。
+pub const scratch_dir_hex_len: usize = scratch_random_bytes * 2;
+/// scratch dir 名に使う乱数 byte 数。
+const scratch_random_bytes = 8;
+
 /// 世代 tree の identity 検査で読む `package.json` の上限。
 const max_package_json_bytes: usize = 1024 * 1024;
 
@@ -365,9 +374,10 @@ pub const State = struct {
     /// null なら世代 tree を使わず cache 経路のみ。
     generation_deps: ?std.Io.Dir = null,
     prepared: ?Prepared = null,
-    /// prepare（scratch/cache 構築・lock 名の曖昧さ等）の失敗を記憶し、以後の
-    /// import で再試行しない。Prepared 段階の instance 単位の失敗は
-    /// `Prepared.failed` が name ごとに保持する。
+    /// prepare（registry 構築・lock 名の曖昧さ等）の失敗を記憶し、以後の
+    /// import で再試行しない。cache/scratch の不備を含む instance 単位の
+    /// 失敗は `Prepared.failed` が失敗した name に限定して保持する
+    /// （無関係な name が有効な generation tree を失わない）。
     failure: ?anyerror = null,
 
     /// lock の選択 profile から `npmInstances` を取り込む。`lock_root` は
@@ -436,11 +446,13 @@ pub const State = struct {
                 return err;
             };
         }
-        const entry = self.prepared.?.resolveBare(specifier) catch |err| {
-            // 解決不能（BareNotFound 等）は specifier 単位なので sticky にしない。
-            if (isStickyFailure(err)) self.failure = err;
-            return err;
-        };
+        // 解決不能のうち name 単位の展開失敗（CacheMiss/InvalidArchive/
+        // CacheUnavailable/ScratchUnavailable）は、要求された name に閉じた
+        // 失敗として `Prepared.failed` が保持する（BareNotFound は決定的で
+        // 安価なため保持しない）。State 全体へ集約すると、別 name が有効な
+        // generation tree を持っていても解決できなくなるため、ここでは伝播
+        // だけ行う。
+        const entry = try self.prepared.?.resolveBare(specifier);
         defer entry.deinit(self.backing_allocator);
         // 呼出し側（module_graph）は自身の allocator で path/root を free する。
         const path = try allocator.dupe(u8, entry.path);
@@ -611,20 +623,11 @@ fn classifyExtraction(err: anyerror) Error {
         error.OutOfMemory => error.OutOfMemory,
         error.Canceled => error.Canceled,
         error.InvalidArchive => error.InvalidArchive,
-        // 環境レベル（cache dir/scratch を作れない）失敗は per-name の
-        // CacheMiss に潰さず、State の sticky 失敗として保持する。
+        // 環境レベル（cache dir/scratch を作れない）失敗も name 単位で保持し、
+        // 別 name の解決（世代 tree 等）を妨げない。
         error.CacheUnavailable => error.CacheUnavailable,
         error.ScratchUnavailable => error.ScratchUnavailable,
         else => error.CacheMiss,
-    };
-}
-
-fn isStickyFailure(err: anyerror) bool {
-    // 環境レベルの失敗だけを sticky にする。instance 単位の CacheMiss /
-    // InvalidArchive は別 name の解決を妨げない（Prepared.failed が再展開を防ぐ）。
-    return switch (err) {
-        error.CacheUnavailable, error.ScratchUnavailable => true,
-        else => false,
     };
 }
 
@@ -657,11 +660,11 @@ fn createScratch(gpa: Allocator, io: std.Io) !Scratch {
     var attempt: usize = 0;
     var name: ?[]u8 = null;
     while (attempt < 8) : (attempt += 1) {
-        var random: [8]u8 = undefined;
+        var random: [scratch_random_bytes]u8 = undefined;
         std.Io.random(io, &random);
         const hex = std.fmt.bytesToHex(random, .lower);
         var buf: [32]u8 = undefined;
-        const candidate = try std.fmt.bufPrint(&buf, "lnako-npm-{s}", .{hex});
+        const candidate = try std.fmt.bufPrint(&buf, "{s}{s}", .{ scratch_dir_prefix, hex });
         parent.createDir(io, candidate, scratch_permissions) catch |err| switch (err) {
             error.PathAlreadyExists => continue,
             else => return err,
@@ -713,6 +716,29 @@ fn tempBase(gpa: Allocator) Allocator.Error!?[]u8 {
         return try std.fs.path.join(gpa, &.{ profile, "AppData", "Local", "Temp" });
     }
     return try gpa.dupe(u8, "/tmp");
+}
+
+/// scratch の基点（TMPDIR→TEMP→TMP、Windows は USERPROFILE 配下）の
+/// canonical 絶対 path を返す。scratch dir 自体は常に
+/// `<base>/lnako-npm-<hex>` なので、呼出し側はこの path 境界で module が
+/// scratch 由来かを判定できる（基点名の部分文字列に依存しない）。基点を
+/// canonical path として開けない環境では null を返す。
+pub fn scratchBaseReal(allocator: Allocator, io: std.Io) !?[]u8 {
+    const base = (try tempBase(allocator)) orelse return null;
+    defer allocator.free(base);
+    var dir = std.Io.Dir.openDirAbsolute(io, base, .{}) catch |err| {
+        if (err == error.OutOfMemory) return error.OutOfMemory;
+        if (err == error.Canceled) return error.Canceled;
+        return null;
+    };
+    defer dir.close(io);
+    var buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const length = dir.realPath(io, &buffer) catch |err| {
+        if (err == error.OutOfMemory) return error.OutOfMemory;
+        if (err == error.Canceled) return error.Canceled;
+        return null;
+    };
+    return try allocator.dupe(u8, buffer[0..length]);
 }
 
 /// cache key を scratch の単一 dir 名として使えるか。`cache.Store` の key
@@ -924,7 +950,7 @@ test "無関係な instance の cache 欠落は要求された package の解決
     try testing.expectError(error.CacheMiss, prepared.resolveBare("missing"));
 }
 
-test "State は最初の失敗を保持し、再試行しない" {
+test "State は name 単位の失敗を Prepared.failed で保持し、再試行しない" {
     const gpa = testing.allocator;
     const io = testing.io;
     var temporary = test_sandbox.tmpDir(.{});
@@ -1003,6 +1029,58 @@ test "State は無関係な instance の CacheMiss 後も cache 済み package �
     const entry = try state.resolveBare(gpa, "left-pad");
     defer entry.deinit(gpa);
     try testing.expect(std.mem.endsWith(u8, entry.path, "index.js"));
+}
+
+test "State は cache 不備を name 単位に留め、後続 name の世代 tree を解決する" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var temporary = test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    // cache root は通常 file。Store を開けないため cache 経路は
+    // CacheUnavailable になる。
+    try temporary.dir.writeFile(io, .{ .sub_path = "not-a-dir", .data = "not a cache dir" });
+    const cache_root = try temporary.dir.realPathFileAlloc(io, "not-a-dir", gpa);
+    defer gpa.free(cache_root);
+    try temporary.dir.createDirPath(io, "env/gen-test");
+    const generation_root = try temporary.dir.realPathFileAlloc(io, "env/gen-test", gpa);
+    defer gpa.free(generation_root);
+
+    // cache が必要な name（世代 tree なし）と、有効な世代 tree を持つ name。
+    const needs_cache = lock_model.NpmInstance{
+        .key = "aaa-needs-cache@1.0.0",
+        .name = "aaa-needs-cache",
+        .version = "1.0.0",
+        .sha256 = "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+        .url = "fixture://aaa-needs-cache-1.0.0.tgz",
+    };
+    const from_generation = lock_model.NpmInstance{
+        .key = "left-pad@1.0.0",
+        .name = "left-pad",
+        .version = "1.0.0",
+        .sha256 = "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        .url = "fixture://left-pad-1.0.0.tgz",
+    };
+    const marker = try npm_env.provenanceText(gpa, from_generation);
+    defer gpa.free(marker);
+    const tree = try writeGenerationTree(gpa, io, generation_root, from_generation, marker);
+    defer gpa.free(tree);
+
+    // generation_deps の所有権は State へ移す（State.deinit が閉じる）。
+    var state = State{
+        .io = io,
+        .backing_allocator = gpa,
+        .instances = &.{ needs_cache, from_generation },
+        .cache_root = cache_root,
+        .generation_deps = try openDepsDir(io, generation_root),
+    };
+    defer state.deinit();
+    // 先行 name の cache 不備を State 全体の失敗に集約しない。
+    try testing.expectError(error.CacheUnavailable, state.resolveBare(gpa, "aaa-needs-cache"));
+    // 後続 name は cache を触らず、有効な世代 tree から解決できる。
+    const entry = try state.resolveBare(gpa, "left-pad");
+    defer entry.deinit(gpa);
+    try testing.expect(std.mem.endsWith(u8, entry.path, "index.js"));
+    try testing.expect(npm_env.isStrictlyWithin(generation_root, entry.path));
 }
 
 test "非 gzip fixture は blob として展開され入口解決は BareNotFound になる" {
