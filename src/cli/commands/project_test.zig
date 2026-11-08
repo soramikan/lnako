@@ -1814,3 +1814,189 @@ test "npm registry E2E: lock 無しの sync も fixture registry から構築す
     const entry_rel = try std.fmt.allocPrint(a, ".nako/env/{s}/deps/{s}/index.js", .{ generation, dir_name });
     try testing.expectEqualStrings(entry_bytes, try readFile(a, app_root, entry_rel));
 }
+
+// ---------------------------------------------------------------------------
+// 参照 plugin+npm E2E（Issue #54）
+// ---------------------------------------------------------------------------
+//
+// `tests/fixtures/package-plugin-npm` の参照パッケージを tmp へ展開し、
+//
+//   lnako lock（ローカル registry から packument/tarball 取得・検証・cache）
+//   → sync --offline（lock と cache だけから世代 deps を materialize）
+//   → compileInput(.compat_js = true) + Interpreter 実行
+//
+// を end-to-end に観測する。ESM plugin 命令（`leftpad__整形`）と、その
+// plugin 実装内の npm bare import（`left-pad`）が同時に動くことを stdout
+// 全体で固定する。fixture は commit 済みファイルをそのまま読むため、
+// テストが参照する内容と fixture の drift も検出できる。
+//
+// 外部ネットワーク・npm CLI・Node lifecycle script は起動せず、registry は
+// 127.0.0.1 のテスト内 HTTP fixture のみを使う（#226）。
+
+const core = @import("lnako");
+const host_module = @import("../../host.zig");
+
+/// `zig build test` の run step は build root（repo root）を cwd にする。
+/// 念のため cwd から数段上も探し、fixture の source of truth は commit 済み
+/// ファイルのままにする（テスト側で内容を複製しない）。
+fn pluginNpmFixtureRoot(a: std.mem.Allocator) ![]const u8 {
+    const prefixes = [_][]const u8{ ".", "..", "../..", "../../.." };
+    for (prefixes) |prefix| {
+        const path = if (std.mem.eql(u8, prefix, "."))
+            try a.dupe(u8, "tests/fixtures/package-plugin-npm")
+        else
+            try std.fmt.allocPrint(a, "{s}/tests/fixtures/package-plugin-npm", .{prefix});
+        std.Io.Dir.cwd().access(io, path, .{}) catch continue;
+        return path;
+    }
+    return error.PluginNpmFixtureNotFound;
+}
+
+fn readPluginNpmFixture(a: std.mem.Allocator, relative: []const u8) ![]u8 {
+    const root = try pluginNpmFixtureRoot(a);
+    const path = try std.fs.path.join(a, &.{ root, relative });
+    return std.Io.Dir.cwd().readFileAlloc(io, path, a, .limited(1024 * 1024));
+}
+
+/// 参照 fixture を `app` 配下へ展開する（source of truth は commit 済み
+/// fixture ファイル）。
+fn writePluginNpmReferenceApp(a: std.mem.Allocator, temporary: *std.testing.TmpDir) !void {
+    try temporary.dir.createDirPath(io, "app/packages/leftpad");
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/nako.toml", .data = try readPluginNpmFixture(a, "app/nako.toml") });
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/main.nako3", .data = try readPluginNpmFixture(a, "app/main.nako3") });
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/packages/leftpad/nako.toml", .data = try readPluginNpmFixture(a, "app/packages/leftpad/nako.toml") });
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/packages/leftpad/plugin.mjs", .data = try readPluginNpmFixture(a, "app/packages/leftpad/plugin.mjs") });
+}
+
+/// `lnako run --compat-js` と同じ順序で compile → Interpreter 実行を行う。
+/// compile が診断を出して null を返した場合は false、診断以外のエラーは
+/// 呼出し側へ伝播する。
+fn runCompatJsMain(
+    a: std.mem.Allocator,
+    main_path: []const u8,
+    cache_root: []const u8,
+    work_root: []const u8,
+    out: *std.Io.Writer.Allocating,
+    err_out: *std.Io.Writer.Allocating,
+) !bool {
+    const compiled = compiler_pipeline.compileInput(a, io, main_path, .{
+        .compat_js = true,
+        .package_cache_root = cache_root,
+    }, &err_out.writer) catch |err| {
+        std.debug.print("参照 plugin+npm E2E: compile エラー: {s}\n{s}", .{ @errorName(err), err_out.written() });
+        return err;
+    };
+    var ir_program = compiled orelse return false;
+    defer ir_program.deinit();
+    var runtime = core.runtime.value.Runtime.init(a);
+    defer runtime.deinit();
+    var cli_host = host_module.CliHost{
+        .writer = &out.writer,
+        .error_writer = &err_out.writer,
+        .io = io,
+        .program_arguments = &.{main_path},
+        .runtime_path = "lnako",
+        .source_path = main_path,
+        .environment_names = &.{},
+        .environment_values = &.{},
+        .temporary_directory = work_root,
+        .async_task_map = std.AutoHashMap(u64, *host_module.AsyncOperationTask).init(std.heap.page_allocator),
+    };
+    defer cli_host.deinit();
+    var interpreter = core.runtime.interpreter.Interpreter.init(a, &runtime, ir_program, cli_host.interpreterHost());
+    defer interpreter.deinit();
+    _ = interpreter.run() catch |err| {
+        // 既存の run/test 経路と同じく、QuickJS 側の失敗理由を残す。
+        std.debug.print("参照 plugin+npm E2E: 実行時エラー: {s}\n{s}", .{ runtime.failureMessage() orelse @errorName(err), err_out.written() });
+        return err;
+    };
+    return true;
+}
+
+test "参照 plugin+npm E2E: lock→sync --offline→run --compat-js で plugin 登録と bare import が同時に動く" {
+    // 通常ビルド（QuickJS なし）では JS/ESM を実行できないため skip する。
+    // `zig build -Dcompat-js=true test` でこのテストが実走する。
+    if (!core.compat.quickjs.available()) return error.SkipZigTest;
+
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const a = arena_impl.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "cache");
+    try writePluginNpmReferenceApp(a, &temporary);
+    const app_root = try temporary.dir.realPathFileAlloc(io, "app", a);
+    const cache_root = try temporary.dir.realPathFileAlloc(io, "cache", a);
+    const work_root = try temporary.dir.realPathFileAlloc(io, ".", a);
+
+    // --- fixture registry: `left-pad` の packument と tarball を配信する ---
+    const registry_entry = try readPluginNpmFixture(a, "registry/left-pad/index.js");
+    const expected_stdout = try readPluginNpmFixture(a, "expected-stdout.txt");
+    const tarball = try npmTarball(a, "left-pad", "1.0.0", "index.js", registry_entry);
+    const integrity = try pkg.npm.integritySha512(a, tarball);
+    var server = RegistryServer{ .io = io, .allocator = a };
+    try server.listen();
+    defer server.stop();
+    const tarball_url = try server.url(a, "/left-pad/-/left-pad-1.0.0.tgz");
+    const packument = try npmPackument(a, "left-pad", "1.0.0", tarball_url, integrity);
+    const routes = [_]RegistryRoute{
+        .{ .path = "/left-pad", .body = packument },
+        .{ .path = "/left-pad/-/left-pad-1.0.0.tgz", .body = tarball },
+    };
+    try server.serve(&routes);
+
+    var cli = Cli.init(a);
+    try cli.env.put("LNAKO_NPM_REGISTRY", server.base_url.?);
+
+    // --- lock: packument 取得 → tarball 取得/integrity 検証 → cache 格納 ---
+    cli.run(a, "lock", &.{ "--package-cache-dir", cache_root }, app_root) catch |err| {
+        std.debug.print("参照 plugin+npm E2E: lock 失敗: {s}\n{s}", .{ @errorName(err), cli.err.written() });
+        return err;
+    };
+    try testing.expectEqual(@as(usize, 2), server.requests.load(.acquire));
+
+    var diagnostics = pkg.diagnostics.List.init(a);
+    defer diagnostics.deinit();
+    const lock_bytes = try readFile(a, app_root, "nako.lock");
+    var parsed = try pkg.lock.parse(a, lock_bytes, &diagnostics);
+    defer parsed.deinit();
+    // path 依存（plugin package）が ESM 実装として、npm instance と同時に
+    // lock に載る。
+    try testing.expect(std.mem.indexOf(u8, lock_bytes, "\"implementation\": \"ESM\"") != null);
+    try testing.expect(std.mem.indexOf(u8, lock_bytes, "\"leftpad\"") != null);
+    const instance = findNpmInstance(&parsed, "left-pad@1.0.0") orelse return error.TestExpectedInstance;
+    try testing.expectEqualStrings(tarball_url, instance.url.?);
+
+    // --- sync --offline: lock と cache だけから世代 deps へ materialize ---
+    var sync_out: std.Io.Writer.Allocating = .init(a);
+    var sync_err: std.Io.Writer.Allocating = .init(a);
+    sync_cmd.run(a, io, &.{ "--offline", "--package-cache-dir", cache_root, app_root }, &cli.env, &sync_out.writer, &sync_err.writer) catch |err| {
+        std.debug.print("参照 plugin+npm E2E: sync --offline 失敗: {s}\n{s}", .{ @errorName(err), sync_err.written() });
+        return err;
+    };
+    // 追加の registry 取得は起きない（offline でも cache hit だけで完結）。
+    try testing.expectEqual(@as(usize, 2), server.requests.load(.acquire));
+    try testing.expect(try dirFileExists(a, app_root, ".nako/environment.json"));
+
+    const generation = std.mem.trim(u8, try readFile(a, app_root, ".nako/current"), " \t\r\n");
+    const dir_name = try pkg.npm_env.instanceDirName(a, instance);
+    const installed_entry_rel = try std.fmt.allocPrint(a, ".nako/env/{s}/deps/{s}/index.js", .{ generation, dir_name });
+    try testing.expectEqualStrings(registry_entry, try readFile(a, app_root, installed_entry_rel));
+
+    // --- run --compat-js: plugin 命令と npm bare import を同時に実行する ---
+    const main_path = try std.fs.path.join(a, &.{ app_root, "main.nako3" });
+    var out: std.Io.Writer.Allocating = .init(a);
+    var err_out: std.Io.Writer.Allocating = .init(a);
+    const executed = try runCompatJsMain(a, main_path, cache_root, work_root, &out, &err_out);
+    if (!executed) {
+        std.debug.print("参照 plugin+npm E2E: compile 診断:\n{s}", .{err_out.written()});
+        return error.TestExpectedCompileSuccess;
+    }
+    try testing.expectEqualStrings(expected_stdout, out.written());
+
+    // --- 通常モード分離: --compat-js なしでは JS/ESM を取り込まない ---
+    var normal_err: std.Io.Writer.Allocating = .init(a);
+    const normal = try compiler_pipeline.compileInput(a, io, main_path, .{}, &normal_err.writer);
+    try testing.expect(normal == null);
+    try testing.expect(std.mem.indexOf(u8, normal_err.written(), "JavaScriptの取り込みには--compat-jsが必要です") != null);
+}
