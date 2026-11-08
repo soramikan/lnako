@@ -31,7 +31,7 @@
       "limitKb": 40
     },
       "src/package/npm_esm.zig": {
-        "reason": "ESM exports 解決（条件・wildcard・包含・深度/サイズ上限）と回帰テストを同一ファイルで維持（テスト分離は分割 follow-up・100KB上限）",
+        "reason": "ESM exports 解決（条件・wildcard・包含・深度/サイズ上限）と回帰テストを同一ファイルで維持（#53 の package.json 本格パース回帰テストは npm_esm_test.zig へ分離・100KB上限）",
         "limitKb": 100
       },
       "src/package/import_resolver.zig": {
