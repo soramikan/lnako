@@ -150,8 +150,9 @@ fn fromRaw(runtime: *state.Runtime, raw: *RawValue) !Value {
 
 /// `JS関数実行` の戻り値をNako値へ変換する。プリミティブに加えて、JS配列→
 /// Nako配列・JSオブジェクト→Nako辞書の浅いコピーだけを許可する。要素/値は
-/// プリミティブに限り、ネストした配列/辞書・関数・Promise・BigInt・bytesは
+/// プリミティブに限り、ネストした配列/辞書・関数・BigInt・bytesは
 /// interpreter（compat/quickjs.zig）と同じ文言の明示的な未対応エラーにする。
+/// Promiseは呼出し側（`lnako_aot_compat_js_call`）がawaitしてから渡す。
 /// rawは成功・失敗にかかわらず消費して解放する。
 fn callResultFromRaw(runtime: *state.Runtime, raw: *RawValue) !Value {
     defer lnako_qjs_value_free(raw);
@@ -297,7 +298,7 @@ const unsupported_argument_message = "JS関数実行 does not support nested arr
 
 /// `JS関数実行` の戻り値が浅い配列/辞書へ変換できないときの文言。
 /// interpreter（compat/quickjs.zig）と同じ文言で失敗させる。
-const unsupported_result_message = "JS関数実行 does not support nested arrays or dictionaries, functions, promises, bigint, or bytes results yet";
+const unsupported_result_message = "JS関数実行 does not support nested arrays or dictionaries, functions, bigint, or bytes results yet";
 
 /// bridge由来のエラー文言を既にruntimeへ記録したことを表す内部エラー。
 /// 呼出し側で再度setFailureするとQuickJSの文言が失われるため区別する。
@@ -398,8 +399,9 @@ fn callArgumentRaw(runtime: *state.Runtime, engine_value: *Engine, value: Value)
 
 /// `JS関数実行` の最小dispatch。interpreter/officialと同じく、第1引数の文字列を
 /// global evalで関数へ解決し、第2引数が配列ならその要素を、そうでなければ
-/// 第2引数1個を実引数として呼び出す。`JS実行` のeval/drain/例外経路を共有し、
-/// 戻り値は `callResultFromRaw` のプリミティブ＋浅い配列/辞書変換だけを通す。
+/// 第2引数1個を実引数として呼び出す。`JS実行` のeval/drain/await/例外経路を共有し、
+/// 戻り値がPromiseなら解決値を待ってから `callResultFromRaw` のプリミティブ＋
+/// 浅い配列/辞書変換だけを通す。rejectとpendingはbridgeの文言で明示エラーにする。
 pub export fn lnako_aot_compat_js_call(out: *Value, arguments: ?[*]const Value, count: usize) callconv(.c) void {
     out.* = .{};
     const runtime = if (state.active_runtime) |*active| active else return;
@@ -477,7 +479,7 @@ pub export fn lnako_aot_compat_js_call(out: *Value, arguments: ?[*]const Value, 
     }
     // 空配列はゼロ長allocのptrをC ABIへ渡さずnullにする（count=0で参照されない）。
     const raw_pointer: [*c]const *const RawValue = if (raw_arguments.len == 0) null else raw_arguments.ptr;
-    const raw = lnako_qjs_call(engine_value, callable, raw_pointer, raw_arguments.len) orelse {
+    var raw = lnako_qjs_call(engine_value, callable, raw_pointer, raw_arguments.len) orelse {
         fail(runtime, engine_value);
         return;
     };
@@ -485,6 +487,17 @@ pub export fn lnako_aot_compat_js_call(out: *Value, arguments: ?[*]const Value, 
         lnako_qjs_value_free(raw);
         fail(runtime, engine_value);
         return;
+    }
+    // `JS実行` と同じく、戻り値がPromiseなら解決値を待つ。rejectはbridgeが
+    // reject理由を、pendingは "QuickJS promise is still pending" をlast_errorへ
+    // 記録するため、`fail` で明示エラーになる（無限待機しない）。
+    if (lnako_qjs_kind(raw) == .promise) {
+        const awaited = lnako_qjs_await(engine_value, raw);
+        lnako_qjs_value_free(raw);
+        raw = awaited orelse {
+            fail(runtime, engine_value);
+            return;
+        };
     }
     // callResultFromRawは成功・失敗にかかわらずrawを消費して解放する。
     out.* = callResultFromRaw(runtime, raw) catch |failure| {
@@ -1088,7 +1101,6 @@ test "compat AOT runtimeはJS関数実行の未対応戻り値を同じ文言で
         "()=>[1,[2]]",
         "()=>({x:{y:1}})",
         "()=>()=>1",
-        "()=>Promise.resolve(1)",
         "()=>1n",
         "()=>new Uint8Array([1,2])",
         "()=>new ArrayBuffer(4)",
@@ -1099,8 +1111,71 @@ test "compat AOT runtimeはJS関数実行の未対応戻り値を同じ文言で
     };
     for (cases) |source| {
         _ = try callCompatJs(&state.active_runtime.?, source);
-        try expectPendingFailureContains(&state.active_runtime.?, "does not support nested arrays or dictionaries, functions, promises, bigint, or bytes results yet");
+        try expectPendingFailureContains(&state.active_runtime.?, "does not support nested arrays or dictionaries, functions, bigint, or bytes results yet");
     }
+    lnako_aot_compat_deinit();
+}
+
+test "compat AOT runtimeはJS関数実行のPromise戻り値をawaitして変換する" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+
+    const number_value = try callCompatJs(&state.active_runtime.?, "()=>Promise.resolve(3)");
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.number)), number_value.tag);
+    try std.testing.expectEqual(@as(f64, 3), @as(f64, @bitCast(number_value.payload)));
+
+    const string_value = try callCompatJs(&state.active_runtime.?, "()=>Promise.resolve('s')");
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.utf16_string)), string_value.tag);
+    try std.testing.expectEqualSlices(u16, &.{'s'}, string_value.object().?.payload.utf16_string);
+
+    const boolean_value = try callCompatJs(&state.active_runtime.?, "()=>Promise.resolve(true)");
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.boolean)), boolean_value.tag);
+    try std.testing.expect(boolean_value.payload != 0);
+
+    const null_value = try callCompatJs(&state.active_runtime.?, "()=>Promise.resolve(null)");
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.null_value)), null_value.tag);
+
+    const undefined_value = try callCompatJs(&state.active_runtime.?, "()=>Promise.resolve()");
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.undefined)), undefined_value.tag);
+
+    const array_value = try callCompatJs(&state.active_runtime.?, "()=>Promise.resolve([1,2])");
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.array)), array_value.tag);
+    const array_items = array_value.object().?.payload.array.items;
+    try std.testing.expectEqual(@as(usize, 2), array_items.len);
+    try std.testing.expectEqual(@as(f64, 1), @as(f64, @bitCast(array_items[0].payload)));
+    try std.testing.expectEqual(@as(f64, 2), @as(f64, @bitCast(array_items[1].payload)));
+
+    const dictionary_value = try callCompatJs(&state.active_runtime.?, "()=>Promise.resolve({x:10})");
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.dictionary)), dictionary_value.tag);
+    const entries = dictionary_value.object().?.payload.dictionary.entries.items;
+    try std.testing.expectEqual(@as(usize, 1), entries.len);
+    try std.testing.expectEqual(@as(f64, 10), @as(f64, @bitCast(entries[0].value.payload)));
+
+    // 解決値が未対応型なら、await後の変換で既存の未対応エラーになる。
+    _ = try callCompatJs(&state.active_runtime.?, "()=>Promise.resolve(1n)");
+    try expectPendingFailureContains(&state.active_runtime.?, "does not support nested arrays or dictionaries, functions, bigint, or bytes results yet");
+    _ = try callCompatJs(&state.active_runtime.?, "()=>Promise.resolve([1,[2]])");
+    try expectPendingFailureContains(&state.active_runtime.?, "does not support nested arrays or dictionaries, functions, bigint, or bytes results yet");
+
+    // rejectはreject理由を、pendingはbridgeの文言を明示エラーにする。
+    _ = try callCompatJs(&state.active_runtime.?, "()=>Promise.reject(new Error('x'))");
+    try expectPendingFailureContains(&state.active_runtime.?, "Error: x");
+    _ = try callCompatJs(&state.active_runtime.?, "()=>new Promise(()=>{})");
+    try expectPendingFailureContains(&state.active_runtime.?, "QuickJS promise is still pending");
+
     lnako_aot_compat_deinit();
 }
 
