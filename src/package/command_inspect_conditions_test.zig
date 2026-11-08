@@ -486,3 +486,64 @@ test "名前空間: symlinkされたsource moduleも既存module衝突に含め�
     }
     try testing.expectEqual(@as(usize, 1), collisions);
 }
+
+test "OS条件: checkがtarget_from_lockを無効にすると陳腐lockでもunknownに留める" {
+    const a = testing.allocator;
+    var tmp = test_sandbox.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeEnv(tmp.dir, os_environment);
+    try writeManifest(tmp.dir, "winpkg/nako.toml", windows_manifest);
+    try writeManifest(tmp.dir, "macpkg/nako.toml", macos_manifest);
+
+    var diagnostics = diag.List.init(a);
+    defer diagnostics.deinit();
+    var report = try command_inspect.inspectEnvironmentDir(a, io, tmp.dir, .{
+        .target = null,
+        .target_from_lock = false,
+    }, &diagnostics);
+    defer report.deinit();
+
+    try testing.expectEqual(@as(usize, 2), report.conditions.len);
+    for (report.conditions) |condition| {
+        try testing.expectEqual(command_conditions.Availability.unknown, condition.availability);
+    }
+    try testing.expectEqual(@as(usize, 0), report.uninspected.len);
+}
+
+test "OS条件: OS不一致とmetadata欠落が併存するとstrict-sharingはE033で失敗する" {
+    const a = testing.allocator;
+    var tmp = test_sandbox.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeEnv(tmp.dir,
+        \\{
+        \\  "schemaVersion": 1,
+        \\  "lockSha256": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        \\  "profile": "default",
+        \\  "runtime": "lnako",
+        \\  "packages": {
+        \\    "pkg:windows-only": {
+        \\      "name": "windows-only",
+        \\      "version": "1.0.0",
+        \\      "path": "winpkg",
+        \\      "exports": [{"name": "main", "native": [{"path": "lib/win.dll", "when": "os == 'windows'"}]}]
+        \\    }
+        \\  }
+        \\}
+    );
+    try writeManifest(tmp.dir, "winpkg/nako.toml", windows_manifest);
+
+    var diagnostics = diag.List.init(a);
+    defer diagnostics.deinit();
+    var report = try command_inspect.inspectEnvironmentDir(a, io, tmp.dir, .{
+        .target = macos_target,
+        .strict_sharing = true,
+    }, &diagnostics);
+    defer report.deinit();
+
+    try testing.expectEqual(command_inspect.Sharing.failed, report.sharing);
+    var strict_errors: usize = 0;
+    for (diagnostics.items.items) |item| {
+        if (std.mem.eql(u8, item.code, diag.E033_STRICT_SHARING_FAILED)) strict_errors += 1;
+    }
+    try testing.expectEqual(@as(usize, 1), strict_errors);
+}

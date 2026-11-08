@@ -383,6 +383,7 @@ test "check --json は名前空間aliasのerrorでもJSONを出して失敗す�
     try testing.expectError(error.Failed, cli.run(a, "check", &.{"--json"}, app_root));
     const out = cli.out.written();
     try testing.expect(std.mem.indexOf(u8, out, "\"namespaces\":{\"aliases\":2") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "\"scope\":\"root\"") != null);
     try testing.expect(std.mem.indexOf(u8, out, "\"kind\":\"empty\"") != null);
     try testing.expect(std.mem.indexOf(u8, out, "\"severity\":\"error\"") != null);
     const err = cli.err.written();

@@ -1092,6 +1092,9 @@ pub fn checkProject(a: Allocator, io: std.Io, args: []const []const u8, start_di
                     .use_default_features = !flags.no_default_features,
                 },
                 .target = check_target,
+                // check は自身で target を決める。null は「現行選択で未評価」
+                // の意味であり、陳腐な lock の target へフォールバックしない。
+                .target_from_lock = false,
             },
             &diagnostics,
         )
@@ -1131,7 +1134,7 @@ pub fn checkProject(a: Allocator, io: std.Io, args: []const []const u8, start_di
             a,
             command_report.alias_count,
             command_report.namespace_issues,
-            if (command_report.inspected) command_report.namespace_scan_complete else null,
+            if (command_report.namespace_scanned) command_report.namespace_scan_complete else null,
             command_report.namespace_scan_reason,
         );
         defer a.free(namespace_json);
@@ -1180,7 +1183,11 @@ pub fn checkProject(a: Allocator, io: std.Io, args: []const []const u8, start_di
         }
         // package 宣言命令の OS 条件と、現在の target での利用可否。
         if (command_report.conditions.len > 0) {
-            try stdout.print("  命令 OS 条件: 対象 OS={s}\n", .{inspect.target.os});
+            if (check_target) |target| {
+                try stdout.print("  命令 OS 条件: 対象 OS={s}\n", .{target.os});
+            } else {
+                try stdout.print("  命令 OS 条件: 対象 OS=不明（lock が陳腐なため未評価）\n", .{});
+            }
             for (command_report.conditions) |condition| {
                 try stdout.print("    {s}: {s}（{s}）\n", .{
                     condition.package_key,

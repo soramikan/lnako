@@ -128,6 +128,8 @@ pub fn evaluatePackage(
     io: std.Io,
     /// 環境を読んだ固定 root handle。相対 path はここからの openat で辿り、
     /// root の rename/replace で別プロジェクトの manifest を読まない。
+    /// 非 null のとき相対 path はこの handle 基準で解決する（project_root は
+    /// `..`/絶対 path の宣言 path にだけ使う）。
     root_dir: ?std.Io.Dir,
     project_root: []const u8,
     package_rel_path: []const u8,

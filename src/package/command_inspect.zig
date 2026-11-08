@@ -82,6 +82,8 @@ pub const Report = struct {
     /// 環境を読んで命令検査を実行したか。false は skipped で、本文/JSON に
     /// 「未検査」を一切主張しない。
     inspected: bool = false,
+    /// project root の module 名走査を最後まで実行したか。
+    namespace_scanned: bool = false,
     /// project root の module 名走査を完了できたか。false の間は既存 module
     /// との namespace 衝突が未検査であることを本文/JSON に明示する。
     namespace_scan_complete: bool = true,
@@ -114,9 +116,13 @@ pub const Options = struct {
     /// `nako.toml` の解析結果。null は feature 影響を表示しない。
     manifest: ?*const manifest_mod.Manifest = null,
     features: FeatureRequest = .{},
-    /// OS 条件評価に使う target。null は `nako.lock` の `input.target` を
-    /// 使い、それも読めなければ利用可否を unknown として扱う。
+    /// OS 条件評価に使う target。null のときは `target_from_lock` が真なら
+    /// `nako.lock` の `input.target` を使い、読めなければ unknown とする。
     target: ?command_conditions.Target = null,
+    /// null target 時に lock の target へフォールバックするか。`check` は
+    /// lock が陳腐な場合に false を指定し、現行選択で未評価であることを
+    /// unknown として扱う。
+    target_from_lock: bool = true,
 };
 
 /// 非 default feature だけが引き込む root 依存と、そこからしか到達できない
@@ -359,8 +365,8 @@ pub fn inspectEnvironmentDir(
         error.OutOfMemory => return error.OutOfMemory,
         else => null,
     };
-    const target = options.target orelse if (project_root) |root|
-        try command_conditions.targetFromLock(gpa, io, root_dir, root, arena)
+    const target = options.target orelse if (options.target_from_lock and project_root != null)
+        try command_conditions.targetFromLock(gpa, io, root_dir, project_root.?, arena)
     else
         null;
     var conditions: std.ArrayList(command_conditions.PackageCondition) = .empty;
@@ -530,6 +536,7 @@ pub fn inspectEnvironmentDir(
     // 名前空間 alias 診断。既存の alias 解決は変更せず、空・重複・不正文字・
     // 予約語・既存 module との衝突だけを報告する。
     const module_scan = try namespace_check.scanProjectModules(arena, io, root_dir);
+    report.namespace_scanned = true;
     report.namespace_scan_complete = module_scan.complete;
     report.namespace_scan_reason = module_scan.reason;
     const scopes = try collectNamespaceScopes(arena, parsed.value.object, packages_value.object);
@@ -569,7 +576,9 @@ pub fn inspectEnvironmentDir(
             var strict_failed = false;
             for (report.uninspected) |item| {
                 // OS 条件で利用できない package は「静的に検査できない」範囲
-                // ではないため、厳格共用検査の失敗理由に数えない。
+                // ではないため、厳格共用検査の失敗理由に数えない。ただし同じ
+                // package の metadata 欠落は現行 OS でも検査できないため数える
+                // （理由別に併記しているのでここで os_unavailable だけを除く）。
                 if (item.reason == .os_unavailable) continue;
                 strict_failed = true;
                 try diagnostics.addFmt(

@@ -238,7 +238,8 @@ fn unicodeSeparator(alias: []const u8) ?u21 {
     var iterator = view.iterator();
     while (iterator.nextCodepoint()) |codepoint| {
         switch (codepoint) {
-            0x00A0, 0x1680, 0x2028, 0x2029, 0x202F, 0x205F, 0x3000, 0xFEFF => return codepoint,
+            0x0085, 0x00A0, 0x1680, 0x180E, 0x2028, 0x2029, 0x202F, 0x205F, 0x2060, 0x3000, 0xFEFF => return codepoint,
+            0x200B...0x200D => return codepoint,
             0x2000...0x200A => return codepoint,
             else => {},
         }
@@ -330,6 +331,16 @@ test "namespace: 正規化で畳まれる文字をinvalid_charとして診断す
     try testing.expectEqual(@as(usize, 2), countKind(issues, .invalid_char));
     for (issues) |issue| try testing.expect(!isError(issue.kind));
     try testing.expect(std.mem.indexOf(u8, issues[1].detail, "my_util") != null);
+}
+
+test "namespace: U+0085などUnicode区切りを含むaliasをinvalid_charとして診断する" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const issues = try analyzeFixture(arena.allocator(), &.{
+        .{ .alias = "my\u{0085}util", .package = "pkg:a" },
+    }, &.{});
+    try testing.expectEqual(@as(usize, 1), countKind(issues, .invalid_char));
+    try testing.expect(std.mem.indexOf(u8, issues[0].detail, "Unicode") != null);
 }
 
 test "namespace: Unicodeの区切り文字を含むaliasをinvalid_charとして診断する" {
@@ -429,8 +440,12 @@ pub fn scanProjectModules(arena: Allocator, io: std.Io, root_dir: std.Io.Dir) er
     while (true) {
         const maybe_entry = iterator.next(io) catch {
             var partial = try boundedModuleScan(arena, candidates.items);
-            partial.complete = false;
-            partial.reason = "project root の列挙が途中で失敗しました";
+            if (partial.complete) {
+                partial.complete = false;
+                partial.reason = "project root の列挙が途中で失敗しました";
+            } else {
+                partial.reason = "project root の列挙が途中で失敗し、512件超は打ち切りました";
+            }
             return partial;
         };
         const entry = maybe_entry orelse break;
