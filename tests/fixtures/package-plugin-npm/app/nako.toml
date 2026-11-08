@@ -1,0 +1,23 @@
+# 参照 fixture: ESM plugin と npm ESM library を同時に持つパッケージ。
+#
+# ESM-only の path 依存を `lnako lock` で解決できるよう、`compat-js = true` を
+# 宣言した profile をちょうど 1 つ置く（lock/sync は単一 profile を自動選択
+# する）。依存 artifact はすべて無条件の JavaScript なので、profile の
+# os/cpu/abi は解決結果に影響しない。
+[package]
+name = "plugin-npm-reference"
+version = "0.1.0"
+license = "MIT"
+
+[profiles.compat]
+runtime = "lnako"
+os = "linux"
+cpu = "x86_64"
+abi = "gnu"
+compat-js = true
+
+[dependencies.path]
+leftpad = { path = "packages/leftpad" }
+
+[dependencies.npm]
+left-pad = "^1.0.0"

@@ -1,0 +1,10 @@
+# 参照 plugin。ESM 実装のみを公開し、実装内で npm ESM library を bare import
+# する（`lnako run --compat-js` でのみ解決される）。
+[package]
+name = "leftpad"
+version = "1.0.0"
+license = "MIT"
+
+[[exports]]
+name = "main"
+esm = "plugin.mjs"
