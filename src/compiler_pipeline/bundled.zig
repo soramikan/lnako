@@ -1,0 +1,398 @@
+//! `--compat-js` 生成物へ source を同梱した package の記録（Issue #56）。
+//!
+//! module_graph は JS module ごとに `package_root` を持つが、package 単位の
+//! 帰属（name/version/license）は持たない。生成物の ESM manifest と
+//! `--sbom` 出力が同じ記録を読めるよう、compile 直後に一度だけ package root
+//! を一意化して metadata を読む。読み取りは build 時 FS に対するもので、
+//! 生成物の実行時には不要（source は manifest に収録済み）。
+const std = @import("std");
+const lnako = @import("lnako");
+
+const max_package_metadata_bytes: usize = 1024 * 1024;
+
+/// 宣言 license が無い package の SPDX 表現。SBOM では「未主張」を意味し、
+/// 空文字（= 不明な状態を隠す）とは区別する。
+pub const unknown_license = "NOASSERTION";
+
+/// `program.javascript_modules` の `package_root` を一意化し、package 単位の
+/// metadata を `program.bundled_packages` へ記録する。
+///
+/// npm instance は `package.json`、path 依存の ESM package は `nako.toml` を
+/// 持つ。どちらも無い root は package として説明できないため、黙って
+/// 同梱物から落とさず `error.MissingBundledPackageMetadata` で失敗する。
+pub fn collect(allocator: std.mem.Allocator, io: std.Io, program: *lnako.ir.nako_ir.Program) !void {
+    if (program.javascript_modules.len == 0) {
+        program.bundled_packages = &.{};
+        return;
+    }
+    const arena = program.arena.allocator();
+    var packages: std.ArrayListUnmanaged(Builder) = .empty;
+    defer packages.deinit(allocator);
+    // 途中で失敗した場合も、既に集めた package の entry list を解放する。
+    errdefer for (packages.items) |*builder| builder.entries.deinit(allocator);
+    var roots: std.StringHashMapUnmanaged(usize) = .empty;
+    defer roots.deinit(allocator);
+
+    for (program.javascript_modules) |module| {
+        const root = module.package_root orelse continue;
+        if (root.len == 0) continue;
+        const get_or_put = try roots.getOrPut(allocator, root);
+        if (!get_or_put.found_existing) {
+            get_or_put.value_ptr.* = packages.items.len;
+            try packages.append(allocator, .{ .root = root });
+        }
+        const index = get_or_put.value_ptr.*;
+        if (relativeEntry(root, module.path)) |entry| {
+            try packages.items[index].entries.append(allocator, try normalizedEntry(arena, entry));
+        }
+    }
+
+    if (packages.items.len == 0) {
+        program.bundled_packages = &.{};
+        return;
+    }
+
+    const collected = try arena.alloc(lnako.ir.nako_ir.BundledPackage, packages.items.len);
+    for (packages.items, collected) |*builder, *destination| {
+        const metadata = try readMetadata(allocator, arena, io, builder.root);
+        std.mem.sort([]const u8, builder.entries.items, {}, lessThanString);
+        var previous: ?[]const u8 = null;
+        var unique: usize = 0;
+        for (builder.entries.items) |entry| {
+            if (previous) |last| if (std.mem.eql(u8, last, entry)) continue;
+            builder.entries.items[unique] = entry;
+            unique += 1;
+            previous = entry;
+        }
+        const entries = try arena.alloc([]const u8, unique);
+        for (builder.entries.items[0..unique], entries) |entry, *destination_entry|
+            destination_entry.* = try arena.dupe(u8, entry);
+        destination.* = .{
+            .name = metadata.name,
+            .version = metadata.version,
+            .license = metadata.license,
+            .root = try arena.dupe(u8, builder.root),
+            .kind = metadata.kind,
+            .entries = entries,
+        };
+    }
+    for (packages.items) |*builder| builder.entries.deinit(allocator);
+    program.bundled_packages = collected;
+}
+
+const Builder = struct {
+    root: []const u8,
+    entries: std.ArrayListUnmanaged([]const u8) = .empty,
+};
+
+/// `arena` に所有を移した metadata。`temporary` は parse/書式化の一時領域で、
+/// 返却前に解放できる。
+const Metadata = struct {
+    name: []const u8,
+    version: []const u8,
+    license: []const u8,
+    kind: lnako.ir.nako_ir.BundledPackageKind,
+};
+
+/// `root` 直下の `package.json` を優先し、無ければ `nako.toml` を読む。
+/// （npm instance は必ず package.json を持ち、nako path 依存は nako.toml を
+/// 持つ。両方を持つ tree は npm として扱う。）
+fn readMetadata(temporary: std.mem.Allocator, arena: std.mem.Allocator, io: std.Io, root: []const u8) !Metadata {
+    if (try readOptionalFile(temporary, io, root, "package.json")) |bytes| {
+        defer temporary.free(bytes);
+        var manifest = lnako.package.package_json.parse(temporary, bytes) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.PackageJsonInvalid => return error.InvalidBundledPackageJson,
+        };
+        defer manifest.deinit();
+        // manifest の arena はこの関数の終わりで解放されるため、値は呼出し側の
+        // arena へ複製して所有を移す。
+        return .{
+            .name = try arena.dupe(u8, manifest.name orelse ""),
+            .version = try arena.dupe(u8, manifest.version orelse ""),
+            .license = try arena.dupe(u8, declaredLicense(manifest.license_declared)),
+            .kind = .npm,
+        };
+    }
+    if (try readOptionalFile(temporary, io, root, "nako.toml")) |bytes| {
+        defer temporary.free(bytes);
+        var diagnostics = lnako.package.diagnostics.List.init(temporary);
+        defer diagnostics.deinit();
+        var manifest = lnako.package.manifest.parse(temporary, bytes, &diagnostics) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return error.InvalidBundledNakoManifest,
+        };
+        defer manifest.deinit();
+        const version = try std.fmt.allocPrint(temporary, "{f}", .{manifest.package.version});
+        defer temporary.free(version);
+        return .{
+            .name = try arena.dupe(u8, manifest.package.name),
+            .version = try arena.dupe(u8, version),
+            .license = try arena.dupe(u8, declaredLicense(manifest.package.license)),
+            .kind = .nako,
+        };
+    }
+    return error.MissingBundledPackageMetadata;
+}
+
+fn readOptionalFile(allocator: std.mem.Allocator, io: std.Io, root: []const u8, name: []const u8) !?[]u8 {
+    const path = try std.fs.path.join(allocator, &.{ root, name });
+    defer allocator.free(path);
+    return std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(max_package_metadata_bytes)) catch |err| switch (err) {
+        error.FileNotFound => null,
+        error.OutOfMemory => error.OutOfMemory,
+        else => error.BundledPackageMetadataUnreadable,
+    };
+}
+
+/// 宣言値として使えない空文字は SPDX の NOASSERTION へ正規化する。
+fn declaredLicense(declared: ?[]const u8) []const u8 {
+    const value = declared orelse return unknown_license;
+    return if (value.len == 0) unknown_license else value;
+}
+
+/// entry の区切りを manifest/SBOM の表記に揃えて `/` にする。Windows の
+/// module path から作った entry も platform 非依存な表記へ揃え、生成物や
+/// SBOM の内容が OS で変わらないようにする。
+fn normalizedEntry(allocator: std.mem.Allocator, entry: []const u8) ![]const u8 {
+    if (std.mem.indexOfScalar(u8, entry, '\\') == null) return allocator.dupe(u8, entry);
+    const normalized = try allocator.alloc(u8, entry.len);
+    for (entry, normalized) |byte, *destination| destination.* = if (byte == '\\') '/' else byte;
+    return normalized;
+}
+
+/// `path` が `root` 直下にある場合の root 相対 path。
+/// 区切りは元 path のまま（Windows では `\\`）。entries は manifest と SBOM の
+/// 表示専用で、同じ platform の module path と同じ表記になる。
+fn relativeEntry(root: []const u8, path: []const u8) ?[]const u8 {
+    if (path.len <= root.len or !std.mem.startsWith(u8, path, root)) return null;
+    // 共通 prefix の兄弟 directory（`leftpad` と `leftpad2`）を誤帰属させない
+    // ため、root 境界の直後が区切りであることを要求する。module_graph の
+    // `pathWithinRoot` と同じ判定。
+    const boundary = path[root.len];
+    if (boundary != '/' and boundary != '\\') return null;
+    const rest = path[root.len + 1 ..];
+    if (rest.len == 0) return null;
+    return rest;
+}
+
+fn lessThanString(_: void, left: []const u8, right: []const u8) bool {
+    return std.mem.lessThan(u8, left, right);
+}
+
+test "同梱packageのname/version/licenseと解決済みentryを収集する" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var temporary = lnako.package.test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "npm_left-pad");
+    try temporary.dir.createDirPath(io, "packages/leftpad");
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "npm_left-pad/package.json",
+        .data = "{\"name\":\"left-pad\",\"version\":\"1.0.0\",\"license\":\"MIT\",\"main\":\"index.js\"}",
+    });
+    try temporary.dir.writeFile(io, .{ .sub_path = "npm_left-pad/index.js", .data = "export default 1;\n" });
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "packages/leftpad/nako.toml",
+        .data = "[package]\nname = \"leftpad\"\nversion = \"1.2.3\"\nlicense = \"MIT\"\n",
+    });
+    try temporary.dir.writeFile(io, .{ .sub_path = "packages/leftpad/plugin.mjs", .data = "export default {};\n" });
+    const root = try temporary.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(root);
+    const npm_root = try std.fs.path.join(allocator, &.{ root, "npm_left-pad" });
+    defer allocator.free(npm_root);
+    const nako_root = try std.fs.path.join(allocator, &.{ root, "packages", "leftpad" });
+    defer allocator.free(nako_root);
+    const npm_entry = try std.fs.path.join(allocator, &.{ npm_root, "index.js" });
+    defer allocator.free(npm_entry);
+    const nako_entry = try std.fs.path.join(allocator, &.{ nako_root, "plugin.mjs" });
+    defer allocator.free(nako_entry);
+
+    var program = lnako.ir.nako_ir.Program{ .arena = std.heap.ArenaAllocator.init(allocator), .functions = &.{}, .module_entries = &.{} };
+    defer program.deinit();
+    const arena = program.arena.allocator();
+    program.javascript_modules = try arena.dupe(lnako.ir.nako_ir.JavaScriptModule, &.{
+        .{ .path = npm_entry, .source = "export default 1;\n", .package_root = npm_root },
+        .{ .path = nako_entry, .source = "export default {};\n", .package_root = nako_root },
+        .{ .path = "/not/bundled/root.mjs", .source = "export default 0;\n" },
+    });
+
+    try collect(allocator, io, &program);
+    try std.testing.expectEqual(@as(usize, 2), program.bundled_packages.len);
+    const npm_package = program.bundled_packages[0];
+    try std.testing.expectEqualStrings("left-pad", npm_package.name);
+    try std.testing.expectEqualStrings("1.0.0", npm_package.version);
+    try std.testing.expectEqualStrings("MIT", npm_package.license);
+    try std.testing.expectEqual(lnako.ir.nako_ir.BundledPackageKind.npm, npm_package.kind);
+    try std.testing.expectEqual(@as(usize, 1), npm_package.entries.len);
+    try std.testing.expectEqualStrings("index.js", npm_package.entries[0]);
+    const nako_package = program.bundled_packages[1];
+    try std.testing.expectEqualStrings("leftpad", nako_package.name);
+    try std.testing.expectEqualStrings("1.2.3", nako_package.version);
+    try std.testing.expectEqual(lnako.ir.nako_ir.BundledPackageKind.nako, nako_package.kind);
+    try std.testing.expectEqualStrings("plugin.mjs", nako_package.entries[0]);
+}
+
+test "license宣言の無い同梱packageはNOASSERTIONとして記録する" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var temporary = lnako.package.test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "npm_nolicense");
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "npm_nolicense/package.json",
+        .data = "{\"name\":\"nolicense\",\"version\":\"2.0.0\"}",
+    });
+    try temporary.dir.writeFile(io, .{ .sub_path = "npm_nolicense/index.js", .data = "export default 2;\n" });
+    const root = try temporary.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(root);
+    const package_root = try std.fs.path.join(allocator, &.{ root, "npm_nolicense" });
+    defer allocator.free(package_root);
+    const entry = try std.fs.path.join(allocator, &.{ package_root, "index.js" });
+    defer allocator.free(entry);
+
+    var program = lnako.ir.nako_ir.Program{ .arena = std.heap.ArenaAllocator.init(allocator), .functions = &.{}, .module_entries = &.{} };
+    defer program.deinit();
+    program.javascript_modules = try program.arena.allocator().dupe(lnako.ir.nako_ir.JavaScriptModule, &.{
+        .{ .path = entry, .source = "export default 2;\n", .package_root = package_root },
+    });
+
+    try collect(allocator, io, &program);
+    try std.testing.expectEqual(@as(usize, 1), program.bundled_packages.len);
+    try std.testing.expectEqualStrings(unknown_license, program.bundled_packages[0].license);
+}
+
+test "metadataの無いpackage rootは同梱物から黙って落とさない" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var temporary = lnako.package.test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "orphan");
+    try temporary.dir.writeFile(io, .{ .sub_path = "orphan/index.js", .data = "export default 3;\n" });
+    const root = try temporary.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(root);
+    const package_root = try std.fs.path.join(allocator, &.{ root, "orphan" });
+    defer allocator.free(package_root);
+    const entry = try std.fs.path.join(allocator, &.{ package_root, "index.js" });
+    defer allocator.free(entry);
+
+    var program = lnako.ir.nako_ir.Program{ .arena = std.heap.ArenaAllocator.init(allocator), .functions = &.{}, .module_entries = &.{} };
+    defer program.deinit();
+    program.javascript_modules = try program.arena.allocator().dupe(lnako.ir.nako_ir.JavaScriptModule, &.{
+        .{ .path = entry, .source = "export default 3;\n", .package_root = package_root },
+    });
+
+    try std.testing.expectError(error.MissingBundledPackageMetadata, collect(allocator, io, &program));
+}
+
+test "relativeEntryは共通prefixの兄弟directoryを誤帰属させない" {
+    try std.testing.expectEqualStrings("index.js", relativeEntry("/pkg/leftpad", "/pkg/leftpad/index.js").?);
+    // `leftpad2` は `leftpad` の配下ではない（区切り境界を要求する）。
+    try std.testing.expect(relativeEntry("/pkg/leftpad", "/pkg/leftpad2/index.js") == null);
+    try std.testing.expect(relativeEntry("/pkg/leftpad", "/pkg/leftpad") == null);
+    try std.testing.expect(relativeEntry("/pkg/leftpad/", "/pkg/leftpad/index.js") == null);
+}
+
+test "package.jsonとnako.tomlが併存するrootはnpmとして扱う" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var temporary = lnako.package.test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "both");
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "both/package.json",
+        .data = "{\"name\":\"npm-name\",\"version\":\"9.9.9\",\"license\":\"ISC\"}",
+    });
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "both/nako.toml",
+        .data = "[package]\nname = \"nako-name\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n",
+    });
+    try temporary.dir.writeFile(io, .{ .sub_path = "both/index.js", .data = "export default 1;\n" });
+    const root = try temporary.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(root);
+    const package_root = try std.fs.path.join(allocator, &.{ root, "both" });
+    defer allocator.free(package_root);
+    const entry = try std.fs.path.join(allocator, &.{ package_root, "index.js" });
+    defer allocator.free(entry);
+
+    var program = lnako.ir.nako_ir.Program{ .arena = std.heap.ArenaAllocator.init(allocator), .functions = &.{}, .module_entries = &.{} };
+    defer program.deinit();
+    program.javascript_modules = try program.arena.allocator().dupe(lnako.ir.nako_ir.JavaScriptModule, &.{
+        .{ .path = entry, .source = "export default 1;\n", .package_root = package_root },
+    });
+
+    try collect(allocator, io, &program);
+    try std.testing.expectEqual(lnako.ir.nako_ir.BundledPackageKind.npm, program.bundled_packages[0].kind);
+    try std.testing.expectEqualStrings("npm-name", program.bundled_packages[0].name);
+    try std.testing.expectEqualStrings("ISC", program.bundled_packages[0].license);
+}
+
+test "壊れたpackage.jsonは黙ってNOASSERTIONにせず失敗する" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var temporary = lnako.package.test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "broken");
+    try temporary.dir.writeFile(io, .{ .sub_path = "broken/package.json", .data = "{not json" });
+    try temporary.dir.writeFile(io, .{ .sub_path = "broken/index.js", .data = "export default 1;\n" });
+    const root = try temporary.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(root);
+    const package_root = try std.fs.path.join(allocator, &.{ root, "broken" });
+    defer allocator.free(package_root);
+    const entry = try std.fs.path.join(allocator, &.{ package_root, "index.js" });
+    defer allocator.free(entry);
+
+    var program = lnako.ir.nako_ir.Program{ .arena = std.heap.ArenaAllocator.init(allocator), .functions = &.{}, .module_entries = &.{} };
+    defer program.deinit();
+    program.javascript_modules = try program.arena.allocator().dupe(lnako.ir.nako_ir.JavaScriptModule, &.{
+        .{ .path = entry, .source = "export default 1;\n", .package_root = package_root },
+    });
+
+    try std.testing.expectError(error.InvalidBundledPackageJson, collect(allocator, io, &program));
+}
+
+test "同一rootのentryは重複を除いて昇順にそろえる" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var temporary = lnako.package.test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "pkg/lib");
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "pkg/package.json",
+        .data = "{\"name\":\"pkg\",\"version\":\"1.0.0\",\"license\":\"MIT\"}",
+    });
+    try temporary.dir.writeFile(io, .{ .sub_path = "pkg/z.js", .data = "export default 1;\n" });
+    try temporary.dir.writeFile(io, .{ .sub_path = "pkg/lib/a.js", .data = "export default 2;\n" });
+    const root = try temporary.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(root);
+    const package_root = try std.fs.path.join(allocator, &.{ root, "pkg" });
+    defer allocator.free(package_root);
+    const z_entry = try std.fs.path.join(allocator, &.{ package_root, "z.js" });
+    defer allocator.free(z_entry);
+    const a_entry = try std.fs.path.join(allocator, &.{ package_root, "lib", "a.js" });
+    defer allocator.free(a_entry);
+
+    var program = lnako.ir.nako_ir.Program{ .arena = std.heap.ArenaAllocator.init(allocator), .functions = &.{}, .module_entries = &.{} };
+    defer program.deinit();
+    program.javascript_modules = try program.arena.allocator().dupe(lnako.ir.nako_ir.JavaScriptModule, &.{
+        .{ .path = z_entry, .source = "export default 1;\n", .package_root = package_root },
+        .{ .path = a_entry, .source = "export default 2;\n", .package_root = package_root },
+        .{ .path = z_entry, .source = "export default 1;\n", .package_root = package_root },
+    });
+
+    try collect(allocator, io, &program);
+    try std.testing.expectEqual(@as(usize, 1), program.bundled_packages.len);
+    try std.testing.expectEqual(@as(usize, 2), program.bundled_packages[0].entries.len);
+    try std.testing.expectEqualStrings("lib/a.js", program.bundled_packages[0].entries[0]);
+    try std.testing.expectEqualStrings("z.js", program.bundled_packages[0].entries[1]);
+}
+
+test "entryの区切りはplatform非依存に正規化する" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    try std.testing.expectEqualStrings("lib/a.js", try normalizedEntry(allocator, "lib/a.js"));
+    // Windows の module path から来た entry も `/` へ揃える。
+    try std.testing.expectEqualStrings("lib/a.js", try normalizedEntry(allocator, "lib\\a.js"));
+    try std.testing.expectEqualStrings("index.js", try normalizedEntry(allocator, "index.js"));
+}

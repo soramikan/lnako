@@ -123,7 +123,8 @@ function tarball(files) {
 }
 
 function createRegistry(packageName, version, entry) {
-  const packageJson = JSON.stringify({ name: packageName, version, main: "index.js" });
+  // license は SBOM（--sbom）の licenseDeclared 検証対象。
+  const packageJson = JSON.stringify({ name: packageName, version, main: "index.js", license: "MIT" });
   const archive = tarball([
     ["package/package.json", packageJson],
     ["package/index.js", entry],
@@ -180,6 +181,34 @@ function createWorkDir() {
     }
   }
   fail("作業ディレクトリを作成できません");
+}
+
+/// SBOM（SPDX 2.3 風）を読み、同梱 package の license と purl を検査する。
+function validateSbom(sbomPath, expectedPackages) {
+  if (!fs.existsSync(sbomPath)) fail(`SBOM が生成されていません: ${sbomPath}`);
+  let sbom;
+  try {
+    sbom = JSON.parse(fs.readFileSync(sbomPath, "utf8"));
+  } catch (error) {
+    fail(`SBOM が JSON として読めません: ${error.message}`);
+  }
+  if (sbom.spdxVersion !== "SPDX-2.3" || sbom.SPDXID !== "SPDXRef-DOCUMENT") {
+    fail("SBOM の SPDX 2.3 ヘッダが不正です");
+  }
+  if (!Array.isArray(sbom.packages) || !Array.isArray(sbom.files) || !Array.isArray(sbom.relationships)) {
+    fail("SBOM の packages/files/relationships が配列ではありません");
+  }
+  for (const expected of expectedPackages) {
+    const record = sbom.packages.find((item) => item.name === expected.name && item.versionInfo === expected.version);
+    if (!record) fail(`SBOM に同梱 package ${expected.name}@${expected.version} がありません`);
+    if (record.licenseDeclared !== expected.license) {
+      fail(`SBOM の ${expected.name} の licenseDeclared が ${expected.license} ではありません: ${record.licenseDeclared}`);
+    }
+    if (!record.externalRefs?.some((ref) => ref.referenceLocator === expected.purl)) {
+      fail(`SBOM の ${expected.name} に purl ${expected.purl} がありません`);
+    }
+  }
+  return sbom;
 }
 
 function readFixture(relativePath) {
@@ -270,20 +299,50 @@ async function main() {
     // ESM plugin 命令の AOT dispatch は follow-up。同じ project のまま、
     // npm bare import を `JS実行` から解決する entry で AOT runtime を検証する。
     const binary = path.join(work, `lnako-plugin-npm-aot${executableSuffix}`);
+    const sbomPath = path.join(work, "lnako-plugin-npm-aot.spdx.json");
     const beforeBuild = registry.requests.length;
-    await runChecked(options.compiler, ["build", "aot-main.nako3", "--compat-js", "--backend", "aot", "--offline", "-o", binary], { cwd: app, env }, "build --compat-js --backend aot");
+    await runChecked(options.compiler, ["build", "aot-main.nako3", "--compat-js", "--backend", "aot", "--offline", "-o", binary, "--sbom", sbomPath], { cwd: app, env }, "build --compat-js --backend aot --sbom");
     if (registry.requests.length !== beforeBuild) {
       fail(`AOT build が registry へ要求しました: ${registry.requests.slice(beforeBuild).join(", ")}`);
     }
+    // 同梱した npm instance と path 依存 ESM plugin の license が SBOM に載る。
+    validateSbom(sbomPath, [
+      { name: "left-pad", version: "1.0.0", license: "MIT", purl: "pkg:npm/left-pad@1.0.0" },
+      { name: "leftpad", version: "1.0.0", license: "MIT", purl: "pkg:nako/leftpad@1.0.0" },
+    ]);
+    // `--sbom` は同梱を行う compat AOT 専用。通常 AOT / embedded では拒否する。
+    const rejectedSbom = await run(options.compiler, ["build", "main.nako3", "--sbom", "rejected.spdx.json", "-o", binary], { cwd: app, env });
+    if (rejectedSbom.status === 0 || !`${rejectedSbom.stdout}${rejectedSbom.stderr}`.includes("--compat-js")) {
+      fail("--sbom が compat AOT 以外で拒否されません");
+    }
+    // 生成物・入力 source を SBOM で上書きする指定は拒否する。
+    const overwrittenSbom = await run(options.compiler, ["build", "aot-main.nako3", "--compat-js", "--backend", "aot", "-o", binary, "--sbom", binary], { cwd: app, env });
+    if (overwrittenSbom.status === 0 || !`${overwrittenSbom.stdout}${overwrittenSbom.stderr}`.includes("異なるパス")) {
+      fail("--sbom が出力ファイルと同じパスを受け付けました");
+    }
+    const overwrittenInput = await run(options.compiler, ["build", "aot-main.nako3", "--compat-js", "--backend", "aot", "-o", binary, "--sbom", "aot-main.nako3"], { cwd: app, env });
+    if (overwrittenInput.status === 0 || !`${overwrittenInput.stdout}${overwrittenInput.stderr}`.includes("異なるパス")) {
+      fail("--sbom が入力ファイルと同じパスを受け付けました");
+    }
+    // embedded（同梱を行わない backend）との組み合わせも拒否する。
+    const embeddedSbom = await run(options.compiler, ["build", "aot-main.nako3", "--compat-js", "--sbom", "embedded.spdx.json", "-o", binary], { cwd: app, env });
+    if (embeddedSbom.status === 0 || !`${embeddedSbom.stdout}${embeddedSbom.stderr}`.includes("--compat-js")) {
+      fail("--sbom が --backend embedded で拒否されません");
+    }
+    console.log("参照 plugin+npm E2E: SBOM OK（同梱 npm/ESM package の license を記録）");
     // QuickJS の module_loader は未登録名を FS から読む fallback を持つため、
     // 同期済み tree が残っていると manifest 登録が壊れていても import が成功し
     // 得る（`check_aot_quickjs_separation.mjs` と同じ理由）。実行前に `.nako`・
     // lock・cache を退避し、cwd も project 外にして manifest 登録だけで解決
     // できることを固定する。
+    // path 依存 plugin の source も bundling 済みであることを固定するため、
+    // `packages/` と project manifest も退避する。残るのは AOT binary だけ。
     const parked = path.join(work, "parked-project-state");
     fs.mkdirSync(parked);
     fs.renameSync(path.join(app, ".nako"), path.join(parked, "nako-env"));
     fs.renameSync(path.join(app, "nako.lock"), path.join(parked, "nako.lock"));
+    fs.renameSync(path.join(app, "packages"), path.join(parked, "packages"));
+    fs.renameSync(path.join(app, "nako.toml"), path.join(parked, "nako.toml"));
     fs.renameSync(cache, path.join(parked, "cache"));
     const aot = await runChecked(binary, [], { cwd: work }, "AOT 実行");
     if (aot.stdout !== expectedAotStdout) {
@@ -303,6 +362,13 @@ async function main() {
     }
     if (!image.includes(Buffer.from("function leftPad(text, length, ch)"))) {
       fail("AOT 生成物に npm ESM library の source が収録されていません");
+    }
+    // 同梱 package の metadata（name/version/license）も生成物に収録される。
+    if (!image.includes(Buffer.from('"schema":2'))) {
+      fail("AOT 生成物の ESM manifest が schema 2 ではありません");
+    }
+    if (!image.includes(Buffer.from('"license":"MIT"'))) {
+      fail("AOT 生成物の ESM manifest に同梱 package の license が収録されていません");
     }
     console.log("参照 plugin+npm E2E: AOT OK（npm bare import 解決・plugin source 収録。plugin 命令の AOT dispatch は follow-up）");
   } finally {

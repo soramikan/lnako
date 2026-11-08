@@ -106,6 +106,10 @@ npm の ESM package は、lock と cache から解決した結果だけを使い
 
 - `build --compat-js`（embedded、既定）は payload format v8 に npm bare import の解決対応表を収録し、起動時の再コンパイルで cache やファイルシステムなしに復元します。lock と cache はビルド時に必要です。
 - `--backend aot` は ESM manifest に path・source・所属 namespace・package root・bare alias を収録し、起動時に QuickJS へ module として登録します。bare import は compile 時に解決したモジュール source を生成物へ埋め込むため、実行先に npm・Node.js・cache は不要です。ビルド時に cache が欠けていると解決に失敗します。
+- manifest は schema 2（`{"schema":2,"modules":[...],"packages":[...]}`）で、同梱した npm/ESM package の name・version・license と、root 相対の解決済み entry も収録します。`packages` は生成物の自己記述で、実行時の module 登録には使いません。
+- `--sbom <path>` を併用すると、同梱 package の license 一覧を SPDX 2.3 形式の JSON として出力します。`package.json` の `license`（旧形式 object は `type`、古い `licenses` 配列にも対応）、path 依存 ESM package の `nako.toml` の `license` を `licenseDeclared` に記録し、`LICENSE`/`COPYING` 等のファイルがあれば SHA-256 付き file record と `CONTAINS` 関係も出します。宣言が無い package は `NOASSERTION` です。SPDX の式として解釈できない宣言（`MIT/X11`、`(MIT` など）は `LicenseRef-...` へ退避し、元の宣言を `comment` に残します（`UNLICENSED` は付与なしを意味する `NONE`）。出力は決定的です。
+- `--sbom` は `--compat-js --backend aot` 専用です（他の組み合わせ、および生成物・入力 source と同じパスの指定は usage エラー）。通常 AOT は manifest も SBOM も生成しません。
+- 同梱する package root の `package.json` / `nako.toml` が無い、または壊れている場合は、manifest と SBOM を不完全にせず build を失敗させます。
 - ESM plugin の命令は AOT から呼び出せません。plugin 命令の AOT dispatch は未対応です。plugin モジュール内部の bare import は起動時の bare alias 登録で解決され、`JS実行` の引数内で書いた `import("...")` も同じ alias で解決されます。参照 fixture は `tests/fixtures/package-plugin-npm/`（`aot-main.nako3`）です。
 - ESM-only の path 依存（`esm` だけを宣言したパッケージ）を lock で解決するには、`compat-js = true` を宣言した profile を置きます。lock と sync は、`default` が無ければ唯一の profile を自動で選びます。
 
@@ -115,7 +119,12 @@ npm の ESM package は、lock と cache から解決した結果だけを使い
 LNAKO_NPM_REGISTRY=http://127.0.0.1:<port> lnako lock --package-cache-dir <cache>
 lnako sync --offline --package-cache-dir <cache>
 lnako run main.nako3 --compat-js
+# AOT: 同梱依存だけで動く実行ファイルと、その license 一覧
+lnako build aot-main.nako3 --compat-js --backend aot --offline -o ./aot-main --sbom ./aot-main.spdx.json
 ```
+
+`tools/check_package_plugin_npm_e2e.mjs` は `.nako`・cache・`packages/`・`nako.toml` を退避した
+project 外 cwd で AOT 実行ファイルだけを実行し、stdout が一致することを確認します。
 
 ### 配布アーカイブ
 

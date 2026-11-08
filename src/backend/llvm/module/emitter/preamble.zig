@@ -297,15 +297,21 @@ pub fn collectModuleData(emitter: *Emitter) !void {
         if (system_constant.isEraData(name)) try emitter.system_era_data.append(emitter.allocator, global_index);
     }
     if (emitter.program.compat_js and emitter.program.javascript_modules.len > 0) {
-        emitter.compat_esm_manifest = try buildCompatEsmManifest(emitter.allocator, emitter.program.javascript_modules);
+        emitter.compat_esm_manifest = try buildCompatEsmManifest(emitter.allocator, emitter.program.javascript_modules, emitter.program.bundled_packages);
     }
 }
 
 /// `--compat-js` 生成物へ収録するESM情報。source/identity（path・source・
-/// namespace・package root・bare alias）をJSONで持ち、起動時にQuickJSへ
-/// 登録する。通常AOTはこのmanifestを生成しない。`is_plugin`/`namespaces` は
-/// ESM plugin命令のAOT dispatch（follow-up）で消費する。
-fn buildCompatEsmManifest(allocator: std.mem.Allocator, modules: []const ir.JavaScriptModule) ![]u8 {
+/// namespace・package root・bare alias）と、同梱した package の metadata
+/// （name・version・license・package root 相対の解決済み entry）をJSONで持つ。
+/// 起動時にQuickJSへ登録するのは `modules` だけで、`packages` は生成物の
+/// 自己記述（`--sbom` と監査）用。通常AOTはこのmanifestを生成しない。
+/// `is_plugin`/`namespaces` は ESM plugin命令のAOT dispatch（follow-up）で
+/// 消費する。
+///
+/// schema 2 で `{"schema":2,"modules":[...],"packages":[...]}` の object に
+/// なった。runtime は旧形式の配列も受理する（後方互換）。
+fn buildCompatEsmManifest(allocator: std.mem.Allocator, modules: []const ir.JavaScriptModule, packages: []const ir.BundledPackage) ![]u8 {
     const ManifestModule = struct {
         path: []const u8,
         source: []const u8,
@@ -313,6 +319,19 @@ fn buildCompatEsmManifest(allocator: std.mem.Allocator, modules: []const ir.Java
         namespaces: []const []const u8,
         package_root: ?[]const u8,
         bare_aliases: []const []const u8,
+    };
+    const ManifestPackage = struct {
+        name: []const u8,
+        version: []const u8,
+        license: []const u8,
+        root: []const u8,
+        kind: []const u8,
+        entries: []const []const u8,
+    };
+    const Manifest = struct {
+        schema: u32 = 2,
+        modules: []const ManifestModule,
+        packages: []const ManifestPackage,
     };
     const entries = try allocator.alloc(ManifestModule, modules.len);
     defer allocator.free(entries);
@@ -326,7 +345,19 @@ fn buildCompatEsmManifest(allocator: std.mem.Allocator, modules: []const ir.Java
             .bare_aliases = module.bare_aliases,
         };
     }
-    return std.json.Stringify.valueAlloc(allocator, entries, .{});
+    const package_entries = try allocator.alloc(ManifestPackage, packages.len);
+    defer allocator.free(package_entries);
+    for (packages, package_entries) |package, *entry| {
+        entry.* = .{
+            .name = package.name,
+            .version = package.version,
+            .license = package.license,
+            .root = package.root,
+            .kind = @tagName(package.kind),
+            .entries = package.entries,
+        };
+    }
+    return std.json.Stringify.valueAlloc(allocator, Manifest{ .modules = entries, .packages = package_entries }, .{});
 }
 
 pub fn emitDeclarations(emitter: *Emitter) !void {

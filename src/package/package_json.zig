@@ -46,6 +46,11 @@ pub const Manifest = struct {
     /// `exports` が string / array / object のときだけ設定する。
     /// `null` / 数値 / 真偽値は Node と同じく「exports 無し」。
     exports: ?Value = null,
+    /// SPDX形式の `license` 宣言。`license` が string なら素の値、
+    /// object なら `type`（string）を採用する（npm の旧形式
+    /// `{ "type": "MIT", "url": ... }`）。どちらでもない場合は null。
+    /// SBOM の `licenseDeclared` に使う（Node の解決には使わない）。
+    license_declared: ?[]const u8 = null,
 
     pub fn deinit(self: *Manifest) void {
         self.arena.deinit();
@@ -106,7 +111,41 @@ pub fn parse(gpa: Allocator, bytes: []const u8) Error!Manifest {
             else => {},
         }
     }
+    // `license` は SBOM 用の宣言値。npm の旧形式 object は `type` を採る。
+    if (object.get("license")) |field| {
+        manifest.license_declared = switch (field) {
+            .string => |text| text,
+            .object => |license_object| licenseType(license_object),
+            else => null,
+        };
+    }
+    // `license` が無い古い npm package は `licenses` 配列で宣言する
+    // （`[{ "type": "MIT" }, ...]`）。先頭の解釈できる宣言だけを採る。
+    if (manifest.license_declared == null) {
+        if (object.get("licenses")) |field| {
+            if (field == .array) {
+                for (field.array.items) |item| {
+                    const declared = switch (item) {
+                        .string => |text| text,
+                        .object => |license_object| licenseType(license_object),
+                        else => null,
+                    };
+                    if (declared) |text| {
+                        manifest.license_declared = text;
+                        break;
+                    }
+                }
+            }
+        }
+    }
     return manifest;
+}
+
+/// npm 旧形式の license object（`{ "type": "MIT", "url": ... }`）。`type` が
+/// string のときだけ採用する。
+fn licenseType(license_object: std.json.ObjectMap) ?[]const u8 {
+    const type_field = license_object.get("type") orelse return null;
+    return if (type_field == .string) type_field.string else null;
 }
 
 fn stringField(field: Value) Error![]const u8 {
@@ -312,4 +351,37 @@ test "package_json: 重複した name は後勝ちの値で型検証する" {
     var manifest = try parse(gpa, "{\"name\":5,\"name\":\"pkg\"}");
     defer manifest.deinit();
     try testing.expectEqualStrings("pkg", manifest.name.?);
+}
+
+test "package_json: license 宣言を SBOM 用に文字列と旧形式objectの両方で読む" {
+    const gpa = testing.allocator;
+    // SPDX の licenseDeclared に使うため、string は素の値、旧形式 object は
+    // `type` を採用する。
+    var text = try parse(gpa, "{\"name\":\"pkg\",\"license\":\"MIT\"}");
+    defer text.deinit();
+    try testing.expectEqualStrings("MIT", text.license_declared.?);
+    var object = try parse(gpa, "{\"name\":\"pkg\",\"license\":{\"type\":\"Apache-2.0\",\"url\":\"https://example.invalid\"}}");
+    defer object.deinit();
+    try testing.expectEqualStrings("Apache-2.0", object.license_declared.?);
+    // 宣言が無い・解釈できない形は null（SBOM 側で NOASSERTION にする）。
+    var missing = try parse(gpa, "{\"name\":\"pkg\"}");
+    defer missing.deinit();
+    try testing.expect(missing.license_declared == null);
+    var unsupported = try parse(gpa, "{\"name\":\"pkg\",\"license\":5}");
+    defer unsupported.deinit();
+    try testing.expect(unsupported.license_declared == null);
+    var empty_object = try parse(gpa, "{\"name\":\"pkg\",\"license\":{}}");
+    defer empty_object.deinit();
+    try testing.expect(empty_object.license_declared == null);
+    // `license` が無い旧形式は `licenses` 配列の先頭の解釈できる値を使う。
+    var legacy = try parse(gpa, "{\"name\":\"pkg\",\"licenses\":[{\"type\":\"BSD-2-Clause\",\"url\":\"x\"},{\"type\":\"MIT\"}]}");
+    defer legacy.deinit();
+    try testing.expectEqualStrings("BSD-2-Clause", legacy.license_declared.?);
+    var legacy_string = try parse(gpa, "{\"name\":\"pkg\",\"licenses\":[\"ISC\"]}");
+    defer legacy_string.deinit();
+    try testing.expectEqualStrings("ISC", legacy_string.license_declared.?);
+    // `license` が優先される（`licenses` は見ない）。
+    var both = try parse(gpa, "{\"name\":\"pkg\",\"license\":\"MIT\",\"licenses\":[\"ISC\"]}");
+    defer both.deinit();
+    try testing.expectEqualStrings("MIT", both.license_declared.?);
 }

@@ -92,6 +92,9 @@ lnako package verify out.npkg --compat-js --feature http
 
 ## 6. lnako 本体の配布アーカイブ
 
+`build --compat-js --backend aot --sbom <path>` は、生成物へ同梱した npm/ESM package の
+license 一覧を SPDX 2.3 JSON として出力します（`--sbom` 無指定なら従来どおり何も出しません）。
+
 lnako 自身の配布アーカイブは、通常 AOT runtime（`liblnako_runtime.a` / `lnako_runtime.lib`）と compat AOT runtime（`liblnako_runtime_compat.a` / `lnako_runtime_compat.lib`）の両方を `lib/` へ同梱します。`build --compat-js` の既定は embedded で、`--backend aot` は明示的な opt-in です。展開した配布物でも `--backend aot` が動作します。
 
 Windows x86_64 の compat AOT リンクは、Zig の MinGW 向けにビルドした QuickJS が `__mingw_*` と pthread 系のシンボルを参照し、配布 LLVM のリンク行では解決できないため未対応です。詳細は[配布物とリリース手順](../RELEASE.md)と[QuickJS互換モード](../compatibility/COMPAT_JS.md)を参照してください。
@@ -102,7 +105,7 @@ Windows x86_64 の compat AOT リンクは、Zig の MinGW 向けにビルドし
 zig build package-schema-check
 node tools/check_package_schema.mjs
 node tools/check_package_isolation.mjs
-node tools/check_package_plugin_npm_e2e.mjs   # CI の compat job（-Dcompat-js=true のビルドが必要）
+node tools/check_package_plugin_npm_e2e.mjs   # CI の compat job（-Dcompat-js=true のビルドが必要。SBOM も検査）
 ```
 
 `check_package_schema.mjs` は manifest・lock・registry・environment・`.npkg` メタデータの適合例と不適合例を検査します。`check_package_isolation.mjs` は `build.zig.zon` の収録対象だけで通常ビルドと最小 consumer が成立することを検査します。
