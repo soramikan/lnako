@@ -20,6 +20,28 @@ function fail(message) {
   throw new Error(`package分離検査: ${message}`);
 }
 
+// GitHub codeload 等の一時的な 5xx/タイムアウトは、外部依存の取得失敗であり
+// スナップショットの分離性とは無関係。指数バックオフで数回だけ再試行する。
+function isTransientNetworkFailure(error) {
+  const text = `${error?.stderr ?? ""}\n${error?.stdout ?? ""}\n${error?.message ?? ""}`;
+  // 単なる数値（コンパイルエラーの行番号等）ではなく、HTTP ステータスとして
+  // 現れた 502/503/504 だけを一時障害とみなす。
+  return /(?:bad HTTP response code|HTTP status(?: code)?|status(?: code)?)[^\n]*\b(?:502|503|504)\b|Gateway Timeout|ETIMEDOUT|ECONNRESET|EAI_AGAIN|socket hang up/i.test(text);
+}
+
+async function runWithNetworkRetry(command, args, options = {}, attempts = 4) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return await run(command, args, options);
+    } catch (error) {
+      if (!isTransientNetworkFailure(error) || attempt === attempts - 1) throw error;
+      // 5s, 10s, 20s（4回目の試行は直前の失敗から20秒以上待つ）。
+      await new Promise((resolve) => setTimeout(resolve, 5000 * 2 ** attempt));
+    }
+  }
+  throw new Error("unreachable");
+}
+
 async function run(command, args, options = {}) {
   const result = await execFileAsync(command, args, {
     cwd: options.cwd ?? repoRoot,
@@ -60,6 +82,34 @@ function tarHeader(name, size, type) {
   for (let index = 0; index < 512; index += 1) sum += header[index];
   octal(sum, 8).copy(header, 148);
   return header;
+}
+
+function directorySizeWithin(directory, limit) {
+  let total = 0;
+  const stack = [directory];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    let entries;
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch {
+      return false;
+    }
+    for (const entry of entries) {
+      const full = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(full);
+      } else if (entry.isFile()) {
+        try {
+          total += fs.statSync(full, { throwIfNoEntry: false })?.size ?? 0;
+        } catch {
+          return false;
+        }
+        if (total > limit) return false;
+      }
+    }
+  }
+  return true;
 }
 
 function buildTarball(snapshotDir, files) {
@@ -183,9 +233,24 @@ pub fn main() void {
       ZIG_GLOBAL_CACHE_DIR: path.join(work, "zig-global-cache"),
       ZIG_LOCAL_CACHE_DIR: path.join(work, "zig-local-cache"),
     };
+    // snapshot の外部依存（zig-pubgrub 等）は GitHub から取得される。CI の
+    // codeload 障害で検査が落ちないよう、既に取得済みの package cache を
+    // 一時 global cache へ複製して使う。snapshot 自体の fetch は local HTTP
+    // のままで、分離性の検証は変えない。
+    const repoGlobalCache = process.env.ZIG_GLOBAL_CACHE_DIR ?? path.join(repoRoot, ".zig-cache");
+    const repoPackageCache = path.join(repoGlobalCache, "p");
+    const packageCacheLimit = 512 * 1024 * 1024;
+    if (fs.existsSync(repoPackageCache) && directorySizeWithin(repoPackageCache, packageCacheLimit)) {
+      try {
+        fs.mkdirSync(path.join(zigEnv.ZIG_GLOBAL_CACHE_DIR, "p"), { recursive: true });
+        fs.cpSync(repoPackageCache, path.join(zigEnv.ZIG_GLOBAL_CACHE_DIR, "p"), { recursive: true, force: true });
+      } catch {
+        // 容量不足・権限等でコピーできなくても、通常の fetch にフォールバックする。
+      }
+    }
     const url = `http://127.0.0.1:${port}/lnako-source.tar.gz`;
     try {
-      await run("zig", ["fetch", "--save", url], { cwd: consumer, env: zigEnv });
+      await runWithNetworkRetry("zig", ["fetch", "--save", url], { cwd: consumer, env: zigEnv });
     } finally {
       server.close();
     }
@@ -194,7 +259,7 @@ pub fn main() void {
     if (!hashMatch) fail("zig fetchが依存hashを記録しませんでした");
     console.log(`package分離検査: zig fetch成功 ${hashMatch[1]}`);
 
-    await run("zig", ["build"], { cwd: consumer, env: zigEnv });
+    await runWithNetworkRetry("zig", ["build"], { cwd: consumer, env: zigEnv });
     const suffix = process.platform === "win32" ? ".exe" : "";
     const lnakoBinary = path.join(consumer, "zig-out", "bin", `lnako${suffix}`);
     if (!fs.existsSync(lnakoBinary)) fail("consumerがlnako実行ファイルをbuildできませんでした");
