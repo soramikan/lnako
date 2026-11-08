@@ -1,0 +1,4 @@
+[package]
+name = "package-common-reject-undeclared"
+version = "0.1.0"
+license = "MIT"

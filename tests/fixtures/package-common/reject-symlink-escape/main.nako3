@@ -1,0 +1,5 @@
+# package treeの外を指すsymlink entryは両処理系で拒否する。
+# symlinkは比較スクリプトが作業コピー内に作成する（リポジトリへsymlinkを
+# コミットしない。Windowsのcheckout設定に依存させないため）。
+!「パッケージ:demo」を取り込む
+「main」を表示。

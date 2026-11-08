@@ -1,0 +1,9 @@
+[package]
+name = "package-common-app"
+version = "0.1.0"
+license = "MIT"
+
+# 共通fixtureのパッケージはすべてリポジトリ内のpath依存にする（外部ネットワーク不要）。
+[dependencies.path]
+demo = { path = "demo" }
+util = { path = "util" }

@@ -1,0 +1,5 @@
+{
+  "reason": "パッケージ参照内のversion指定",
+  "lnakoDiagnostic": "error[invalid_import]",
+  "cnakoDiagnostic": "E013_MISSING_PACKAGE"
+}

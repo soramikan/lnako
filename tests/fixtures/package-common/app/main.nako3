@@ -1,0 +1,15 @@
+# cnako/lnako 共通fixtureの入口。`パッケージ:` が標準表記、`pkg:` は互換alias。
+# 同じexportを2つの表記で取り込んでもmoduleの初期化は一度だけ行われる。
+!「パッケージ:demo」を取り込む
+!「pkg:demo」を取り込む
+!「パッケージ:demo/calc」を取り込む
+!「pkg:demo/calc」を取り込む
+!「パッケージ:demo/preview」を取り込む
+!「パッケージ:util」を取り込む
+demo__デモ()
+demo__挨拶("世界")
+demo__デモ値を表示。
+demo__calc__計算()
+demo__preview__プレビュー()
+util__道具()
+「main」を表示。

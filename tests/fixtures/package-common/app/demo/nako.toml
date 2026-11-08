@@ -1,0 +1,19 @@
+[package]
+name = "package-common-demo"
+version = "1.0.0"
+license = "MIT"
+
+[[exports]]
+name = "main"
+path = "src/demo.nako3"
+
+[[exports]]
+name = "calc"
+path = "src/demo__calc.nako3"
+
+# exportのaliasはsubpath選択にのみ使う。公開namespaceは指定したsubpath
+# （この場合は `preview`）から `demo__preview` になる。
+[[exports]]
+name = "extra"
+alias = "preview"
+path = "src/demo__preview.nako3"
