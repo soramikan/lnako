@@ -437,7 +437,7 @@ pub fn run(
             };
         },
         .package => {
-            package_command.run(allocator, io, args[1..], stdout, stderr) catch |err| {
+            package_command.run(allocator, io, args[1..], init.environ_map, stdout, stderr) catch |err| {
                 try stderr.print("package: {s}\n", .{@errorName(err)});
                 try stderr.flush();
                 std.process.exit(1);

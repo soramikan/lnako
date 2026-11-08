@@ -277,6 +277,120 @@ test "check は選択 feature の専用依存と推移依存を JSON と本文�
     try testing.expect(std.mem.indexOf(u8, stale_json, "\"features\":") == null);
 }
 
+test "check は package 宣言命令の OS 条件と名前空間 alias 件数を本文と JSON へ出す" {
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const a = arena_impl.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "app/lib-native/src");
+    try temporary.dir.createDirPath(io, "app/lib-native/lib");
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "app/lib-native/nako.toml",
+        .data =
+        \\[package]
+        \\name = "lib-native"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[[exports]]
+        \\name = "lib-native"
+        \\path = "src/index.nako3"
+        \\native = { path = "lib/any.dll", when = "os == 'macos' or os == 'linux' or os == 'windows'" }
+        \\
+        ,
+    });
+    // 標準命令と衝突しない公開名にする（`表示` は builtin）。
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/lib-native/src/index.nako3", .data = "●あいさつとは\nここまで\n" });
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/lib-native/lib/any.dll", .data = "not-a-real-library" });
+    const app_root = try temporary.dir.realPathFileAlloc(io, "app", a);
+    try appManifest(a, app_root,
+        \\[dependencies.path]
+        \\lib-native = { path = "lib-native" }
+        \\
+    );
+    const main_path = try std.fs.path.join(a, &.{ app_root, "main.nako3" });
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = main_path, .data = "「ok」を表示\n" });
+
+    var cli = Cli.init(a);
+    var flags = project_cmd.PrepFlags{};
+    try project_cmd.prepareForExecution(a, io, main_path, &flags, &cli.env, "run", &cli.err.writer);
+
+    const expected_condition = "全 OS | os == 'macos' or os == 'linux' or os == 'windows'";
+    try cli.run(a, "check", &.{"--json"}, app_root);
+    const json = cli.out.written();
+    try testing.expect(std.mem.indexOf(u8, json, "\"conditions\":[{\"package\":\"pkg:") != null);
+    try testing.expect(std.mem.indexOf(u8, json, "\"condition\":\"") != null);
+    try testing.expect(std.mem.indexOf(u8, json, expected_condition) != null);
+    try testing.expect(std.mem.indexOf(u8, json, "\"availability\":\"available\"") != null);
+    try testing.expect(std.mem.indexOf(u8, json, "\"namespaces\":{\"aliases\":1,\"scan\":\"complete\",\"issues\":[]}") != null);
+
+    try cli.run(a, "check", &.{}, app_root);
+    const text = cli.out.written();
+    try testing.expect(std.mem.indexOf(u8, text, "命令 OS 条件: 対象 OS=") != null);
+    try testing.expect(std.mem.indexOf(u8, text, expected_condition) != null);
+    try testing.expect(std.mem.indexOf(u8, text, "利用可能") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "名前空間: alias 1 件（問題 0 件）") != null);
+}
+
+test "check --json は名前空間aliasのerrorでもJSONを出して失敗する" {
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const a = arena_impl.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "app/lib/src");
+    try writePathPackage(a, temporary.dir, "app/lib", "lib", "あいさつ");
+    const app_root = try temporary.dir.realPathFileAlloc(io, "app", a);
+    try appManifest(a, app_root,
+        \\[dependencies.path]
+        \\lib = { path = "lib" }
+        \\
+    );
+    const main_path = try std.fs.path.join(a, &.{ app_root, "main.nako3" });
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = main_path, .data = "「ok」を表示\n" });
+
+    var cli = Cli.init(a);
+    var flags = project_cmd.PrepFlags{};
+    try project_cmd.prepareForExecution(a, io, main_path, &flags, &cli.env, "run", &cli.err.writer);
+
+    // root scope に正規化後空になる alias を足す（env の形状は保ったまま）。
+    const env_path = try std.fs.path.join(a, &.{ app_root, ".nako/environment.json" });
+    const env_bytes = try std.Io.Dir.cwd().readFileAlloc(io, env_path, a, .limited(4 * 1024 * 1024));
+    defer a.free(env_bytes);
+    var parsed = try std.json.parseFromSlice(std.json.Value, a, env_bytes, .{ .allocate = .alloc_always });
+    defer parsed.deinit();
+    const package_key = parsed.value.object.get("dependencies").?.array.items[0].object.get("package").?.string;
+    // 既存 dependencies の先頭へ空 alias を差し込む（env shape は有効なまま）。
+    const needle = "\"dependencies\":[{";
+    const position = std.mem.indexOf(u8, env_bytes, needle) orelse return error.TestUnexpectedResult;
+    const replacement = try std.fmt.allocPrint(
+        a,
+        "\"dependencies\":[{{\"alias\":\"@\",\"package\":\"{s}\"}}, {{",
+        .{package_key},
+    );
+    defer a.free(replacement);
+    // 先頭の root dependencies だけを置換する（package scope の dependencies
+    // を巻き込まない）。
+    const replaced = try std.fmt.allocPrint(
+        a,
+        "{s}{s}{s}",
+        .{ env_bytes[0..position], replacement, env_bytes[position + needle.len ..] },
+    );
+    defer a.free(replaced);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = env_path, .data = replaced });
+
+    try testing.expectError(error.Failed, cli.run(a, "check", &.{"--json"}, app_root));
+    const out = cli.out.written();
+    try testing.expect(std.mem.indexOf(u8, out, "\"namespaces\":{\"aliases\":2") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "\"scope\":\"root\"") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "\"kind\":\"empty\"") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "\"severity\":\"error\"") != null);
+    const err = cli.err.written();
+    try testing.expect(std.mem.indexOf(u8, err, "E029") != null);
+    try testing.expect(std.mem.indexOf(u8, err, "namespace alias") != null);
+}
+
 test "prepareForExecution は lock と .nako 環境を自動準備する" {
     var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_impl.deinit();
@@ -1379,123 +1493,9 @@ test "check は共有 writable を --strict-project-trust で拒否し既定は�
 
 const pkg = @import("lnako").package;
 const sync_cmd = @import("sync.zig");
-
-const RegistryRoute = struct {
-    path: []const u8,
-    body: []const u8 = "",
-    status: u16 = 200,
-};
-
-/// 単一接続ずつ処理する最小 registry サーバ。`Connection: close` で応答する。
-/// `listen` で port を確定してから `serve` で thread を起動するため、
-/// tarball URL を含む packument を spawn 前に組み立てられる（追加の同期不要）。
-const RegistryServer = struct {
-    io: std.Io,
-    allocator: std.mem.Allocator,
-    listener: ?std.Io.net.Server = null,
-    thread: ?std.Thread = null,
-    base_url: ?[]u8 = null,
-    routes: []const RegistryRoute = &.{},
-    requests: std.atomic.Value(usize) = .init(0),
-    stopping: std.atomic.Value(bool) = .init(false),
-
-    fn listen(self: *RegistryServer) !void {
-        const loopback: std.Io.net.IpAddress = .{ .ip4 = .loopback(0) };
-        self.listener = try loopback.listen(self.io, .{ .reuse_address = true });
-        self.base_url = try std.fmt.allocPrint(self.allocator, "http://127.0.0.1:{d}", .{self.listener.?.socket.address.getPort()});
-    }
-
-    fn serve(self: *RegistryServer, routes: []const RegistryRoute) !void {
-        self.routes = routes;
-        self.thread = try std.Thread.spawn(.{}, serveLoop, .{ self, self.listener.? });
-    }
-
-    fn stop(self: *RegistryServer) void {
-        if (self.listener) |*listener| {
-            self.stopping.store(true, .release);
-            // `accept` を解除する。Windows の listening socket shutdown は
-            // INVALID_PARAMETER で panic するため自接続でも起こす。
-            if (builtin.os.tag != .windows) {
-                const wake: std.Io.net.Stream = .{ .socket = listener.socket };
-                wake.shutdown(self.io, .both) catch {};
-            }
-            if (listener.socket.address.connect(self.io, .{ .mode = .stream })) |stream| {
-                stream.close(self.io);
-            } else |_| {}
-            if (self.thread) |thread| thread.join();
-            self.thread = null;
-            listener.deinit(self.io);
-            self.listener = null;
-        }
-        if (self.base_url) |base| self.allocator.free(base);
-        self.base_url = null;
-    }
-
-    fn url(self: *const RegistryServer, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
-        return std.fmt.allocPrint(allocator, "{s}{s}", .{ self.base_url.?, path });
-    }
-
-    fn serveLoop(self: *RegistryServer, server: std.Io.net.Server) void {
-        var listener = server;
-        while (true) {
-            var stream = listener.accept(self.io) catch return;
-            if (self.stopping.load(.acquire)) {
-                stream.close(self.io);
-                return;
-            }
-            self.handle(&stream);
-        }
-    }
-
-    fn handle(self: *RegistryServer, stream: *std.Io.net.Stream) void {
-        defer stream.close(self.io);
-        _ = self.requests.fetchAdd(1, .release);
-        var read_buffer: [512]u8 = undefined;
-        var reader = stream.reader(self.io, &read_buffer);
-        // `readSliceShort` は buffer を満たすまでブロックするため、要求ヘッダの
-        // 終端は 1 byte ずつ読んで CRLFCRLF を検出する。
-        var request: [4096]u8 = undefined;
-        var total: usize = 0;
-        var window: u32 = 0;
-        while (true) {
-            var byte: [1]u8 = undefined;
-            const n = reader.interface.readSliceShort(&byte) catch return;
-            if (n == 0) return;
-            if (total < request.len) {
-                request[total] = byte[0];
-                total += 1;
-            }
-            window = (window << 8) | byte[0];
-            if (window == std.mem.readInt(u32, "\r\n\r\n", .big)) break;
-        }
-        const line_end = std.mem.indexOf(u8, request[0..total], "\r\n") orelse return;
-        const line = request[0..line_end];
-        const first_space = std.mem.indexOfScalar(u8, line, ' ') orelse return;
-        const rest = line[first_space + 1 ..];
-        const second_space = std.mem.indexOfScalar(u8, rest, ' ') orelse return;
-        const path = rest[0..second_space];
-
-        var write_buffer: [1024]u8 = undefined;
-        var writer = stream.writer(self.io, &write_buffer);
-        for (self.routes) |route| {
-            if (!std.mem.eql(u8, route.path, path)) continue;
-            writer.interface.print("HTTP/1.1 {d} {s}\r\nContent-Length: {d}\r\nContent-Type: application/octet-stream\r\nConnection: close\r\n\r\n", .{ route.status, statusText(route.status), route.body.len }) catch return;
-            writer.interface.writeAll(route.body) catch return;
-            writer.interface.flush() catch return;
-            return;
-        }
-        writer.interface.writeAll("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n") catch return;
-        writer.interface.flush() catch return;
-    }
-
-    fn statusText(status: u16) []const u8 {
-        return switch (status) {
-            200 => "OK",
-            404 => "Not Found",
-            else => "Status",
-        };
-    }
-};
+const registry_fixture = @import("registry_fixture.zig");
+const RegistryRoute = registry_fixture.Route;
+const RegistryServer = registry_fixture.Server;
 
 /// npm registry の packument JSON。`parsePackument` が読む versions/dist の
 /// 最小形だけを持たせる。

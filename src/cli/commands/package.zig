@@ -1,7 +1,10 @@
-//! `lnako package build|verify` — `.npkg` の生成とインストール前検証。
+//! `lnako package build|verify|cache|publish` — `.npkg` の生成・インストール
+//! 前検証と、公開前検証（dry-run）・static registry への公開。
 //!
 //! build は `nako.toml` を持つ package directory から決定的な `.npkg` を
 //! 出力し、verify は `.npkg` の構造・索引・対象環境適合を静的に検査する。
+//! publish は manifest/lock/.npkg/registry 設定を検証したうえで、明示された
+//! registry にだけ `.npkg` と version record を PUT する（既定は dry-run）。
 //! いずれもパッケージの初期化コードは実行しない。
 
 const std = @import("std");
@@ -10,6 +13,7 @@ const lnako = @import("lnako");
 const diag = lnako.package.diagnostics;
 const npkg_build = lnako.package.npkg_build;
 const npkg_verify = lnako.package.npkg_verify;
+const publish_mod = lnako.package.publish;
 const semver = lnako.package.semver;
 const cache = lnako.package.cache;
 
@@ -226,9 +230,119 @@ fn runCache(allocator: std.mem.Allocator, io: std.Io, args: []const []const u8, 
     try stdout.print("package cache clean: {d} 個の項目を削除しました（{s}）\n", .{ removed, root });
 }
 
-pub fn run(allocator: std.mem.Allocator, io: std.Io, args: []const []const u8, stdout: *std.Io.Writer, stderr: *std.Io.Writer) !void {
+/// `lnako package publish` — 既定は dry-run。`--no-dry-run` のときだけ
+/// registry へ PUT する。registry/owner/token はフラグを優先し、無ければ
+/// `LNAKO_REGISTRY` / `LNAKO_REGISTRY_OWNER` / `LNAKO_REGISTRY_TOKEN` を読む。
+fn runPublish(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    args: []const []const u8,
+    environ_map: ?*const std.process.Environ.Map,
+    stdout: *std.Io.Writer,
+    stderr: *std.Io.Writer,
+) !void {
+    var root: []const u8 = ".";
+    var root_set = false;
+    var dry_run = true;
+    var registry: ?[]const u8 = null;
+    var owner: ?[]const u8 = null;
+    var allow_plaintext_http = false;
+    var index: usize = 0;
+    while (index < args.len) : (index += 1) {
+        const argument = args[index];
+        if (std.mem.eql(u8, argument, "--dry-run")) {
+            dry_run = true;
+        } else if (std.mem.eql(u8, argument, "--no-dry-run")) {
+            dry_run = false;
+        } else if (std.mem.eql(u8, argument, "--allow-plaintext-http")) {
+            allow_plaintext_http = true;
+        } else if (std.mem.eql(u8, argument, "--registry")) {
+            index += 1;
+            if (index >= args.len or std.mem.startsWith(u8, args[index], "-")) {
+                try stderr.writeAll("package publish: --registry には URL が必要です\n");
+                std.process.exit(2);
+            }
+            registry = args[index];
+        } else if (std.mem.eql(u8, argument, "--owner")) {
+            index += 1;
+            if (index >= args.len or std.mem.startsWith(u8, args[index], "-")) {
+                try stderr.writeAll("package publish: --owner には値が必要です\n");
+                std.process.exit(2);
+            }
+            owner = args[index];
+        } else if (std.mem.startsWith(u8, argument, "-")) {
+            try stderr.print("package publish: 不明なオプションです: {s}\n", .{argument});
+            std.process.exit(2);
+        } else if (!root_set) {
+            root = argument;
+            root_set = true;
+        } else {
+            try stderr.print("package publish: 不明な引数です: {s}\n", .{argument});
+            std.process.exit(2);
+        }
+    }
+
+    const registry_url = registry orelse envValue(environ_map, "LNAKO_REGISTRY");
+    const owner_value = owner orelse envValue(environ_map, "LNAKO_REGISTRY_OWNER");
+    const token = envValue(environ_map, "LNAKO_REGISTRY_TOKEN");
+
+    var list = diag.List.init(allocator);
+    defer list.deinit();
+    var report = publish_mod.run(allocator, io, .{
+        .root = root,
+        .dry_run = dry_run,
+        .registry_url = registry_url,
+        .owner = owner_value,
+        .token = token,
+        .allow_plaintext_http = allow_plaintext_http,
+    }, &list) catch |err| {
+        switch (err) {
+            error.RegistryRequired => try stderr.writeAll("package publish: 公開先 registry が未設定です（--registry または LNAKO_REGISTRY）\n"),
+            error.AuthRequired => try stderr.writeAll("package publish: 認証情報がありません（環境変数 LNAKO_REGISTRY_TOKEN）\n"),
+            error.InvalidAuth => try stderr.writeAll("package publish: 認証情報に空白・制御文字・非 ASCII が含まれています（LNAKO_REGISTRY_TOKEN）\n"),
+            error.OwnerRequired => try stderr.writeAll("package publish: 公開先 owner を特定できません（--owner または LNAKO_REGISTRY_OWNER。index 未収録の初回公開では必須）\n"),
+            error.InvalidRegistry => try stderr.writeAll("package publish: registry URL または owner の形式が不正です\n"),
+            error.ProjectNotFound => try stderr.print("package publish: {s}/nako.toml が見つかりません\n", .{root}),
+            error.LockMissing => try stderr.writeAll("package publish: nako.lock がありません。lnako lock を実行してください\n"),
+            error.LockMismatch => try stderr.writeAll("package publish: nako.lock が現在の nako.toml と一致しません。lnako lock で更新してください\n"),
+            error.InvalidManifest, error.InvalidLock, error.InvalidPackage, error.RegistryUnavailable, error.FileSystem => {
+                if (list.errorCount() > 0) {
+                    try list.render(stderr, root);
+                } else {
+                    try stderr.print("package publish: {s}\n", .{@errorName(err)});
+                }
+            },
+            error.VersionConflict => try stderr.writeAll("package publish: 同一版が異なる内容（artifact hash）で公開済みです。上書きは拒否しました\n"),
+            error.VersionYanked => try stderr.writeAll("package publish: 同一版は yanked 済みです。再公開には registry 側の手続きが必要です\n"),
+            error.OutOfMemory, error.Canceled => return err,
+        }
+        try stderr.flush();
+        std.process.exit(1);
+    };
+    defer report.deinit();
+    try publish_mod.renderSummary(&report, stdout);
+    try stdout.flush();
+    if (report.status == .failed) {
+        try stderr.flush();
+        std.process.exit(1);
+    }
+}
+
+fn envValue(environ_map: ?*const std.process.Environ.Map, name: []const u8) ?[]const u8 {
+    const map = environ_map orelse return null;
+    return map.get(name);
+}
+
+pub fn run(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    args: []const []const u8,
+    environ_map: ?*const std.process.Environ.Map,
+    stdout: *std.Io.Writer,
+    stderr: *std.Io.Writer,
+) !void {
     if (args.len == 0) {
-        try stderr.writeAll("package: 操作を指定してください（build|verify|cache）\n");
+        try stderr.writeAll("package: 操作を指定してください（build|verify|cache|publish）\n");
         std.process.exit(2);
     }
     if (std.mem.eql(u8, args[0], "build")) {
@@ -240,6 +354,13 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io, args: []const []const u8, s
     if (std.mem.eql(u8, args[0], "cache")) {
         return runCache(allocator, io, args[1..], stdout, stderr);
     }
-    try stderr.print("package: 不明な操作です: {s}（build|verify|cache）\n", .{args[0]});
+    if (std.mem.eql(u8, args[0], "publish")) {
+        return runPublish(allocator, io, args[1..], environ_map, stdout, stderr);
+    }
+    try stderr.print("package: 不明な操作です: {s}（build|verify|cache|publish）\n", .{args[0]});
     std.process.exit(2);
+}
+
+test {
+    _ = @import("package_test.zig");
 }

@@ -755,3 +755,11 @@ pub fn parsePackageDoc(session: *Session, bytes: []const u8, url: []const u8) Er
     const record = try parsePackageRecord(&parser, try parseJson(session, bytes, url, .package));
     return .{ .record = record, .versions = record.versions };
 }
+
+/// PS01 layout の個別 version record（`<owner>/<name>/<version>.json`）を
+/// 解析する。publish の状態照会のように provider を介さず 1 件だけ
+/// 検証する場面で使う。
+pub fn parseVersionRecordBytes(session: *Session, bytes: []const u8, url: []const u8) Error!VersionRecord {
+    var parser = JsonParser{ .session = session, .url = url, .resource = .version };
+    return parseVersionRecord(&parser, try parseJson(session, bytes, url, .version));
+}
