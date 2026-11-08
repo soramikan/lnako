@@ -10,7 +10,10 @@
 //! - cache に tarball が無い場合、`--offline` なら取得せず `not_found` 診断で
 //!   fail-closed する。online なら lock の `url` から tarball を取得し、lock
 //!   の `sha256` で検証してから cache へ格納して materialize する（#53）。
-//!   取得は `fetch` の既存 HTTP 層を再利用し、lock は変更しない。
+//!   取得は `fetch` の既存 HTTP 層を再利用するため、再取得できるのは
+//!   http/https の url だけ（平文 http は loopback のみ）。`file:` やローカル
+//!   path を記録した lock は cache が揃っている場合だけ materialize できる。
+//!   lock は変更しない。
 //! - Node・npm CLI・lifecycle script は一切使わない。
 
 const std = @import("std");
@@ -194,7 +197,16 @@ fn readVerifiedArchive(
         "npm instance \"{s}\" has no sha256 in nako.lock",
         .{instance.key},
     );
-    if (instance.url == null) return params.session.fail(
+    // 解釈できない hash 表記は取得前に落とす（cache も fetch も不要と分かる
+    // 入力で無駄な GET をしない。`verifyHash` と同じ表記を受理する）。
+    if (!fetch.isSupportedHash(sha256)) return params.session.fail(
+        .invalid_source,
+        .artifact,
+        instance.key,
+        "npm instance \"{s}\" has an unsupported sha256 notation in nako.lock",
+        .{instance.key},
+    );
+    const url = instance.url orelse return params.session.fail(
         .invalid_source,
         .artifact,
         instance.key,
@@ -234,7 +246,7 @@ fn readVerifiedArchive(
                 .{instance.key},
             );
         }
-        break :blk try fetchIntoCache(params, instance, instance.url.?, key, sha256);
+        break :blk try fetchIntoCache(params, instance, url, key, sha256);
     };
     // `sync --clean` の keep list に載せる（直後に参照 entry を消さない）。
     // append が OOM しても、呼出し側の `defer free` が張られる前に
@@ -265,6 +277,7 @@ fn fetchIntoCache(
     try fetch.verifyHash(params.session, fetched, sha256, url, .artifact);
     const owned = try params.gpa.dupe(u8, fetched);
     errdefer params.gpa.free(owned);
+    // `Store.removeEntry` の error set は I/O のみ（OOM/Canceled は含まない）。
     // 検証できない既存 entry（改竄・不完全）が残っていると、`publishStaging` は
     // tree digest と marker の一致だけで既存 entry を保持し、壊れた
     // `source.archive` を残してしまう。取得した検証済み bytes で作り直すため
@@ -275,6 +288,7 @@ fn fetchIntoCache(
     // 前提で、他プロセスが観測しても entry 欠落は cache miss として自己修復
     // される（publish は staging からの rename で原子置換）。
     params.cache_store.removeEntry(key) catch |err| switch (err) {
+        error.Canceled => return error.Canceled,
         error.InvalidKey => return params.session.fail(
             .invalid_source,
             .artifact,

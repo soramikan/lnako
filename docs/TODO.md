@@ -156,7 +156,7 @@ Project [#2](https://github.com/users/soramikan/projects/2)、label `package-sys
 - `lnako add --npm` は未対応です。npm 依存は `nako.toml` の `[dependencies.npm]` へ直接宣言し、`lnako lock` で解決します。
 - `lnako package` の操作は `build`・`verify`・`cache` だけです。`publish` は未実装です。
 - ESM-only の path 依存（`esm` だけを宣言したパッケージ）を lock で解決するには、`compat-js = true` を宣言した profile を置きます。
-- npm の materialize は Node.js・npm CLI を使いません。cache 欠落・検証不一致時は `--offline` なら失敗し、online なら lock の `url` から tarball を取得して lock の `sha256` を検証したうえで cache へ格納して materialize します（#53）。
+- npm の materialize は Node.js・npm CLI を使いません。cache 欠落・検証不一致時は `--offline` なら失敗し、online なら lock の `url` から tarball を取得して lock の `sha256` を検証したうえで cache へ格納して materialize します（#53）。再取得できるのは http/https の url だけで、平文 http は loopback に限ります。
 - 初回 P0 の主鎖は #52 残ゲートと #53 残を並行しつつ、#50 残ゲート → #54 → #55 → #56 → #57 → #58/#61 です。
 - 配布拡張 P1: native source build（#59）、AOT 静的 plugin 同梱（#11）、workspace（#60）。
 - 他処理系・後続: wnako（#62）、cnako Node 拡充（#63）、cross build（#64）、WASM PoC（#65）、cnako Node 完結依存管理（#70）、階層名前空間「の」（#182）。

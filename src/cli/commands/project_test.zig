@@ -2120,16 +2120,19 @@ test "npm sync E2E: 改竄された cache entry は online sync が取得し直�
     const cache_key = (try pkg.npm_esm.cacheKeyForInstance(a, instance)).?;
 
     // cache には entry があるが bytes が lock の sha256 と一致しない状態を作る。
-    var tamper_store = try pkg.cache.Store.open(a, io, cache_root);
-    const entry_dir = (try tamper_store.entryPath(a, cache_key)) orelse return error.TestExpectedCacheEntry;
-    const archive_path = try std.fs.path.join(a, &.{ entry_dir, "source.archive" });
-    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = archive_path, .data = "tampered-cache-entry" });
-    // 改竄 entry は検証済み archive として返らない（cache miss 相当）。
-    if (try tamper_store.readVerifiedSourceArchive(a, cache_key, instance.sha256.?)) |bytes| {
-        a.free(bytes);
-        return error.TestExpectedCacheMiss;
+    // Store は block 内で閉じ、早期 return でもハンドルを残さない。
+    {
+        var tamper_store = try pkg.cache.Store.open(a, io, cache_root);
+        defer tamper_store.deinit();
+        const entry_dir = (try tamper_store.entryPath(a, cache_key)) orelse return error.TestExpectedCacheEntry;
+        const archive_path = try std.fs.path.join(a, &.{ entry_dir, "source.archive" });
+        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = archive_path, .data = "tampered-cache-entry" });
+        // 改竄 entry は検証済み archive として返らない（cache miss 相当）。
+        if (try tamper_store.readVerifiedSourceArchive(a, cache_key, instance.sha256.?)) |bytes| {
+            a.free(bytes);
+            return error.TestExpectedCacheMiss;
+        }
     }
-    tamper_store.deinit();
 
     // online sync は改竄 entry を取得し直して置き換える（部分 entry を残さない）。
     var out: std.Io.Writer.Allocating = .init(a);
