@@ -1,6 +1,9 @@
 //! npm package の ESM 入口解決（#54）。
 //!
-//! - `package.json` の `exports` / `module` / `main` から入口 path を選ぶ
+//! - `package.json` のパースは `package_json.zig` に集約する（#53）。
+//!   `name` / `version` / `type` / `main` / `module` / `exports` の型検査と
+//!   BOM・重複キー・不正 JSON の扱いを Node 24/26 の実測に合わせる。
+//! - `exports` / `module` / `main` から入口 path を選ぶ
 //! - `exports` のサブパスキー（`"./sub"`）と 1 個の `*` wildcard を解決する
 //! - `node` / `browser` / `require` 条件は暗黙選択しない（明示要求が無い限り無視）
 //! - bare specifier → lock `npmInstances` + cache tree への写像
@@ -8,15 +11,17 @@
 //! 入口選択は Node の ESM 解決に合わせる。`exports` がある package では
 //! root 入口を `exports` からのみ選び、`module` / `main` / `index.js` へは
 //! フォールバックしない（作者が root を隠せる）。`exports` が無い package は
-//! 従来どおり `module` → `main` → `index.js` の順に選ぶ。ただし Node の
-//! 「`exports` 無し package の `name/sub` 従来解決」は実装しておらず、
-//! `BareNotFound` として拒否する（安全側。docs/TODO.md に記録）。
+//! `module` → `main` → `index.js` の順に候補を選び、候補のファイルが無ければ
+//! Node の legacy main 解決と同じく次の候補（最終的に `index.js`）へ進む。
+//! ただし Node の「`exports` 無し package の `name/sub` 従来解決」は実装して
+//! おらず、`BareNotFound` として拒否する（安全側。docs/TODO.md に記録）。
 //!
 //! module_graph は層境界のためここを直接 import せず、`NpmModuleResolver`
 //! コールバック経由で利用する。
 
 const std = @import("std");
 const cache_key = @import("cache_key.zig");
+const package_json_mod = @import("package_json.zig");
 const cache_mod = @import("cache.zig");
 const lock_model = @import("lock_model.zig");
 const unpack = @import("unpack.zig");
@@ -109,35 +114,31 @@ pub const RootEntry = struct {
 /// root を公開しない package は null。`exports` が string / array / object
 /// 以外（`null`・数値・真偽値）なら Node と同じく exports 無しとして扱う
 /// （Node 24.21.0 / 26.13.0 で `module` へのフォールバックを実測）。
+/// `name` / `type` が非文字列ならパース段階で `PackageJsonInvalid` にする
+/// （同じく Node 24.21.0 / 26.13.0 実測）。
+///
+/// 返す `target` は「候補」であり、ファイルの存在は `resolveEntryInRoot` が
+/// legacy main 解決の順で確認する。この関数はテストと将来の遅延解決用で、
+/// 実運用の root 入口解決は `resolveEntryInRoot` が行う。
 pub fn pickEntryFromPackageJson(gpa: Allocator, package_json: []const u8) Error!?RootEntry {
-    var parsed = std.json.parseFromSlice(std.json.Value, gpa, package_json, .{
-        // JS の JSON.parse と同じく、重複キーは後勝ち（位置は最初の出現）。
-        .duplicate_field_behavior = .use_last,
-    }) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        else => return error.PackageJsonInvalid,
-    };
-    defer parsed.deinit();
-    const root = switch (parsed.value) {
-        .object => |obj| obj,
-        else => return error.PackageJsonInvalid,
-    };
+    var manifest = try package_json_mod.parse(gpa, package_json);
+    defer manifest.deinit();
+    return pickRootEntry(gpa, &manifest);
+}
 
-    if (root.get("exports")) |exports_v| {
-        if (exports_v == .string or exports_v == .array or exports_v == .object) {
-            return switch (try resolveExportsRoot(gpa, exports_v)) {
-                .target => |target| .{ .target = target, .from_exports = true },
-                .excluded, .unresolved => null,
-                .invalid => error.PackageJsonInvalid,
-            };
-        }
-        // `exports: null` / 数値 / 真偽値は exports 無し扱い（Node と同じ）。
+fn pickRootEntry(gpa: Allocator, manifest: *const package_json_mod.Manifest) Error!?RootEntry {
+    if (manifest.exports) |exports_v| {
+        return switch (try resolveExportsRoot(gpa, exports_v)) {
+            .target => |target| .{ .target = target, .from_exports = true },
+            .excluded, .unresolved => null,
+            .invalid => error.PackageJsonInvalid,
+        };
     }
-    if (root.get("module")) |v| {
-        if (v == .string and v.string.len > 0) return .{ .target = try gpa.dupe(u8, v.string), .from_exports = false };
+    if (manifest.module) |module| {
+        if (module.len > 0) return .{ .target = try gpa.dupe(u8, module), .from_exports = false };
     }
-    if (root.get("main")) |v| {
-        if (v == .string and v.string.len > 0) return .{ .target = try gpa.dupe(u8, v.string), .from_exports = false };
+    if (manifest.main) |main| {
+        if (main.len > 0) return .{ .target = try gpa.dupe(u8, main), .from_exports = false };
     }
     return .{ .target = try gpa.dupe(u8, "index.js"), .from_exports = false };
 }
@@ -412,6 +413,14 @@ fn readPackageJson(gpa: Allocator, io: std.Io, package_root_abs: []const u8) Err
 }
 
 /// package root dir から入口の絶対 path を返す。
+///
+/// `exports` がある package は exports target だけを厳密 path として確認し、
+/// `module` / `main` / `index.js` へはフォールバックしない。`exports` が無い
+/// package は `module` → `main` → `index.js` の候補を Node の legacy main
+/// 解決と同じ順でファイル確認し、見つからない候補は次へ進む
+/// （Node 24.21.0 / 26.13.0 実測: `main` 欠落・ディレクトリ・`.`・空文字の
+/// いずれも最終的に `index.js` へ到達する）。`.mjs` 補完だけは Node に無い
+/// lnako の意図的拡張（docs/TODO.md）。
 pub fn resolveEntryInRoot(gpa: Allocator, io: std.Io, package_root_abs: []const u8) Error!ResolvedEntry {
     const root = try gpa.dupe(u8, package_root_abs);
     errdefer gpa.free(root);
@@ -419,33 +428,102 @@ pub fn resolveEntryInRoot(gpa: Allocator, io: std.Io, package_root_abs: []const 
     const pj_bytes = try readPackageJson(gpa, io, root);
     defer gpa.free(pj_bytes);
 
-    const picked = (try pickEntryFromPackageJson(gpa, pj_bytes)) orelse return error.EntryNotFound;
-    defer picked.deinit(gpa);
-    const cleaned = stripLeadingDotSlash(picked.target);
-    // package root 外への escapes を拒否する。exports 由来の target は
-    // `exportTargetIsContained` で検証済みだが、`module` / `main` も
-    // `/` と `\` の両区切りで親セグメントを検査する（Windows の `..\` 対策）。
-    if (!entryPathIsContained(cleaned)) return error.EntryNotFound;
+    var manifest = try package_json_mod.parse(gpa, pj_bytes);
+    defer manifest.deinit();
 
-    const abs = try std.fs.path.join(gpa, &.{ root, cleaned });
-    // 実在確認（拡張子補完は index 系に限る）。
-    if (fileExists(io, abs)) {
+    if (manifest.exports) |exports_v| {
+        const picked = switch (try resolveExportsRoot(gpa, exports_v)) {
+            .target => |target| target,
+            .excluded, .unresolved => return error.EntryNotFound,
+            .invalid => return error.PackageJsonInvalid,
+        };
+        defer gpa.free(picked);
+        const cleaned = stripLeadingDotSlash(picked);
+        // package root 外への escapes を拒否する。exports 由来の target は
+        // `exportTargetIsContained` で検証済みだが、念のため `/` と `\` の
+        // 両区切りで親セグメントを検査する（Windows の `..\` 対策）。
+        // legacy main の同じ検査（PackageJsonInvalid）と分類を揃える。
+        if (!entryPathIsContained(cleaned)) return error.PackageJsonInvalid;
+        const abs = try std.fs.path.join(gpa, &.{ root, cleaned });
+        // exports の target は拡張子補完しない（Node の exports と同じく厳密 path）。
+        if (!fileExists(io, abs)) {
+            gpa.free(abs);
+            return error.EntryNotFound;
+        }
         return .{ .path = abs, .package_root = root };
     }
-    gpa.free(abs);
 
-    // `exports` の target は拡張子補完しない（Node の exports と同じく厳密 path）。
-    if (picked.from_exports) return error.EntryNotFound;
-
-    // main が拡張子無しのとき .js / .mjs を試す。
-    for (&[_][]const u8{ ".js", ".mjs" }) |ext| {
-        const with_ext = try std.fmt.allocPrint(gpa, "{s}/{s}{s}", .{ root, cleaned, ext });
-        if (fileExists(io, with_ext)) {
-            return .{ .path = with_ext, .package_root = root };
-        }
-        gpa.free(with_ext);
+    // exports が無い package。`module` は Node が読まない lnako の ESM 入口
+    // 候補で、`main` より優先する（docs/TODO.md の意図的拡張）。候補の
+    // ファイルが無ければ Node の legacy main 解決と同じく次の候補へ進む。
+    const candidates = [_]?[]const u8{ manifest.module, manifest.main };
+    for (candidates) |candidate_opt| {
+        const candidate = candidate_opt orelse continue;
+        if (try resolveLegacyEntry(gpa, io, root, candidate)) |entry| return entry;
     }
-    return error.EntryNotFound;
+    // 最後の index フォールバックは Node と同じく厳密 path だけを見る
+    // （`index.js.js` や `index.js/index.js` のような拡張子・ディレクトリ
+    // 補完はしない）。
+    const index_path = try std.fmt.allocPrint(gpa, "{s}/index.js", .{root});
+    if (!fileExists(io, index_path)) {
+        gpa.free(index_path);
+        return error.EntryNotFound;
+    }
+    return .{ .path = index_path, .package_root = root };
+}
+
+/// `module` / `main` 候補を legacy main 解決の順で探す:
+/// 候補そのもの → `<候補>.js` → `<候補>/index.js`。Node 24.21.0 / 26.13.0 の
+/// 実測では legacy main の拡張補完は `.js` / `.json` / `.node` と
+/// `<候補>/index.js` のみ（`.mjs` は補完しない）。この実装は ESM 専用の
+/// lnako 拡張として `<候補>.mjs` と `<候補>/index.mjs` も補完する
+/// （docs/TODO.md の意図的差異）。`.json` / `.node` は ESM から import 属性
+/// なしで直接 import できないため対象外。
+///
+/// 候補が無ければ null を返し、呼び出し側は次の優先候補へ進む。候補 path が
+/// package root 外・絶対 path・`:` 等を含む場合は、Node の legacy 解決
+/// （package root を出られる）より厳しく `PackageJsonInvalid` にする
+/// （exports の不正 target と同じ分類・fail-closed）。
+///
+/// 末尾 separator 付きの候補（`"lib/"`）はディレクトリ指定として扱い、
+/// `<候補>/index.js` / `<候補>/index.mjs` だけを試す（Node 実測:
+/// `main:"lib/"` は `lib/index.js` を解決し、`lib.js` は試さない）。
+/// strip 後に空になる `"./"` / `"././"` / `"/"` は候補なしとして次の候補へ
+/// 進む（Node 実測（v24/v26）: `main:"/"` も package root の `index.js` へ
+/// 到達する）。`<候補>/package.json` の `main` は Node の ESM legacy main も
+/// 参照しないため解決しない（Node 実測: `lib/package.json` の main より
+/// `lib/index.js` が優先）。
+fn resolveLegacyEntry(gpa: Allocator, io: std.Io, root: []u8, raw_candidate: []const u8) Error!?ResolvedEntry {
+    const cleaned = stripLeadingDotSlash(raw_candidate);
+    // 末尾 separator を剥がす前に `\` を拒否する。`lib\` を `lib` として
+    // `<候補>/index.js` に解決してしまうのを防ぐ（POSIX の Node は `\` を
+    // 通常文字として扱うが、lnako は安全側で不正とする）。
+    if (std.mem.indexOfScalar(u8, cleaned, '\\') != null) return error.PackageJsonInvalid;
+    const trimmed = stripTrailingSeparators(cleaned);
+    const directory_only = trimmed.len != cleaned.len;
+    const candidate = trimmed;
+    if (candidate.len == 0) return null;
+    // `module` / `main` が root 外・絶対 path・`:` 等を含む場合は、Node の
+    // legacy 解決（package root を出られる）より厳しく fail-closed にする。
+    if (!entryPathIsContained(candidate)) return error.PackageJsonInvalid;
+
+    if (!directory_only) {
+        const joined = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ root, candidate });
+        if (fileExists(io, joined)) return .{ .path = joined, .package_root = root };
+        gpa.free(joined);
+
+        for ([_][]const u8{ ".js", ".mjs" }) |ext| {
+            const with_ext = try std.fmt.allocPrint(gpa, "{s}/{s}{s}", .{ root, candidate, ext });
+            if (fileExists(io, with_ext)) return .{ .path = with_ext, .package_root = root };
+            gpa.free(with_ext);
+        }
+    }
+    for ([_][]const u8{ "index.js", "index.mjs" }) |index_name| {
+        const index_path = try std.fmt.allocPrint(gpa, "{s}/{s}/{s}", .{ root, candidate, index_name });
+        if (fileExists(io, index_path)) return .{ .path = index_path, .package_root = root };
+        gpa.free(index_path);
+    }
+    return null;
 }
 
 fn stripLeadingDotSlash(path: []const u8) []const u8 {
@@ -454,10 +532,20 @@ fn stripLeadingDotSlash(path: []const u8) []const u8 {
     return p;
 }
 
+/// `main` / `module` の末尾 separator を除く（`"lib/"` を `"lib"` にして
+/// `<候補>/index.js` の結合を素直にする。Node 実測: `main:"lib/"` は
+/// `lib/index.js` を解決する）。
+fn stripTrailingSeparators(path: []const u8) []const u8 {
+    var end = path.len;
+    while (end > 0 and (path[end - 1] == '/' or path[end - 1] == '\\')) end -= 1;
+    return path[0..end];
+}
+
 /// package root から `exports` のサブパス入口を解決する。`subpath` は
 /// `name/sub` の `sub`（先頭 `./` 無し）。戻り値の分類は次の通り。
 /// - `BareNotFound`: そのサブパスを公開していない（`null` target を含む）
-/// - `PackageJsonInvalid`: exports target が root 外・不正な形式
+/// - `PackageJsonInvalid`: package.json が不正（不正 JSON・root 非 object・
+///   `name`/`type` 非文字列・exports キー混在・target が root 外/不正形式）
 /// - `InvalidSpecifier`: wildcard の一致部分が不正（配列 fallback でも継続しない）
 /// - `EntryNotFound`: target は妥当だがファイルが無い
 /// - `PackageJsonMissing`: registry 構築後に `package.json` が消えた場合
@@ -475,20 +563,12 @@ pub fn resolveSubpathInRoot(
 
     const pj_bytes = try readPackageJson(gpa, io, root);
     defer gpa.free(pj_bytes);
-    var parsed = std.json.parseFromSlice(std.json.Value, gpa, pj_bytes, .{
-        // JS の JSON.parse と同じく、重複キーは後勝ち（位置は最初の出現）。
-        .duplicate_field_behavior = .use_last,
-    }) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        else => return error.PackageJsonInvalid,
-    };
-    defer parsed.deinit();
-    const root_obj = switch (parsed.value) {
-        .object => |obj| obj,
-        else => return error.PackageJsonInvalid,
-    };
+    var manifest = try package_json_mod.parse(gpa, pj_bytes);
+    defer manifest.deinit();
 
-    const exports_v = root_obj.get("exports") orelse return error.BareNotFound;
+    // `exports` が string/array/object 以外（`null`・数値・真偽値）なら
+    // Node と同じく exports 無し扱いで、サブパスは公開されない。
+    const exports_v = manifest.exports orelse return error.BareNotFound;
     // サブパス専用 package でも、キーの混在は Node と同じく package.json 不正。
     if (exports_v == .object and !exportsKeysAreConsistent(exports_v.object)) return error.PackageJsonInvalid;
     switch (try pickExportsSubpath(gpa, exports_v, subpath)) {
@@ -2147,4 +2227,8 @@ test "BareRegistry resolveBare は選択パターンの不正 target を他パ�
     var reg = try makeTestRegistry(gpa, io, &tmp, "pkg", "left-pad", json, &.{});
     defer reg.deinit();
     try testing.expectError(error.PackageJsonInvalid, reg.resolveBare("left-pad/a*b"));
+}
+
+test {
+    _ = @import("npm_esm_test.zig");
 }

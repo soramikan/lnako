@@ -43,6 +43,7 @@ const fetch = @import("fetch.zig");
 const lock_model = @import("lock_model.zig");
 const npm_env = @import("npm_env.zig");
 const npm_esm = @import("npm_esm.zig");
+const package_json_mod = @import("package_json.zig");
 const unpack = @import("unpack.zig");
 const module_graph = @import("../semantic/module_graph.zig");
 
@@ -317,19 +318,19 @@ pub const Prepared = struct {
             return false;
         };
         defer self.gpa.free(bytes);
-        var parsed = std.json.parseFromSlice(Value, self.gpa, bytes, .{}) catch |err| switch (err) {
+        // package.json の読み取り規則は `package_json.zig` に集約する
+        // （BOM 受理・重複キー後勝ち・name/type の型検査）。identity は
+        // name/version の組だけを照合する。name/type が非文字列の package.json
+        // は Node 準拠で不正扱いになるため identity 不一致（= cache へ
+        // fallback）になる。
+        var manifest = package_json_mod.parse(self.gpa, bytes) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
-            else => return false,
+            error.PackageJsonInvalid => return false,
         };
-        defer parsed.deinit();
-        const object = switch (parsed.value) {
-            .object => |value| value,
-            else => return false,
-        };
-        const name = object.get("name") orelse return false;
-        const version = object.get("version") orelse return false;
-        if (name != .string or version != .string) return false;
-        return std.mem.eql(u8, name.string, instance.name) and std.mem.eql(u8, version.string, instance.version);
+        defer manifest.deinit();
+        const name = manifest.name orelse return false;
+        const version = manifest.version orelse return false;
+        return std.mem.eql(u8, name, instance.name) and std.mem.eql(u8, version, instance.version);
     }
 
     /// bare specifier を解決する。要求された name の instance だけを準備する。
