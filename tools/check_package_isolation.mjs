@@ -202,6 +202,16 @@ pub fn main() void {
       ZIG_GLOBAL_CACHE_DIR: path.join(work, "zig-global-cache"),
       ZIG_LOCAL_CACHE_DIR: path.join(work, "zig-local-cache"),
     };
+    // snapshot の外部依存（zig-pubgrub 等）は GitHub から取得される。CI の
+    // codeload 障害で検査が落ちないよう、既に取得済みの package cache を
+    // 一時 global cache へ複製して使う。snapshot 自体の fetch は local HTTP
+    // のままで、分離性の検証は変えない。
+    const repoGlobalCache = process.env.ZIG_GLOBAL_CACHE_DIR ?? path.join(repoRoot, ".zig-cache");
+    const repoPackageCache = path.join(repoGlobalCache, "p");
+    if (fs.existsSync(repoPackageCache)) {
+      fs.mkdirSync(path.join(zigEnv.ZIG_GLOBAL_CACHE_DIR, "p"), { recursive: true });
+      fs.cpSync(repoPackageCache, path.join(zigEnv.ZIG_GLOBAL_CACHE_DIR, "p"), { recursive: true, force: true });
+    }
     const url = `http://127.0.0.1:${port}/lnako-source.tar.gz`;
     try {
       await runWithNetworkRetry("zig", ["fetch", "--save", url], { cwd: consumer, env: zigEnv });
@@ -213,7 +223,7 @@ pub fn main() void {
     if (!hashMatch) fail("zig fetchが依存hashを記録しませんでした");
     console.log(`package分離検査: zig fetch成功 ${hashMatch[1]}`);
 
-    await run("zig", ["build"], { cwd: consumer, env: zigEnv });
+    await runWithNetworkRetry("zig", ["build"], { cwd: consumer, env: zigEnv });
     const suffix = process.platform === "win32" ? ".exe" : "";
     const lnakoBinary = path.join(consumer, "zig-out", "bin", `lnako${suffix}`);
     if (!fs.existsSync(lnakoBinary)) fail("consumerがlnako実行ファイルをbuildできませんでした");
