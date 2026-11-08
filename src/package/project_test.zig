@@ -519,10 +519,11 @@ test "syncはlockのnpmInstancesを世代npm/へmaterializeする" {
     defer gpa.free(blob_rel_again);
     try temporary.dir.access(io, blob_rel_again, .{});
 
-    // cache に tarball が無い場合、sync は取得せず診断付きで失敗する。
+    // cache に tarball が無い場合、offline の sync は取得せず診断付きで
+    // 失敗する（online なら lock の url から取得する。#53）。
     var miss_list = newDiagnostics();
     defer miss_list.deinit();
-    try testing.expectError(error.NotFound, sync_mod.run(gpa, io, .{ .project_root = app_root, .cache_root = empty_cache_root }, &miss_list));
+    try testing.expectError(error.NotFound, sync_mod.run(gpa, io, .{ .project_root = app_root, .cache_root = empty_cache_root, .policy = .{ .offline = true } }, &miss_list));
     try testing.expect(miss_list.errorCount() > 0);
 }
 

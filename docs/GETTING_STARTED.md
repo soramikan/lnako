@@ -211,13 +211,13 @@ lnako check               # プロジェクトの依存・環境・命令メタ�
 
 | フラグ | 動作 |
 | --- | --- |
-| `--locked` | `nako.lock` を変更しない。不足・陳腐なら失敗する |
+| `--locked` | `nako.lock` を変更しない。不足・陳腐なら失敗する（network 取得は禁止しない） |
 | `--offline` | ネットワーク取得を禁止し、取得済み cache だけで解決する |
 | `--no-sync` | `run` / `test` / `build` で `.nako` の自動準備をしない。既存環境だけを使う |
 | `--profile <name>` | 使用する profile。省略時は `default`、無ければ唯一の profile |
 | `--features <a,b>` / `--no-default-features` | 有効化する feature を選ぶ |
 
-`--no-sync` は、環境が削除されている場合や lock と一致しない場合に失敗します。`--locked` は `sync` / `lock` / `tree` / `why` / `check` でも使えます。cache の場所は `lnako cache dir`、削除は `lnako cache clean`、プロジェクト単位の指定は `--package-cache-dir <path>` です。
+`sync` は cache に tarball が無い場合、`--offline` でなければ `nako.lock` の URL から取得し、lock の `sha256` を検証して cache へ格納してから環境を構築します。`--no-sync` は、環境が削除されている場合や lock と一致しない場合に失敗します。`--locked` は `sync` / `lock` / `tree` / `why` / `check` でも使えます。cache の場所は `lnako cache dir`、削除は `lnako cache clean`、プロジェクト単位の指定は `--package-cache-dir <path>` です。
 
 ### パッケージを取り込む
 
