@@ -120,9 +120,9 @@ pub fn provenanceMatches(instance: lock_model.NpmInstance, text: []const u8) boo
 /// `instances` を世代 `deps/` へ materialize する。空なら何もしない。
 /// 途中で失敗した場合、生成済みの tree は世代ごと破棄される（公開しない）。
 ///
-/// 返り値は今回読んだ cache object key（`params.arena` 所有）。呼出し側は
-/// これを sync の used-keys へ記録し、`sync --clean` が直後に参照 entry を
-/// 消さないようにする。
+/// 返り値は今回読み出し・格納した cache object key（`params.arena` 所有）。
+/// 呼出し側はこれを sync の used-keys へ記録し、`sync --clean` が直後に
+/// 参照 entry を消さないようにする。
 pub fn materializeInstances(params: Params, instances: []const lock_model.NpmInstance) Error![]const []const u8 {
     if (instances.len == 0) return &.{};
     var used_keys: std.ArrayListUnmanaged([]const u8) = .empty;
@@ -230,11 +230,11 @@ fn readVerifiedArchive(
                 .not_found,
                 .artifact,
                 instance.key,
-                "npm tarball for \"{s}\" is not in the cache; re-resolve dependencies while the registry is reachable",
+                "npm tarball for \"{s}\" is not in the cache and sync is running with --offline; rerun without --offline to fetch it from the lock url",
                 .{instance.key},
             );
         }
-        break :blk try fetchIntoCache(params, instance, key, sha256);
+        break :blk try fetchIntoCache(params, instance, instance.url.?, key, sha256);
     };
     // `sync --clean` の keep list に載せる（直後に参照 entry を消さない）。
     // append が OOM しても、呼出し側の `defer free` が張られる前に
@@ -246,23 +246,18 @@ fn readVerifiedArchive(
 
 /// cache 欠落時の online 取得経路。lock の `url` から tarball を取得し、
 /// lock の `sha256` と照合してから content-addressed key へ cache 格納する。
-/// 検証に失敗した bytes は cache へ公開しない（部分 entry を残さない）。
-/// 既存 entry が lock の sha256 を満たさない場合は、検証済み bytes で
-/// 置き換える（壊れた cache を自己修復する）。
+/// 検証に失敗した bytes は cache へ公開しない（objects/ に部分 entry を
+/// 残さない）。既存 entry が lock の sha256 を満たさない場合は、検証済み
+/// bytes で置き換える（壊れた cache を自己修復する）。
+/// `url` は呼出し側（`readVerifiedArchive`）が非 null を保証する。
 /// 返り値は `params.gpa` 所有（呼出し側が free）。
 fn fetchIntoCache(
     params: Params,
     instance: lock_model.NpmInstance,
+    url: []const u8,
     key: []const u8,
     sha256: []const u8,
 ) Error![]u8 {
-    const url = instance.url orelse return params.session.fail(
-        .invalid_source,
-        .artifact,
-        instance.key,
-        "npm instance \"{s}\" has no tarball url in nako.lock",
-        .{instance.key},
-    );
     // 404・redirect 上限・timeout・HTTP status は fetch 層が分類付きで
     // session へ記録する。取得 bytes は session arena 所有なので、cache 格納
     // と返却に使う gpa 所有の複製を作る。
@@ -273,8 +268,12 @@ fn fetchIntoCache(
     // 検証できない既存 entry（改竄・不完全）が残っていると、`publishStaging` は
     // tree digest と marker の一致だけで既存 entry を保持し、壊れた
     // `source.archive` を残してしまう。取得した検証済み bytes で作り直すため
-    // 先に消す（欠落 key では何もしない）。ここへ来る時点で cache は lock の
-    // sha256 を満たしておらず、保持する価値は無い。
+    // 先に消す。ここへ来る時点で cache は lock の sha256 を満たしておらず、
+    // 保持する価値は無い。欠落 key では no-op（`deleteTreeChecked` が
+    // FileNotFound を成功扱いする）なので、通常の cache miss もこの経路で安全。
+    // 削除から publish までの窓は `sync` が cache の排他 lock を保持している
+    // 前提で、他プロセスが観測しても entry 欠落は cache miss として自己修復
+    // される（publish は staging からの rename で原子置換）。
     params.cache_store.removeEntry(key) catch |err| switch (err) {
         error.InvalidKey => return params.session.fail(
             .invalid_source,
@@ -287,18 +286,8 @@ fn fetchIntoCache(
     };
     // cache 格納は lock の sha256 と url から導出した key へ行う。これにより
     // 次回以降の sync は同じ key で cache hit する。
-    npm_esm.publishNpmTree(params.gpa, params.io, params.cache_store, key, owned) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        error.Canceled => return error.Canceled,
-        error.InvalidArchive => return params.session.fail(
-            .invalid_source,
-            .artifact,
-            instance.key,
-            "npm tarball for \"{s}\" fetched from \"{s}\" is not a valid archive",
-            .{ instance.key, url },
-        ),
-        else => return error.FileSystem,
-    };
+    npm_esm.publishNpmTree(params.gpa, params.io, params.cache_store, key, owned) catch |err|
+        return mapUnpackError(params, err, instance.key);
     return owned;
 }
 

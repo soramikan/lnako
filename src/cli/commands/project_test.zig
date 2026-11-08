@@ -1825,10 +1825,11 @@ test "npm registry E2E: lock 無しの sync も fixture registry から構築す
 // のまま。404・sha256 不一致は cache に部分 entry を残さず失敗する。
 // fixture は loopback の HTTP registry だけで、外部ネットワークは使わない。
 
-/// `nako.lock` 内の `from`（旧 registry の base URL）を `to` へ置換して
-/// 書き戻す。sha256 はそのまま残すため、取得先だけを別ミラーへ差し替えた
-/// 状況（404・内容差し替え）を再現できる。
-fn rewriteLockBase(a: std.mem.Allocator, app_root: []const u8, from: []const u8, to: []const u8) !void {
+/// `nako.lock` 内の `from` を `to` へ置換して書き戻す。取得先 URL だけを
+/// 差し替える場合（404・内容差し替え）と、pin した sha256 を差し替える場合
+/// （lock を外部生成された入力として扱う試験）に使う。置換が起きなければ
+/// 失敗させ、テスト側の取り違えを検出する。
+fn replaceLockText(a: std.mem.Allocator, app_root: []const u8, from: []const u8, to: []const u8) !void {
     const lock_path = try std.fs.path.join(a, &.{ app_root, "nako.lock" });
     const bytes = try std.Io.Dir.cwd().readFileAlloc(io, lock_path, a, .limited(4 * 1024 * 1024));
     const replaced = try std.mem.replaceOwned(u8, a, bytes, from, to);
@@ -1944,6 +1945,15 @@ test "npm sync E2E: cache 欠落時に lock の url から tarball を再取得�
     var hit_err: std.Io.Writer.Allocating = .init(a);
     try sync_cmd.run(a, io, &.{ "--package-cache-dir", cache_root, app_root }, &cli.env, &hit_out.writer, &hit_err.writer);
     try testing.expectEqual(fixture.requests + 1, server.requests.load(.acquire));
+
+    // --- `--locked` は lock の書換禁止であって network 禁止ではない ---
+    // cache を失った状態でも取得して materialize し、lock は変えない。
+    try temporary.dir.deleteTree(io, "cache");
+    var locked_out: std.Io.Writer.Allocating = .init(a);
+    var locked_err: std.Io.Writer.Allocating = .init(a);
+    try sync_cmd.run(a, io, &.{ "--locked", "--package-cache-dir", cache_root, app_root }, &cli.env, &locked_out.writer, &locked_err.writer);
+    try testing.expectEqual(fixture.requests + 2, server.requests.load(.acquire));
+    try testing.expectEqualStrings(fixture.lock_bytes, try readFile(a, app_root, "nako.lock"));
 }
 
 test "npm sync E2E: cache 欠落 + --offline は取得せず fail-closed する" {
@@ -2005,8 +2015,7 @@ test "npm sync E2E: cache 欠落時の tarball 404 は取得を失敗させ cach
     const healthy_base = try a.dupe(u8, healthy.base_url.?);
     defer healthy.stop();
     var cli = Cli.init(a);
-    const fixture = try createNpmLock(a, &cli, &healthy, app_root, cache_root, "escape", "1.2.3", "export default 42;\n");
-    _ = fixture;
+    _ = try createNpmLock(a, &cli, &healthy, app_root, cache_root, "escape", "1.2.3", "export default 42;\n");
     try temporary.dir.deleteTree(io, "cache");
 
     // 2) lock の取得先だけを tarball 未収録の registry へ差し替える。
@@ -2015,7 +2024,8 @@ test "npm sync E2E: cache 欠落時の tarball 404 は取得を失敗させ cach
     defer missing.stop();
     const empty_routes = [_]RegistryRoute{};
     try missing.serve(&empty_routes);
-    try rewriteLockBase(a, app_root, healthy_base, missing.base_url.?);
+    try replaceLockText(a, app_root, healthy_base, missing.base_url.?);
+    const rewritten_lock = try readFile(a, app_root, "nako.lock");
 
     var out: std.Io.Writer.Allocating = .init(a);
     var err_out: std.Io.Writer.Allocating = .init(a);
@@ -2025,6 +2035,8 @@ test "npm sync E2E: cache 欠落時の tarball 404 は取得を失敗させ cach
     try testing.expectEqual(@as(usize, 1), missing.requests.load(.acquire));
     try testing.expectEqual(@as(usize, 0), try countCacheObjects(a, cache_root));
     try testing.expect(!try dirFileExists(a, app_root, ".nako/environment.json"));
+    // 取得失敗で lock は書き換わらない。
+    try testing.expectEqualStrings(rewritten_lock, try readFile(a, app_root, "nako.lock"));
 }
 
 test "npm sync E2E: cache 欠落時の tarball は lock の sha256 と不一致なら拒否する" {
@@ -2061,7 +2073,7 @@ test "npm sync E2E: cache 欠落時の tarball は lock の sha256 と不一致�
         .{ .path = fixture.tarball_path, .body = tampered_bytes },
     };
     try tampered.serve(&tampered_routes);
-    try rewriteLockBase(a, app_root, healthy_base, tampered.base_url.?);
+    try replaceLockText(a, app_root, healthy_base, tampered.base_url.?);
     // 取得成功後に書き換わらないことを見るため、差し替え後の lock を控える。
     const rewritten_lock = try readFile(a, app_root, "nako.lock");
 
@@ -2191,7 +2203,7 @@ test "npm sync E2E: 取得は redirect を追跡し policy 違反の平文 http 
 
     // --- policy 違反: 平文 http の非 loopback URL は通信せず拒否する ---
     try temporary.dir.deleteTree(io, "cache");
-    try rewriteLockBase(a, app_root, server.base_url.?, "http://example.invalid");
+    try replaceLockText(a, app_root, server.base_url.?, "http://example.invalid");
     const rewritten_lock = try readFile(a, app_root, "nako.lock");
     var reject_out: std.Io.Writer.Allocating = .init(a);
     var reject_err: std.Io.Writer.Allocating = .init(a);
@@ -2199,6 +2211,67 @@ test "npm sync E2E: 取得は redirect を追跡し policy 違反の平文 http 
     try testing.expect(std.mem.indexOf(u8, reject_err.written(), "only allowed for loopback hosts") != null);
     // 通信は発生しない（fixture への request 数は増えない）。
     try testing.expectEqual(after_lock + 2, server.requests.load(.acquire));
+    try testing.expectEqualStrings(rewritten_lock, try readFile(a, app_root, "nako.lock"));
+}
+
+test "npm sync E2E: lock と一致する壊れた gzip は invalid_source として拒否する" {
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const a = arena_impl.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "app");
+    try temporary.dir.createDirPath(io, "cache");
+    const app_root = try temporary.dir.realPathFileAlloc(io, "app", a);
+    const cache_root = try temporary.dir.realPathFileAlloc(io, "cache", a);
+    try appManifest(a, app_root,
+        \\[dependencies.npm]
+        \\escape = "^1.0.0"
+        \\
+    );
+
+    // 1) 正常な tarball で lock と cache を作る。
+    var healthy = RegistryServer{ .io = io, .allocator = a };
+    try healthy.listen();
+    const healthy_base = try a.dupe(u8, healthy.base_url.?);
+    defer healthy.stop();
+    var cli = Cli.init(a);
+    const fixture = try createNpmLock(a, &cli, &healthy, app_root, cache_root, "escape", "1.2.3", "export default 42;\n");
+
+    var diagnostics = pkg.diagnostics.List.init(a);
+    defer diagnostics.deinit();
+    var parsed = try pkg.lock.parse(a, try readFile(a, app_root, "nako.lock"), &diagnostics);
+    defer parsed.deinit();
+    const instance = findNpmInstance(&parsed, "escape@1.2.3") orelse return error.TestExpectedInstance;
+    const old_sha = instance.sha256.?;
+    try temporary.dir.deleteTree(io, "cache");
+
+    // 2) gzip magic を持つが tar として壊れた bytes を配信し、lock の sha256 も
+    //    その bytes に合わせる（sha256 検証は通るが展開できない入力）。
+    const broken = try std.mem.concat(a, u8, &.{ "\x1f\x8b", "broken-gzip-body" });
+    const broken_hex = try pkg.fetch.sha256Hex(a, broken);
+    const broken_sha = try std.fmt.allocPrint(a, "sha256:{s}", .{broken_hex});
+
+    var broken_server = RegistryServer{ .io = io, .allocator = a };
+    try broken_server.listen();
+    defer broken_server.stop();
+    const broken_routes = [_]RegistryRoute{
+        .{ .path = fixture.tarball_path, .body = broken },
+    };
+    try broken_server.serve(&broken_routes);
+    try replaceLockText(a, app_root, healthy_base, broken_server.base_url.?);
+    try replaceLockText(a, app_root, old_sha, broken_sha);
+    const rewritten_lock = try readFile(a, app_root, "nako.lock");
+
+    var out: std.Io.Writer.Allocating = .init(a);
+    var err_out: std.Io.Writer.Allocating = .init(a);
+    try testing.expectError(error.Failed, sync_cmd.run(a, io, &.{ "--package-cache-dir", cache_root, app_root }, &cli.env, &out.writer, &err_out.writer));
+    // sha256 は一致しても展開不能な入力を invalid_source として診断する。
+    try testing.expect(std.mem.indexOf(u8, err_out.written(), "not safe to extract") != null);
+    try testing.expectEqual(@as(usize, 1), broken_server.requests.load(.acquire));
+    // 公開 entry を作らない（objects/ を汚さない）。
+    try testing.expectEqual(@as(usize, 0), try countCacheObjects(a, cache_root));
+    try testing.expect(!try dirFileExists(a, app_root, ".nako/environment.json"));
     try testing.expectEqualStrings(rewritten_lock, try readFile(a, app_root, "nako.lock"));
 }
 
