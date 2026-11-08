@@ -536,10 +536,43 @@ test "Windows ACL check accepts a private temporary project directory and file" 
     defer allocator.free(root);
     const manifest = try std.fs.path.join(allocator, &.{ root, "nako.toml" });
     defer allocator.free(manifest);
+    // GitHub Actions の %TEMP% は Authenticated Users の add-only ACE を
+    // 継承しており、そのままでは「private な temp dir」にならない。テストの
+    // 前提を満たすため、継承 ACE を外して実効ユーザだけに権限を付ける。
+    try windowsMakePrivate(allocator, io, root, true);
+    try windowsMakePrivate(allocator, io, manifest, false);
     if (try windowsPathHasUntrustedWriteAccess(allocator, root, true, .allow_inherited_baseline))
         return error.TestUnexpectedResult;
     if (try windowsPathHasUntrustedWriteAccess(allocator, manifest, false, .allow_inherited_baseline))
         return error.TestUnexpectedResult;
+}
+
+fn windowsMakePrivate(allocator: Allocator, io: std.Io, path: []const u8, is_directory: bool) !void {
+    // `whoami` は `DOMAIN\user` を返す。環境変数 API に依存せず principal を
+    // 取得し、継承 ACE を外して実効ユーザだけに権限を付ける。
+    const who = std.process.run(allocator, io, .{ .argv = &.{"whoami"} }) catch return error.SkipZigTest;
+    defer allocator.free(who.stdout);
+    defer allocator.free(who.stderr);
+    switch (who.term) {
+        .exited => |code| if (code != 0) return error.SkipZigTest,
+        else => return error.SkipZigTest,
+    }
+    const principal = std.mem.trim(u8, who.stdout, " \r\n");
+    if (principal.len == 0) return error.SkipZigTest;
+    const grant = if (is_directory)
+        try std.fmt.allocPrint(allocator, "{s}:(OI)(CI)F", .{principal})
+    else
+        try std.fmt.allocPrint(allocator, "{s}:F", .{principal});
+    defer allocator.free(grant);
+    const result = std.process.run(allocator, io, .{
+        .argv = &.{ "icacls", path, "/inheritance:r", "/grant:r", grant },
+    }) catch return error.SkipZigTest;
+    defer allocator.free(result.stdout);
+    defer allocator.free(result.stderr);
+    switch (result.term) {
+        .exited => |code| if (code != 0) return error.SkipZigTest,
+        else => return error.SkipZigTest,
+    }
 }
 
 test "macOS拡張ACLのdirへの書込みgrantは祖先検査でunsafeになる" {
