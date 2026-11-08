@@ -142,7 +142,7 @@ Project [#2](https://github.com/users/soramikan/projects/2)、label `package-sys
 | 依存管理 CLI・実行前準備・`--locked`/`--offline`/`--no-sync`（#49） | 完了 | なし |
 | package import（#50） | 部分実装 | cnako 共通 fixture の両処理系受理（#210、cnako 本体は #61）、AOT O0〜O3 の3 OS 実行検証の残り（#209） |
 | 命令 metadata の静的検査（#52） | 部分実装 | JS/native の実登録照合（declared command 接続・OS 条件の照合表示・名前空間 check は #211/#227/#251 で実装済み） |
-| npm 取得（#53） | 部分実装 | cache 欠落時の sync 側 tarball 取得。Node lifecycle script は対象外 |
+| npm 取得（#53） | 部分実装 | Node lifecycle script は対象外（cache 欠落時の sync 側 tarball 取得は実装済み） |
 | QuickJS ESM（#54） | 部分実装 | 下記の npm ESM 境界。QuickJS ESM の実行は `--compat-js` のみ |
 | AOT + QuickJS（#55） | 部分実装 | `JSメソッド実行`/`JSオブジェクト取得` の AOT、ネストした配列・辞書と関数引数、値・Promise・callback・GC の完全接続、AOT dispatch trace、Windows x86_64 の compat AOT リンク |
 | 依存同梱（#56） | 未着手 | `build --bundle-deps`、移動可能な loader、license/SBOM、source-only 依存の同梱 |
@@ -156,7 +156,7 @@ Project [#2](https://github.com/users/soramikan/projects/2)、label `package-sys
 - `lnako add --npm` は未対応です。npm 依存は `nako.toml` の `[dependencies.npm]` へ直接宣言し、`lnako lock` で解決します。
 - `lnako package` の操作は `build`・`verify`・`cache` だけです。`publish` は未実装です。
 - ESM-only の path 依存（`esm` だけを宣言したパッケージ）を lock で解決するには、`compat-js = true` を宣言した profile を置きます。
-- npm の materialize は network・Node.js・npm CLI を使わないため、cache 欠落は失敗として扱います。
+- npm の materialize は Node.js・npm CLI を使いません。cache 欠落時は `--offline` なら失敗し、online なら lock の `url` から tarball を取得して lock の `sha256` を検証したうえで cache へ格納して materialize します（#53）。
 - 初回 P0 の主鎖は #52 残ゲートと #53 残を並行しつつ、#50 残ゲート → #54 → #55 → #56 → #57 → #58/#61 です。
 - 配布拡張 P1: native source build（#59）、AOT 静的 plugin 同梱（#11）、workspace（#60）。
 - 他処理系・後続: wnako（#62）、cnako Node 拡充（#63）、cross build（#64）、WASM PoC（#65）、cnako Node 完結依存管理（#70）、階層名前空間「の」（#182）。
