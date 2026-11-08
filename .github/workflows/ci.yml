@@ -391,6 +391,13 @@ jobs:
         if: matrix.suite == 'mac-host-compat' || (matrix.suite == 'compat-aot' && matrix.name != 'Windows x86_64')
         shell: bash
         run: node tools/check_aot_quickjs_separation.mjs --compiler zig-out/bin/lnako
+      # Issue #54: 参照 plugin+npm fixture を実バイナリで E2E 検証する。
+      # Windows は AOT 対象外のため、非 AOT 部分も in-process の Zig テスト
+      # （compat-aot test step）で検証する。
+      - name: Package plugin+npm E2E check
+        if: matrix.suite == 'mac-host-compat' || (matrix.suite == 'compat-aot' && matrix.name != 'Windows x86_64')
+        shell: bash
+        run: node tools/check_package_plugin_npm_e2e.mjs --compiler zig-out/bin/lnako
       # Releaseは同一commitの検証済みCI runからReleaseSafe+compat-js成果物を
       # 昇格する。Debug AOT producerとは別schema・別artifact名。
       - name: Package release candidate compiler

@@ -1,0 +1,2 @@
+!「pkg:leftpad」を取り込む
+JS実行(『import("left-pad").then(m => m.default("ab", 6))』)を表示
