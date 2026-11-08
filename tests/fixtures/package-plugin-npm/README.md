@@ -28,6 +28,11 @@ port が実行ごとに変わるため commit せず、E2E の `lnako lock` で�
 `JS実行` から解決し、AOT runtime の npm resolver と ESM manifest 収録を確認します
 （`expected-aot-stdout.txt` が期待値）。
 
+AOT は `--sbom <path>` で同梱 npm/ESM package の license 一覧（SPDX 2.3 風 JSON）も
+出力できます。E2E は `.nako`・cache・`packages/`・`nako.toml` を退避した project 外 cwd で
+生成物だけを実行し、bundled source だけで解決することを確認したうえで、SBOM に
+`left-pad`（npm）と `leftpad`（path 依存 ESM plugin）の license が載ることを検査します。
+
 ## 検証範囲
 
 `tools/check_package_plugin_npm_e2e.mjs` は Linux/macOS の compat CI job で実バイナリの

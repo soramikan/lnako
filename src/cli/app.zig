@@ -101,6 +101,8 @@ pub fn run(
                     try stderr.writeAll("build: --backendの値がありません\n")
                 else if (err == error.InvalidBackend)
                     try stderr.writeAll("build: --backendはaotまたはembeddedを指定してください\n")
+                else if (err == error.MissingSbomPath)
+                    try stderr.writeAll("build: --sbomの値がありません\n")
                 else
                     try stderr.print("build: コマンドラインエラー: {s}\n", .{@errorName(err)});
                 try stderr.flush();
@@ -123,6 +125,29 @@ pub fn run(
                 try stderr.writeAll("build: --compat-js --backend embeddedは--emit exeだけをサポートします\n");
                 try stderr.flush();
                 std.process.exit(2);
+            }
+            // SBOM は「生成物へ同梱した npm/ESM package」の一覧なので、
+            // その同梱を行う compat AOT だけで意味を持つ。
+            const wants_sbom = options.sbom != null;
+            if (wants_sbom and !(options.compat_js and compat_backend == .aot)) {
+                try stderr.writeAll("build: --sbomは--compat-js --backend aotと併用してください\n");
+                try stderr.flush();
+                std.process.exit(2);
+            }
+            if (options.sbom) |sbom_path| {
+                // 生成物や入力 source を SBOM で上書きしない（取り違えを拒否）。
+                // 相対/絶対の表記差や symlink 経由の同一 file も実体 path で
+                // 判定する。
+                if (try arguments.sameDestination(allocator, io, options.output, sbom_path)) {
+                    try stderr.writeAll("build: --sbomには出力ファイルと異なるパスを指定してください\n");
+                    try stderr.flush();
+                    std.process.exit(2);
+                }
+                if (try arguments.sameDestination(allocator, io, options.input, sbom_path)) {
+                    try stderr.writeAll("build: --sbomには入力ファイルと異なるパスを指定してください\n");
+                    try stderr.flush();
+                    std.process.exit(2);
+                }
             }
             const extension_mode = lnako.semantic.module_graph.extensionForcedMode(options.input);
             if ((extension_mode.dncl and options.forced_mode.dncl2) or (extension_mode.dncl2 and options.forced_mode.dncl)) {
@@ -151,6 +176,16 @@ pub fn run(
                 std.process.exit(1);
             };
             defer ir_program.deinit();
+            // 生成物へ source を同梱した package の metadata を IR に記録する
+            // （ESM manifest の packages と --sbom の単一の源）。読み取りは
+            // build 時 FS に対して行い、生成物の実行時には不要。
+            if (options.compat_js and compat_backend == .aot) {
+                compiler_pipeline.collectBundledPackages(allocator, io, &ir_program) catch |err| {
+                    try stderr.print("build: 同梱packageのmetadataを読めませんでした: {s}\n", .{@errorName(err)});
+                    try stderr.flush();
+                    std.process.exit(1);
+                };
+            }
             if (options.compat_js and compat_backend == .embedded) {
                 compiler_pipeline.writeCompatExecutable(allocator, io, executable_path, options.input, options.output, options.forced_mode, prep.cache_dir) catch |err| {
                     try stderr.print("build: QuickJS互換実行ファイルの生成に失敗しました: {s}\n", .{@errorName(err)});
@@ -183,6 +218,14 @@ pub fn run(
                 std.process.exit(1);
             };
             try stdout.print("{s} を生成しました\n", .{options.output});
+            if (options.sbom) |sbom_path| {
+                compiler_pipeline.writeCompatSbom(allocator, io, sbom_path, &ir_program, options.output) catch |err| {
+                    try stderr.print("build: SBOMの生成に失敗しました: {s}\n", .{@errorName(err)});
+                    try stderr.flush();
+                    std.process.exit(1);
+                };
+                try stdout.print("{s} を生成しました（同梱package {d} 件）\n", .{ sbom_path, ir_program.bundled_packages.len });
+            }
         },
         .check => {
             // 位置引数（入力ファイル）が無ければプロジェクト環境の静的検査。
