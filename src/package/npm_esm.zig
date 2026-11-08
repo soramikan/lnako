@@ -802,7 +802,10 @@ pub fn publishNpmTree(
     defer if (tree_open) tree.close(io);
 
     if (looksLikeGzip(bytes)) {
-        unpack.extractTarGzInto(gpa, io, bytes, tree, .{ .strip_components = 1 }) catch return error.InvalidArchive;
+        // 展開エラーは潰さずに透過する。呼出し側が構造不正（InvalidArchive 等）・
+        // 上限超過（TooManyEntries 等）・OOM・Canceled・I/O をそれぞれの分類へ
+        // 写像できるようにする（`npm_env` の materialize 経路と同じ taxonomy）。
+        try unpack.extractTarGzInto(gpa, io, bytes, tree, .{ .strip_components = 1 });
     } else {
         try tree.writeFile(io, .{ .sub_path = "blob", .data = bytes });
     }

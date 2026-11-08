@@ -5,10 +5,16 @@
 //!   cache の派生 tree は自己認証に過ぎないため信頼しない（artifact/http
 //!   経路と同じ方針で、検証済み raw bytes から毎回 tree を作り直す）。
 //! - 出力は `<gen>/deps/npm_<instance>`。dir 名は instance key から決定的に
-//!   導出するので、lock と cache だけで offline 再構築できる。
-//! - network・Node・npm CLI・lifecycle script は一切使わない。tarball が
-//!   cache に無い場合は取得せず `not_found` 診断で失敗する（取得は
-//!   `ensureLock` の resolve 経路の責務）。
+//!   導出するので、cache が揃っていれば lock と cache だけで offline 再構築
+//!   できる。
+//! - cache に tarball が無い場合、`--offline` なら取得せず `not_found` 診断で
+//!   fail-closed する。online なら lock の `url` から tarball を取得し、lock
+//!   の `sha256` で検証してから cache へ格納して materialize する（#53）。
+//!   取得は `fetch` の既存 HTTP 層を再利用するため、再取得できるのは
+//!   http/https の url だけ（平文 http は loopback のみ）。`file:` やローカル
+//!   path を記録した lock は cache が揃っている場合だけ materialize できる。
+//!   lock は変更しない。
+//! - Node・npm CLI・lifecycle script は一切使わない。
 
 const std = @import("std");
 const cache = @import("cache.zig");
@@ -117,9 +123,9 @@ pub fn provenanceMatches(instance: lock_model.NpmInstance, text: []const u8) boo
 /// `instances` を世代 `deps/` へ materialize する。空なら何もしない。
 /// 途中で失敗した場合、生成済みの tree は世代ごと破棄される（公開しない）。
 ///
-/// 返り値は今回読んだ cache object key（`params.arena` 所有）。呼出し側は
-/// これを sync の used-keys へ記録し、`sync --clean` が直後に参照 entry を
-/// 消さないようにする。
+/// 返り値は今回読み出し・格納した cache object key（`params.arena` 所有）。
+/// 呼出し側はこれを sync の used-keys へ記録し、`sync --clean` が直後に
+/// 参照 entry を消さないようにする。
 pub fn materializeInstances(params: Params, instances: []const lock_model.NpmInstance) Error![]const []const u8 {
     if (instances.len == 0) return &.{};
     var used_keys: std.ArrayListUnmanaged([]const u8) = .empty;
@@ -175,12 +181,15 @@ fn materializeOne(
 }
 
 /// lock の `sha256` と cache の raw archive を照合して bytes を返す。
-/// 検証できない bytes は返さない（欠落・改竄はどちらも `not_found`）。
+/// 検証できない cache bytes は返さない（欠落・改竄はどちらも cache miss と
+/// みなす）。cache 欠落時は `--offline` なら `not_found` で fail-closed し、
+/// online なら lock の `url` から取得・検証・cache 格納してから bytes を返す。
+/// 返り値は `params.gpa` 所有（呼出し側が free）。
 fn readVerifiedArchive(
     params: Params,
     instance: lock_model.NpmInstance,
     used_keys: *std.ArrayListUnmanaged([]const u8),
-) Error![]const u8 {
+) Error![]u8 {
     const sha256 = instance.sha256 orelse return params.session.fail(
         .invalid_source,
         .artifact,
@@ -188,7 +197,16 @@ fn readVerifiedArchive(
         "npm instance \"{s}\" has no sha256 in nako.lock",
         .{instance.key},
     );
-    if (instance.url == null) return params.session.fail(
+    // 解釈できない hash 表記は取得前に落とす（cache も fetch も不要と分かる
+    // 入力で無駄な GET をしない。`verifyHash` と同じ表記を受理する）。
+    if (!fetch.isSupportedHash(sha256)) return params.session.fail(
+        .invalid_source,
+        .artifact,
+        instance.key,
+        "npm instance \"{s}\" has an unsupported sha256 notation in nako.lock",
+        .{instance.key},
+    );
+    const url = instance.url orelse return params.session.fail(
         .invalid_source,
         .artifact,
         instance.key,
@@ -206,7 +224,7 @@ fn readVerifiedArchive(
     );
     // tarball bytes は instance 単位で解放する（sync 全体 arena に載せない）。
     // cache key だけ used_keys 経由で arena に残す。
-    const archive = params.cache_store.readVerifiedSourceArchive(params.gpa, key, sha256) catch |err| switch (err) {
+    const cached = params.cache_store.readVerifiedSourceArchive(params.gpa, key, sha256) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.InvalidKey => return params.session.fail(
             .invalid_source,
@@ -216,19 +234,75 @@ fn readVerifiedArchive(
             .{instance.key},
         ),
     };
-    const bytes = archive orelse return params.session.fail(
-        .not_found,
-        .artifact,
-        instance.key,
-        "npm tarball for \"{s}\" is not in the cache; re-resolve dependencies while the registry is reachable",
-        .{instance.key},
-    );
+    const bytes = cached orelse blk: {
+        // cache 欠落。`--offline` は従来どおり取得せず fail-closed する
+        // （失敗分類は既存の not_found のまま）。online は lock の url から
+        // 取得する。
+        if (params.session.policy.offline) {
+            return params.session.fail(
+                .not_found,
+                .artifact,
+                instance.key,
+                "npm tarball for \"{s}\" is not in the cache and sync is running with --offline; rerun without --offline to fetch it from the lock url",
+                .{instance.key},
+            );
+        }
+        break :blk try fetchIntoCache(params, instance, url, key, sha256);
+    };
     // `sync --clean` の keep list に載せる（直後に参照 entry を消さない）。
     // append が OOM しても、呼出し側の `defer free` が張られる前に
     // bytes を落とさないようここで解放する。
     errdefer params.gpa.free(bytes);
     try used_keys.append(params.arena, key);
     return bytes;
+}
+
+/// cache 欠落時の online 取得経路。lock の `url` から tarball を取得し、
+/// lock の `sha256` と照合してから content-addressed key へ cache 格納する。
+/// 検証に失敗した bytes は cache へ公開しない（objects/ に部分 entry を
+/// 残さない）。既存 entry が lock の sha256 を満たさない場合は、検証済み
+/// bytes で置き換える（壊れた cache を自己修復する）。
+/// `url` は呼出し側（`readVerifiedArchive`）が非 null を保証する。
+/// 返り値は `params.gpa` 所有（呼出し側が free）。
+fn fetchIntoCache(
+    params: Params,
+    instance: lock_model.NpmInstance,
+    url: []const u8,
+    key: []const u8,
+    sha256: []const u8,
+) Error![]u8 {
+    // 404・redirect 上限・timeout・HTTP status は fetch 層が分類付きで
+    // session へ記録する。取得 bytes は session arena 所有なので、cache 格納
+    // と返却に使う gpa 所有の複製を作る。
+    const fetched = try fetch.fetchBytes(params.session, url, .artifact);
+    try fetch.verifyHash(params.session, fetched, sha256, url, .artifact);
+    const owned = try params.gpa.dupe(u8, fetched);
+    errdefer params.gpa.free(owned);
+    // 検証できない既存 entry（改竄・不完全）が残っていると、`publishStaging` は
+    // tree digest と marker の一致だけで既存 entry を保持し、壊れた
+    // `source.archive` を残してしまう。取得した検証済み bytes で作り直すため
+    // 先に消す。ここへ来る時点で cache は lock の sha256 を満たしておらず、
+    // 保持する価値は無い。欠落 key では no-op（`deleteTreeChecked` が
+    // FileNotFound を成功扱いする）なので、通常の cache miss もこの経路で安全。
+    // 削除から publish までの窓は `sync` が cache の排他 lock を保持している
+    // 前提で、他プロセスが観測しても entry 欠落は cache miss として自己修復
+    // される（publish は staging からの rename で原子置換）。
+    params.cache_store.removeEntry(key) catch |err| switch (err) {
+        error.Canceled => return error.Canceled,
+        error.InvalidKey => return params.session.fail(
+            .invalid_source,
+            .artifact,
+            instance.key,
+            "npm instance \"{s}\" has an invalid cache key",
+            .{instance.key},
+        ),
+        else => return error.FileSystem,
+    };
+    // cache 格納は lock の sha256 と url から導出した key へ行う。これにより
+    // 次回以降の sync は同じ key で cache hit する。
+    npm_esm.publishNpmTree(params.gpa, params.io, params.cache_store, key, owned) catch |err|
+        return mapUnpackError(params, err, instance.key);
+    return owned;
 }
 
 /// `dir` 直下に予約 marker 名（ASCII 大小文字を畳んで比較）の entry が

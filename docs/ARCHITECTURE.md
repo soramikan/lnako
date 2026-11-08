@@ -59,7 +59,7 @@ QuickJSは互換性境界を明示するための別経路です。4命令、9 c
 
 ## パッケージシステム
 
-`nako.toml` を依存宣言の正本、`nako.lock` を解決結果の正本、`.nako/environment.json` を実体化済み環境の正本とします。`lock` は PubGrub で Public ID ごとに1版へ解決し、feature の和集合と選択 profile の target（runtime・os・cpu・abi・compat-js・optimize）を適用します。`sync` は cache から検証済みの実体を `.nako/env/<generation>/` へ構築し、`.nako/environment.json` を原子的に公開します。`run` / `test` / `build` は入力を含むプロジェクトを検出すると同じ準備を自動化し、`--locked` / `--offline` / `--no-sync` で制御します。
+`nako.toml` を依存宣言の正本、`nako.lock` を解決結果の正本、`.nako/environment.json` を実体化済み環境の正本とします。`lock` は PubGrub で Public ID ごとに1版へ解決し、feature の和集合と選択 profile の target（runtime・os・cpu・abi・compat-js・optimize）を適用します。`sync` は cache の検証済み実体を `.nako/env/<generation>/` へ構築し（cache 欠落・検証不一致時は `--offline` でなければ lock の `url` から tarball を取得し、lock の `sha256` を検証して cache へ格納してから構築する）、`.nako/environment.json` を原子的に公開します。`run` / `test` / `build` は入力を含むプロジェクトを検出すると同じ準備を自動化し、`--locked` / `--offline` / `--no-sync` で制御します。
 
 ソースの `パッケージ:` / `pkg:` は import resolver が manifest の alias・lock・環境の対応表から公開 export へ解決します。module の canonical ID・物理 path・公開 namespace は別々に保持し、公開名は `{alias}__`（subpath 取り込みでは `{alias}__{subpath}__`）の接頭辞で写像します。パッケージ内の相対取り込みは境界の内側に限定し、package 由来の plugin 命令は修飾名だけで公開します。`.npkg` は決定的な ZIP 正規形として生成し、`package verify` が初期化コードを実行せずに構造・索引・target 適合を検査します。
 
