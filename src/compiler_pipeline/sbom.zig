@@ -38,7 +38,7 @@ pub const ExternalRef = struct {
 pub const Package = struct {
     SPDXID: []const u8,
     name: []const u8,
-    versionInfo: []const u8,
+    versionInfo: ?[]const u8 = null,
     downloadLocation: []const u8 = "NOASSERTION",
     filesAnalyzed: bool = false,
     licenseConcluded: []const u8,
@@ -104,15 +104,17 @@ pub fn render(allocator: std.mem.Allocator, io: std.Io, program: *const lnako.ir
         else
             try temporary.dupe(ExternalRef, &.{.{ .referenceLocator = try purl(temporary, item) }});
         // license file を先に走査し、file record を持つ package だけ
-        // `filesAnalyzed=true` にする（SPDX 2.3 で false は file 情報を
-        // 含まない意味になる）。
+        // `filesAnalyzed=true` にする（SPDX 2.3.1 §7.8 で false の package は
+        // file を含められない）。§7.9 packageVerificationCode と §7.14
+        // licenseInfoFromFiles は true でも任意（欠落は NOASSERTION と同義）
+        // のため、解析しない本方針では出力しない。
         const file_start = files.items.len;
         try collectLicenseFiles(temporary, io, item, spdx_id, &files, &relationships);
         const license = try spdxLicense(temporary, item.license);
         try packages.append(temporary, .{
             .SPDXID = spdx_id,
             .name = if (item.name.len == 0) "unknown" else item.name,
-            .versionInfo = if (item.version.len == 0) "NOASSERTION" else item.version,
+            .versionInfo = if (item.version.len == 0) null else item.version,
             .filesAnalyzed = files.items.len > file_start,
             // 同梱 source の解析は行わないため、宣言値を「確認済みの結論」と
             // して出さない（SPDX 2.3 では NOASSERTION が未解析を表す）。
@@ -217,10 +219,17 @@ fn collectLicenseFiles(
             else => continue,
         };
         defer allocator.free(bytes);
-        var digest: [32]u8 = undefined;
-        std.crypto.hash.sha2.Sha256.hash(bytes, &digest, .{});
-        const checksum_hex = std.fmt.bytesToHex(digest, .lower);
-        const checksum = try allocator.dupe(u8, &checksum_hex);
+        // SPDX 2.3 の File checksum は SHA1 が必須（1..1）、SHA256 は任意。
+        var sha1_digest: [20]u8 = undefined;
+        std.crypto.hash.Sha1.hash(bytes, &sha1_digest, .{});
+        var sha256_digest: [32]u8 = undefined;
+        std.crypto.hash.sha2.Sha256.hash(bytes, &sha256_digest, .{});
+        const sha1_hex = std.fmt.bytesToHex(sha1_digest, .lower);
+        const sha256_hex = std.fmt.bytesToHex(sha256_digest, .lower);
+        const checksums = try allocator.dupe(Checksum, &.{
+            .{ .algorithm = "SHA1", .checksumValue = try allocator.dupe(u8, &sha1_hex) },
+            .{ .algorithm = "SHA256", .checksumValue = try allocator.dupe(u8, &sha256_hex) },
+        });
         license_index += 1;
         // SPDX ID は `[A-Za-z0-9.-]+` のみ。file 名を連結せず連番にする
         // （`LICENSE (MIT)` のような名前でも ID を壊さない）。
@@ -233,7 +242,7 @@ fn collectLicenseFiles(
         try files.append(allocator, .{
             .SPDXID = file_spdx_id,
             .fileName = file_name,
-            .checksums = try allocator.dupe(Checksum, &.{.{ .checksumValue = checksum }}),
+            .checksums = checksums,
         });
         try relationships.append(allocator, .{
             .spdxElementId = package_spdx_id,
@@ -388,13 +397,26 @@ fn isBinaryOperator(token: []const u8) bool {
 
 /// SPDX の `idstring`（LicenseRef を含む）。`+` は末尾の 1 個だけ許可する。
 /// 演算子や未対応の表記（空白区切りの語、全角、`/` 等）は識別子ではない。
+fn startsWithIgnoreCase(haystack: []const u8, prefix: []const u8) bool {
+    if (haystack.len < prefix.len) return false;
+    for (prefix, haystack[0..prefix.len]) |expected, actual| {
+        if (std.ascii.toLower(expected) != std.ascii.toLower(actual)) return false;
+    }
+    return true;
+}
+
 fn isSpdxIdentifier(token: []const u8) bool {
     if (std.mem.eql(u8, token, "AND") or std.mem.eql(u8, token, "OR") or std.mem.eql(u8, token, "WITH")) return false;
     // `NONE`/`NOASSERTION` は式の中では使えない（式全体の代替値）。
-    if (std.mem.eql(u8, token, "NONE") or std.mem.eql(u8, token, "NOASSERTION")) return false;
-    // `LicenseRef-...` は参照先の抽出ライセンス情報が必須。ここでは定義を
-    // 出力しないため、宣言を式として通さず NOASSERTION へ落とす。
-    if (std.mem.startsWith(u8, token, "LicenseRef-")) return false;
+    // 小文字表記は SPDX の id ではないため、こちらも識別子として通さない。
+    if (startsWithIgnoreCase(token, "none") or startsWithIgnoreCase(token, "noassertion")) {
+        if (token.len == 4 or token.len == 11) return false;
+    }
+    // `LicenseRef-...` / `DocumentRef-...` は参照先（抽出ライセンス情報・外部
+    // 文書）が必須。ここでは定義を出力しないため、宣言を式として通さず
+    // NOASSERTION へ落とす。大文字小文字を問わず拒否する（生の idstring を
+    // licenseDeclared に出さない）。
+    if (startsWithIgnoreCase(token, "licenseref-") or startsWithIgnoreCase(token, "documentref-")) return false;
     var core = token;
     if (std.mem.endsWith(u8, core, "+")) {
         core = core[0 .. core.len - 1];
@@ -491,7 +513,8 @@ test "同梱packageのlicenseとLICENSEファイルをSPDX 2.3で出力する" {
     try std.testing.expect(std.mem.indexOf(u8, text, "\"licenseDeclared\": \"Apache-2.0\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "pkg:npm/left-pad@1.0.0") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "pkg:nako/leftpad@1.2.3") != null);
-    // LICENSE ファイルは file record + CONTAINS として出る。
+    // LICENSE ファイルは file record + CONTAINS として出る。SPDX 2.3 の File
+    // checksum は SHA1 が必須（1..1）なので、SHA1 と SHA256 の両方を出す。
     try std.testing.expect(std.mem.indexOf(u8, text, "\"fileName\": \"left-pad@1.0.0/LICENSE\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "\"relationshipType\": \"CONTAINS\"") != null);
     // scoped package 名などで SPDX 2.3 の required field が欠けない。
@@ -504,6 +527,13 @@ test "同梱packageのlicenseとLICENSEファイルをSPDX 2.3で出力する" {
     try std.testing.expect(document.get("packages").?.array.items.len == 2);
     try std.testing.expect(document.get("files").?.array.items.len == 1);
     try std.testing.expect(document.get("documentNamespace").?.string.len != 0);
+    // File checksum は SHA1 が必須（SPDX 2.3 §8.4）で SHA256 を併記する。
+    const checksums = document.get("files").?.array.items[0].object.get("checksums").?.array.items;
+    try std.testing.expectEqual(@as(usize, 2), checksums.len);
+    try std.testing.expectEqualStrings("SHA1", checksums[0].object.get("algorithm").?.string);
+    try std.testing.expectEqual(@as(usize, 40), checksums[0].object.get("checksumValue").?.string.len);
+    try std.testing.expectEqualStrings("SHA256", checksums[1].object.get("algorithm").?.string);
+    try std.testing.expectEqual(@as(usize, 64), checksums[1].object.get("checksumValue").?.string.len);
 }
 
 test "SBOMは入力が同じなら決定的で、license無しはNOASSERTIONになる" {
@@ -602,7 +632,7 @@ test "宣言licenseをSPDXのlicense expressionへ正規化する" {
     }
     // 解析しないため、SPDX 式として解釈できない宣言は結論せず NOASSERTION にし、
     // 元の宣言を comment に残す（未定義の LicenseRef は出力しない）。
-    const invalid = [_][]const u8{ "MIT/X11", "(MIT", "MIT ()", "AND MIT", "MIT AND", "MIT AND OR BSD", "MIT WITH", "独自ライセンス", "MIT and Apache-2.0", "GPL-2.0++", "MIT/Terms", "LicenseRef-Proprietary", "MIT OR NONE", "NOASSERTION OR MIT" };
+    const invalid = [_][]const u8{ "MIT/X11", "(MIT", "MIT ()", "AND MIT", "MIT AND", "MIT AND OR BSD", "MIT WITH", "独自ライセンス", "MIT and Apache-2.0", "GPL-2.0++", "MIT/Terms", "LicenseRef-Proprietary", "licenseref-proprietary", "DocumentRef-other:LicenseRef-x", "MIT OR NONE", "MIT OR none", "NOASSERTION OR MIT" };
     for (invalid) |declared| {
         var arena = std.heap.ArenaAllocator.init(allocator);
         defer arena.deinit();
