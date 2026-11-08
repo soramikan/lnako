@@ -350,7 +350,8 @@ pub fn run(
         };
         try records.append(arena, record_value);
         // lock の npmInstances も世代 `deps/` へ実体化する。cache の検証済み
-        // tarball だけを使い、network・Node・npm CLI は使わない。
+        // tarball を使い、cache 欠落時は `--offline` でなければ lock の `url`
+        // から取得する。Node・npm CLI は使わない。
         if (entry.npm_instances.len > 0) {
             const npm_keys = npm_env.materializeInstances(.{
                 .gpa = gpa,
