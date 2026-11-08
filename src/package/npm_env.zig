@@ -247,6 +247,8 @@ fn readVerifiedArchive(
 /// cache 欠落時の online 取得経路。lock の `url` から tarball を取得し、
 /// lock の `sha256` と照合してから content-addressed key へ cache 格納する。
 /// 検証に失敗した bytes は cache へ公開しない（部分 entry を残さない）。
+/// 既存 entry が lock の sha256 を満たさない場合は、検証済み bytes で
+/// 置き換える（壊れた cache を自己修復する）。
 /// 返り値は `params.gpa` 所有（呼出し側が free）。
 fn fetchIntoCache(
     params: Params,
@@ -268,6 +270,21 @@ fn fetchIntoCache(
     try fetch.verifyHash(params.session, fetched, sha256, url, .artifact);
     const owned = try params.gpa.dupe(u8, fetched);
     errdefer params.gpa.free(owned);
+    // 検証できない既存 entry（改竄・不完全）が残っていると、`publishStaging` は
+    // tree digest と marker の一致だけで既存 entry を保持し、壊れた
+    // `source.archive` を残してしまう。取得した検証済み bytes で作り直すため
+    // 先に消す（欠落 key では何もしない）。ここへ来る時点で cache は lock の
+    // sha256 を満たしておらず、保持する価値は無い。
+    params.cache_store.removeEntry(key) catch |err| switch (err) {
+        error.InvalidKey => return params.session.fail(
+            .invalid_source,
+            .artifact,
+            instance.key,
+            "npm instance \"{s}\" has an invalid cache key",
+            .{instance.key},
+        ),
+        else => return error.FileSystem,
+    };
     // cache 格納は lock の sha256 と url から導出した key へ行う。これにより
     // 次回以降の sync は同じ key で cache hit する。
     npm_esm.publishNpmTree(params.gpa, params.io, params.cache_store, key, owned) catch |err| switch (err) {
