@@ -224,6 +224,19 @@ pub fn failureError(kind: FailureKind) Error {
 /// timeout 発生時は実行中の要求へ cancelation を送り、`Session` は
 /// `error.Timeout` を返す。
 pub fn fetchBytes(session: *Session, url: []const u8, resource: ResourceKind) Error![]u8 {
+    return fetchBytesWithHeaders(session, url, &.{}, resource);
+}
+
+/// `fetchBytes` と同じ契約で、追加ヘッダ（例: publish の probe 用
+/// `Authorization`）を付与する。redirect 先が同一 authority
+/// （host・effective port）の間だけ再送し、cross-host redirect では
+/// ヘッダを落として匿名で追跡する（token の第三者ホスト流出を防ぐ）。
+pub fn fetchBytesWithHeaders(
+    session: *Session,
+    url: []const u8,
+    extra_headers: []const std.http.Header,
+    resource: ResourceKind,
+) Error![]u8 {
     if (session.policy.offline) {
         return session.fail(.offline, resource, url, "offline mode: {s} requires a network request", .{@tagName(resource)});
     }
@@ -231,7 +244,7 @@ pub fn fetchBytes(session: *Session, url: []const u8, resource: ResourceKind) Er
         return session.fail(.invalid_source, resource, url, "invalid url \"{s}\"", .{url});
     };
     if (session.policy.timeout_ns == 0) {
-        return fetchBytesInner(session, uri, url, resource);
+        return fetchBytesInner(session, uri, url, extra_headers, resource);
     }
     // 要求全体を sleep と競合させる。timeout 側が先に完了したら要求へ
     // cancelation を送り、blocked syscall を中断させてから結果を捨てる。
@@ -241,7 +254,7 @@ pub fn fetchBytes(session: *Session, url: []const u8, resource: ResourceKind) Er
     };
     var buffer: [2]Outcome = undefined;
     var select = std.Io.Select(Outcome).init(session.io, &buffer);
-    select.async(.fetched, FetchTask.run, .{.{ .session = session, .uri = uri, .url = url, .resource = resource }});
+    select.async(.fetched, FetchTask.run, .{.{ .session = session, .uri = uri, .url = url, .headers = extra_headers, .resource = resource }});
     select.async(.timed_out, std.Io.Timeout.sleep, .{ .{ .duration = policyDuration(session.policy.timeout_ns) }, session.io });
     const outcome = select.await() catch |err| switch (err) {
         error.Canceled => |e| return e,
@@ -260,6 +273,141 @@ pub fn fetchBytes(session: *Session, url: []const u8, resource: ResourceKind) Er
     }
 }
 
+/// 1 回の HTTP 応答。`body` は `Session` の arena が所有する。
+pub const Response = struct {
+    status: u16,
+    body: []u8,
+};
+
+/// HTTP(S) PUT で本文を送信し、応答全体を返す。`fetchBytes` と同じ policy
+/// （offline・timeout・max_bytes・平文 loopback 制限）を適用する。
+/// redirect は追跡しない（公開先の差し替えを暗黙に起こさない）。取得系と
+/// 同じ `std.http.Client` と失敗分類を共有し、新しいネットワーク層を
+/// 増やさない。
+pub fn putBytes(
+    session: *Session,
+    url: []const u8,
+    extra_headers: []const std.http.Header,
+    body: []const u8,
+    resource: ResourceKind,
+) Error!Response {
+    if (session.policy.offline) {
+        return session.fail(.offline, resource, url, "offline mode: {s} requires a network request", .{@tagName(resource)});
+    }
+    const uri = std.Uri.parse(url) catch {
+        return session.fail(.invalid_source, resource, url, "invalid url \"{s}\"", .{url});
+    };
+    if (session.policy.timeout_ns == 0) {
+        return putBytesInner(session, uri, url, extra_headers, body, resource);
+    }
+    const Outcome = union(enum) {
+        sent: Error!Response,
+        timed_out: std.Io.Cancelable!void,
+    };
+    var buffer: [2]Outcome = undefined;
+    var select = std.Io.Select(Outcome).init(session.io, &buffer);
+    select.async(.sent, PutTask.run, .{.{ .session = session, .uri = uri, .url = url, .headers = extra_headers, .body = body, .resource = resource }});
+    select.async(.timed_out, std.Io.Timeout.sleep, .{ .{ .duration = policyDuration(session.policy.timeout_ns) }, session.io });
+    const outcome = select.await() catch |err| switch (err) {
+        error.Canceled => |e| return e,
+    };
+    switch (outcome) {
+        .sent => |result| {
+            _ = select.cancel();
+            return result;
+        },
+        .timed_out => {
+            while (select.cancel()) |_| {}
+            return session.fail(.timeout, resource, url, "publish request to \"{s}\" exceeded the timeout", .{url});
+        },
+    }
+}
+
+const PutTask = struct {
+    session: *Session,
+    uri: std.Uri,
+    url: []const u8,
+    headers: []const std.http.Header,
+    body: []const u8,
+    resource: ResourceKind,
+
+    fn run(task: PutTask) Error!Response {
+        return putBytesInner(task.session, task.uri, task.url, task.headers, task.body, task.resource);
+    }
+};
+
+fn putBytesInner(
+    session: *Session,
+    uri: std.Uri,
+    url: []const u8,
+    extra_headers: []const std.http.Header,
+    body: []const u8,
+    resource: ResourceKind,
+) Error!Response {
+    const gpa = session.arena.allocator();
+    const io = session.io;
+
+    var client: std.http.Client = .{ .allocator = gpa, .io = io };
+    defer client.deinit();
+
+    const protocol = try checkFetchUriPolicy(session, uri, url, resource);
+    initializeClientTls(&client, protocol == .tls) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.Canceled => return error.Canceled,
+        else => return session.fail(.network, resource, url, "TLS initialization failed for \"{s}\"", .{url}),
+    };
+
+    var request = client.request(.PUT, uri, .{
+        .keep_alive = false,
+        .redirect_behavior = .unhandled,
+        .extra_headers = extra_headers,
+    }) catch |err| return classifyRequestError(session, err, url, resource);
+    defer request.deinit();
+
+    request.transfer_encoding = .{ .content_length = body.len };
+    var body_writer = request.sendBodyUnflushed(&.{}) catch |err| return classifyRequestError(session, err, url, resource);
+    body_writer.writer.writeAll(body) catch |err| return classifyRequestError(session, err, url, resource);
+    // `BodyWriter.end` は未送信分の flush まで行う。
+    body_writer.end() catch |err| return classifyRequestError(session, err, url, resource);
+
+    var redirect_buffer: [8 * 1024]u8 = undefined;
+    var response = request.receiveHead(&redirect_buffer) catch |err| return classifyRequestError(session, err, url, resource);
+    if (response.head.status.class() == .redirect) {
+        return session.fail(.redirect_denied, resource, url, "publish request to \"{s}\" was redirected", .{url});
+    }
+
+    if (session.policy.max_bytes > 0) {
+        if (response.head.content_length) |declared| {
+            if (declared > session.policy.max_bytes) {
+                return session.fail(.too_large, resource, url, "{s} exceeds the {d} byte limit", .{ @tagName(resource), session.policy.max_bytes });
+            }
+        }
+    }
+
+    const decompress_buffer: []u8 = switch (response.head.content_encoding) {
+        .identity => &.{},
+        .zstd => try gpa.alloc(u8, std.compress.zstd.default_window_len),
+        .deflate, .gzip => try gpa.alloc(u8, std.compress.flate.max_window_len),
+        .compress => return session.fail(.network, resource, url, "unsupported content encoding \"compress\"", .{}),
+    };
+
+    var transfer_buffer: [64]u8 = undefined;
+    var decompress: std.http.Decompress = undefined;
+    const reader = response.readerDecompressing(&transfer_buffer, &decompress, decompress_buffer);
+
+    var output: std.ArrayList(u8) = .empty;
+    while (true) {
+        var chunk: [16 * 1024]u8 = undefined;
+        const n = reader.readSliceShort(&chunk) catch |err| return classifyRequestError(session, err, url, resource);
+        if (n == 0) break;
+        if (session.policy.max_bytes > 0 and output.items.len + n > session.policy.max_bytes) {
+            return session.fail(.too_large, resource, url, "{s} exceeds the {d} byte limit", .{ @tagName(resource), session.policy.max_bytes });
+        }
+        try output.appendSlice(gpa, chunk[0..n]);
+    }
+    return .{ .status = @intCast(@backingInt(response.head.status)), .body = output.items };
+}
+
 /// `policy.timeout_ns` を `std.Io.Clock.Duration`（単調時計）へ変換する。
 fn policyDuration(timeout_ns: u64) std.Io.Clock.Duration {
     return .{ .raw = .fromNanoseconds(@intCast(timeout_ns)), .clock = .awake };
@@ -270,10 +418,11 @@ const FetchTask = struct {
     session: *Session,
     uri: std.Uri,
     url: []const u8,
+    headers: []const std.http.Header,
     resource: ResourceKind,
 
     fn run(task: FetchTask) Error![]u8 {
-        return fetchBytesInner(task.session, task.uri, task.url, task.resource);
+        return fetchBytesInner(task.session, task.uri, task.url, task.headers, task.resource);
     }
 };
 
@@ -302,6 +451,30 @@ fn initializeClientTls(client: *std.http.Client, require_bundle: bool) !void {
     std.mem.swap(std.crypto.Certificate.Bundle, &client.ca_bundle, &bundle);
 }
 
+/// 2 つの URI の scheme・host・effective port が同一か（redirect で追加
+/// ヘッダを再送してよいかの判定）。scheme が変わると同じ authority でも
+/// TLS から平文へ降格し得るため、ヘッダは落とす。
+fn sameAuthority(left: std.Uri, right: std.Uri) bool {
+    if (!std.ascii.eqlIgnoreCase(left.scheme, right.scheme)) return false;
+    const left_host = left.host orelse return false;
+    const right_host = right.host orelse return false;
+    const left_text = switch (left_host) {
+        .raw, .percent_encoded => |text| text,
+    };
+    const right_text = switch (right_host) {
+        .raw, .percent_encoded => |text| text,
+    };
+    if (!std.ascii.eqlIgnoreCase(left_text, right_text)) return false;
+    return effectivePort(left) == effectivePort(right);
+}
+
+fn effectivePort(uri: std.Uri) u16 {
+    if (uri.port) |port| return port;
+    if (std.mem.eql(u8, uri.scheme, "https")) return 443;
+    if (std.mem.eql(u8, uri.scheme, "http")) return 80;
+    return 0;
+}
+
 /// 初回・redirect 先の各ホップへ適用する URL 検査。平文 http は loopback
 /// 配布または明示 opt-in のみ許可し、HTTPS→HTTP への redirect 降格もここで
 /// 拒否する。
@@ -319,7 +492,7 @@ fn checkFetchUriPolicy(session: *Session, uri: std.Uri, url: []const u8, resourc
     return protocol;
 }
 
-fn fetchBytesInner(session: *Session, uri: std.Uri, url: []const u8, resource: ResourceKind) Error![]u8 {
+fn fetchBytesInner(session: *Session, uri: std.Uri, url: []const u8, extra_headers: []const std.http.Header, resource: ResourceKind) Error![]u8 {
     const gpa = session.arena.allocator();
     const io = session.io;
 
@@ -329,6 +502,10 @@ fn fetchBytesInner(session: *Session, uri: std.Uri, url: []const u8, resource: R
     var current_uri = uri;
     var redirects_left = session.policy.max_redirects;
     var tls_initialized = false;
+    // extra_headers（publish の Bearer 等）は元の authority にだけ送る。
+    // redirect で scheme/host/port が変わったらその hop からは匿名にし、
+    // 元 authority へ戻っても再送しない（漏洩方向にだけ安全側へ倒す）。
+    var hop_headers = extra_headers;
 
     var redirect_buffer: [8 * 1024]u8 = undefined;
     var request: std.http.Client.Request = undefined;
@@ -351,9 +528,11 @@ fn fetchBytesInner(session: *Session, uri: std.Uri, url: []const u8, resource: R
 
         // redirect は自動追跡せず、各ホップの URL をポリシー検査してから
         // 新しい request を張り直す（HTTPS→平文 HTTP への降格を防ぐ）。
+        if (!sameAuthority(current_uri, uri)) hop_headers = &.{};
         request = client.request(.GET, current_uri, .{
             .keep_alive = false,
             .redirect_behavior = .unhandled,
+            .extra_headers = hop_headers,
         }) catch |err| return classifyRequestError(session, err, url, resource);
         have_request = true;
 
@@ -424,7 +603,7 @@ fn fetchBytesInner(session: *Session, uri: std.Uri, url: []const u8, resource: R
 
 /// URI の host が loopback（localhost・*.localhost・127.0.0.0/8・::1）
 /// なら true。平文 http を同一マシン配布に限って許可する判定に使う。
-fn isLoopbackHost(uri: std.Uri) bool {
+pub fn isLoopbackHost(uri: std.Uri) bool {
     const component = uri.host orelse return false;
     const host = switch (component) {
         .raw, .percent_encoded => |text| text,
