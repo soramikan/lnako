@@ -20,6 +20,25 @@ function fail(message) {
   throw new Error(`package分離検査: ${message}`);
 }
 
+// GitHub codeload 等の一時的な 5xx/タイムアウトは、外部依存の取得失敗であり
+// スナップショットの分離性とは無関係。指数バックオフで数回だけ再試行する。
+function isTransientNetworkFailure(error) {
+  const text = `${error?.stderr ?? ""}\n${error?.stdout ?? ""}\n${error?.message ?? ""}`;
+  return /(?:502|503|504)\b|Gateway Timeout|ETIMEDOUT|ECONNRESET|EAI_AGAIN|socket hang up/i.test(text);
+}
+
+async function runWithNetworkRetry(command, args, options = {}, attempts = 4) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return await run(command, args, options);
+    } catch (error) {
+      if (!isTransientNetworkFailure(error) || attempt === attempts - 1) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 5000 * (attempt + 1)));
+    }
+  }
+  throw new Error("unreachable");
+}
+
 async function run(command, args, options = {}) {
   const result = await execFileAsync(command, args, {
     cwd: options.cwd ?? repoRoot,
@@ -185,7 +204,7 @@ pub fn main() void {
     };
     const url = `http://127.0.0.1:${port}/lnako-source.tar.gz`;
     try {
-      await run("zig", ["fetch", "--save", url], { cwd: consumer, env: zigEnv });
+      await runWithNetworkRetry("zig", ["fetch", "--save", url], { cwd: consumer, env: zigEnv });
     } finally {
       server.close();
     }
