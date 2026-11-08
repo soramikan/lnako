@@ -15,6 +15,7 @@ const project_mod = lnako.package.project;
 const sync_mod = lnako.package.sync;
 const diag = lnako.package.diagnostics;
 const npm_env = lnako.package.npm_env;
+const npm_resolver = lnako.package.npm_resolver;
 const test_sandbox = lnako.package.test_sandbox;
 
 const testing = std.testing;
@@ -345,22 +346,87 @@ fn assertNpmModulesFromGeneration(compiled: *const lnako.ir.nako_ir.Program, gen
     try testing.expect(sub_found);
 }
 
+/// `path` が scratch（`<scratch base>/lnako-npm-<16hex>/<cache key>/...`）配下
+/// か。`.nako` 等の部分文字列ではなく、基点との path 境界と直下 component で
+/// 判定する（`TMPDIR=/tmp/.nako-tests` のような基点名に `.nako` が含まれても
+/// 誤判定しない）。
+fn isScratchModulePath(scratch_base: []const u8, path: []const u8) bool {
+    if (!npm_env.isStrictlyWithin(scratch_base, path)) return false;
+    const relative = path[scratch_base.len + 1 ..];
+    // Windows の realpath は `/`・`\` のどちらも返し得るため、単一 separator
+    // ではなく `isSep` で最初の境界を探す（isStrictlyWithin と同じ規則）。
+    const root_end = for (relative, 0..) |byte, index| {
+        if (std.fs.path.isSep(byte)) break index;
+    } else relative.len;
+    const root_name = relative[0..root_end];
+    if (!std.mem.startsWith(u8, root_name, npm_resolver.scratch_dir_prefix)) return false;
+    // scratch dir 名は `<prefix><16 hex>`。prefix だけの同名 dir と区別する。
+    const suffix = root_name[npm_resolver.scratch_dir_prefix.len..];
+    if (suffix.len != npm_resolver.scratch_dir_hex_len) return false;
+    for (suffix) |byte| {
+        // 生成側は小文字 hex（bytesToHex(..., .lower)）なので大文字は認めない。
+        if (!(std.ascii.isDigit(byte) or (byte >= 'a' and byte <= 'f'))) return false;
+    }
+    return true;
+}
+
 /// cache→scratch 経路（世代 tree を読まない）で解決したことを観測する。
-fn assertNpmModulesFromScratch(compiled: *const lnako.ir.nako_ir.Program) !void {
+/// scratch 基点は `npm_resolver` と同じ規則で canonical 化し、path 境界で
+/// 所属を検証する（テスト専用の観測。機能の挙動は変えない）。
+fn assertNpmModulesFromScratch(
+    gpa: std.mem.Allocator,
+    io: std.Io,
+    compiled: *const lnako.ir.nako_ir.Program,
+) !void {
+    const scratch_base = (try npm_resolver.scratchBaseReal(gpa, io)) orelse return error.TestUnexpectedResult;
+    defer gpa.free(scratch_base);
     var root_found = false;
     var sub_found = false;
     for (compiled.javascript_modules) |module| {
         if (std.mem.endsWith(u8, module.path, "index.js")) {
             root_found = true;
-            try testing.expect(std.mem.indexOf(u8, module.path, ".nako") == null);
+            try testing.expect(isScratchModulePath(scratch_base, module.path));
         }
         if (std.mem.endsWith(u8, module.path, "sub.js")) {
             sub_found = true;
-            try testing.expect(std.mem.indexOf(u8, module.path, ".nako") == null);
+            try testing.expect(isScratchModulePath(scratch_base, module.path));
         }
     }
     try testing.expect(root_found);
     try testing.expect(sub_found);
+}
+
+test "scratch 所属判定は path 境界を使い基点名の `.nako` 部分文字列に依存しない" {
+    const gpa = testing.allocator;
+    // TMPDIR が `/tmp/.nako-tests` のような実 dir を指す状況を再現する。
+    const base = try std.fs.path.join(gpa, &.{ "tmp", ".nako-tests" });
+    defer gpa.free(base);
+    const sibling = try std.fmt.allocPrint(gpa, "{s}-other", .{base});
+    defer gpa.free(sibling);
+
+    const scratch_module = try std.fs.path.join(gpa, &.{ base, "lnako-npm-0123456789abcdef", "cachekey", "index.js" });
+    defer gpa.free(scratch_module);
+    try testing.expect(isScratchModulePath(base, scratch_module));
+
+    // 基点名を prefix に持つだけの隣接 dir は境界外。
+    const prefix_sibling = try std.fs.path.join(gpa, &.{ sibling, "lnako-npm-0123456789abcdef", "cachekey", "index.js" });
+    defer gpa.free(prefix_sibling);
+    try testing.expect(!isScratchModulePath(base, prefix_sibling));
+
+    // `.nako` を含む世代 tree は scratch ではない。
+    const generation_module = try std.fs.path.join(gpa, &.{ base, "app", ".nako", "env", "gen-1", "deps", "npm_x", "index.js" });
+    defer gpa.free(generation_module);
+    try testing.expect(!isScratchModulePath(base, generation_module));
+
+    // 基点直下でも `lnako-npm-` 以外は scratch ではない。
+    const other_module = try std.fs.path.join(gpa, &.{ base, "other", "index.js" });
+    defer gpa.free(other_module);
+    try testing.expect(!isScratchModulePath(base, other_module));
+
+    // `<prefix><16 hex>` 以外の同名 dir は scratch ではない。
+    const fake_scratch = try std.fs.path.join(gpa, &.{ base, "lnako-npm-not-a-hex", "cachekey", "index.js" });
+    defer gpa.free(fake_scratch);
+    try testing.expect(!isScratchModulePath(base, fake_scratch));
 }
 
 test "compile は世代 npm tree を cache より優先し cache なしでも解決する" {
@@ -436,7 +502,7 @@ test "compile は世代 npm tree が無ければ cache から再構築する" {
     var compiled = program;
     defer compiled.deinit();
     // 世代 tree ではなく cache→scratch 経路で解決したことを観測する。
-    try assertNpmModulesFromScratch(&compiled);
+    try assertNpmModulesFromScratch(gpa, io, &compiled);
 }
 
 test "compile は世代 tree の provenance が lock と食い違えば cache から解決する" {
@@ -460,7 +526,7 @@ test "compile は世代 tree の provenance が lock と食い違えば cache �
     const program = (try compileMain(gpa, io, app_root, cache_root, &stderr)) orelse return error.UnexpectedCompileFailure;
     var compiled = program;
     defer compiled.deinit();
-    try assertNpmModulesFromScratch(&compiled);
+    try assertNpmModulesFromScratch(gpa, io, &compiled);
 }
 
 test "compile は世代 npm tree も cache も無ければ fail-closed にする（network 取得をしない）" {
@@ -527,7 +593,7 @@ test "compile は世代 dir が symlink なら世代 tree を使わず cache か
     const program = (try compileMain(gpa, io, app_root, cache_root, &stderr)) orelse return error.UnexpectedCompileFailure;
     var compiled = program;
     defer compiled.deinit();
-    try assertNpmModulesFromScratch(&compiled);
+    try assertNpmModulesFromScratch(gpa, io, &compiled);
 }
 
 /// tar entry を gzip 圧縮した byte 列を作る（`provider_test.zig` と同じ手法）。
