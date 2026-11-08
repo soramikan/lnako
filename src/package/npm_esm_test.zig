@@ -182,6 +182,33 @@ test "resolveEntryInRoot はディレクトリ候補の package.json main を読
     }
 }
 
+test "resolveEntryInRoot は main/module の末尾 separator 前の backslash を拒否する" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    for ([_][]const u8{ "{\"main\":\"lib\\\\\"}", "{\"module\":\"lib\\\\\"}" }, 0..) |json, index| {
+        var dir_name_buf: [32]u8 = undefined;
+        const dir_name = try std.fmt.bufPrint(&dir_name_buf, "bs{d}", .{index});
+        try tmp.dir.createDirPath(io, dir_name);
+        const pj_path = try std.fmt.allocPrint(gpa, "{s}/package.json", .{dir_name});
+        defer gpa.free(pj_path);
+        try tmp.dir.writeFile(io, .{ .sub_path = pj_path, .data = json });
+        const lib_dir = try std.fmt.allocPrint(gpa, "{s}/lib", .{dir_name});
+        defer gpa.free(lib_dir);
+        try tmp.dir.createDirPath(io, lib_dir);
+        const lib_index = try std.fmt.allocPrint(gpa, "{s}/lib/index.js", .{dir_name});
+        defer gpa.free(lib_index);
+        try tmp.dir.writeFile(io, .{ .sub_path = lib_index, .data = "export default 1;\n" });
+        const root_index = try std.fmt.allocPrint(gpa, "{s}/index.js", .{dir_name});
+        defer gpa.free(root_index);
+        try tmp.dir.writeFile(io, .{ .sub_path = root_index, .data = "export default 2;\n" });
+        const root = try tmp.dir.realPathFileAlloc(io, dir_name, gpa);
+        defer gpa.free(root);
+        try testing.expectError(error.PackageJsonInvalid, resolveEntryInRoot(gpa, io, root));
+    }
+}
+
 test "resolveEntryInRoot の index.js フォールバックは厳密 path だけを見る" {
     const gpa = testing.allocator;
     const io = testing.io;

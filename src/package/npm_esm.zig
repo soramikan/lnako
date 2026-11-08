@@ -495,6 +495,10 @@ pub fn resolveEntryInRoot(gpa: Allocator, io: std.Io, package_root_abs: []const 
 /// `lib/index.js` が優先）。
 fn resolveLegacyEntry(gpa: Allocator, io: std.Io, root: []u8, raw_candidate: []const u8) Error!?ResolvedEntry {
     const cleaned = stripLeadingDotSlash(raw_candidate);
+    // 末尾 separator を剥がす前に `\` を拒否する。`lib\` を `lib` として
+    // `<候補>/index.js` に解決してしまうのを防ぐ（POSIX の Node は `\` を
+    // 通常文字として扱うが、lnako は安全側で不正とする）。
+    if (std.mem.indexOfScalar(u8, cleaned, '\\') != null) return error.PackageJsonInvalid;
     const trimmed = stripTrailingSeparators(cleaned);
     const directory_only = trimmed.len != cleaned.len;
     const candidate = trimmed;
