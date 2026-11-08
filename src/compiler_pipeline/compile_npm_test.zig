@@ -29,23 +29,42 @@ const left_pad_tarball_files = [_]TarFile{
 };
 
 fn writeProject(temporary: *std.testing.TmpDir, io: std.Io) !void {
+    // package 所有 ESM。bare npm の root 入口と exports サブパスを import する。
+    try writeProjectWithNpm(temporary, io, "left-pad = \"^1.0.0\"",
+        \\import pad from "left-pad";
+        \\import sub from "left-pad/sub";
+        \\export default { "meta": { "type": "const", "value": pad + sub } };
+        \\
+    );
+}
+
+/// `writeProject` の npm 依存行と plugin.mjs を差し替える版（#53 の
+/// package.json 本格パース回帰テスト用）。
+fn writeProjectWithNpm(
+    temporary: *std.testing.TmpDir,
+    io: std.Io,
+    npm_dependency_line: []const u8,
+    plugin_source: []const u8,
+) !void {
     try temporary.dir.createDirPath(io, "app/esm");
-    try temporary.dir.writeFile(io, .{
-        .sub_path = "app/nako.toml",
-        .data =
+    const manifest = try std.fmt.allocPrint(
+        testing.allocator,
         \\[package]
         \\name = "app"
         \\version = "0.1.0"
         \\license = "MIT"
         \\
         \\[dependencies.path]
-        \\esm = { path = "esm" }
+        \\esm = {{ path = "esm" }}
         \\
         \\[dependencies.npm]
-        \\left-pad = "^1.0.0"
+        \\{s}
         \\
-        ,
-    });
+    ,
+        .{npm_dependency_line},
+    );
+    defer testing.allocator.free(manifest);
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/nako.toml", .data = manifest });
     try temporary.dir.writeFile(io, .{
         .sub_path = "app/esm/nako.toml",
         .data =
@@ -60,43 +79,57 @@ fn writeProject(temporary: *std.testing.TmpDir, io: std.Io) !void {
         \\
         ,
     });
-    // package 所有 ESM。bare npm の root 入口と exports サブパスを import する。
-    try temporary.dir.writeFile(io, .{
-        .sub_path = "app/esm/plugin.mjs",
-        .data =
-        \\import pad from "left-pad";
-        \\import sub from "left-pad/sub";
-        \\export default { "meta": { "type": "const", "value": pad + sub } };
-        \\
-        ,
-    });
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/esm/plugin.mjs", .data = plugin_source });
     try temporary.dir.writeFile(io, .{ .sub_path = "app/main.nako3", .data = "!「pkg:esm」を取り込む\n" });
 }
 
 /// 実 catalog から lock を作り cache を埋め、sync で `.nako/environment.json`
 /// を公開する。compile は lock + cache だけを読む。
+/// fixture の npm package（tarball 内容と identity）。
+const TestPackage = struct {
+    name: []const u8,
+    version: []const u8,
+    files: []const TarFile,
+};
+
 fn prepareLockAndCache(
     gpa: std.mem.Allocator,
     io: std.Io,
     app_root: []const u8,
     cache_root: []const u8,
 ) !void {
-    const body = try buildTarGz(gpa, &left_pad_tarball_files);
+    return prepareLockAndCacheFor(gpa, io, app_root, cache_root, .{
+        .name = "left-pad",
+        .version = "1.0.0",
+        .files = &left_pad_tarball_files,
+    });
+}
+
+fn prepareLockAndCacheFor(
+    gpa: std.mem.Allocator,
+    io: std.Io,
+    app_root: []const u8,
+    cache_root: []const u8,
+    package: TestPackage,
+) !void {
+    const body = try buildTarGz(gpa, package.files);
     defer gpa.free(body);
     const integrity = try npm_mod.integritySha512(gpa, body);
     defer gpa.free(integrity);
+    const tarball_url = try std.fmt.allocPrint(gpa, "fixture://{s}-{s}.tgz", .{ package.name, package.version });
+    defer gpa.free(tarball_url);
 
     var catalog: npm_mod.Catalog = .{};
     defer catalog.deinit(gpa);
     const versions = try gpa.alloc(npm_mod.VersionMeta, 1);
     defer gpa.free(versions);
     versions[0] = .{
-        .version = "1.0.0",
-        .tarball_url = "fixture://left-pad-1.0.0.tgz",
+        .version = package.version,
+        .tarball_url = tarball_url,
         .integrity = integrity,
         .tarball_bytes = body,
     };
-    try catalog.put(gpa, .{ .name = "left-pad", .versions = versions });
+    try catalog.put(gpa, .{ .name = package.name, .versions = versions });
 
     var diagnostics = diag.List.init(gpa);
     defer diagnostics.deinit();
@@ -594,6 +627,195 @@ test "compile は世代 dir が symlink なら世代 tree を使わず cache か
     var compiled = program;
     defer compiled.deinit();
     try assertNpmModulesFromScratch(gpa, io, &compiled);
+}
+
+// ---------------------------------------------------------------------------
+// #53 package.json 本格パース: interpreter compile と AOT 埋め込み（起動時
+// 再コンパイル）が同じ入口解決になることの回帰テスト。
+// ---------------------------------------------------------------------------
+
+/// Node 実測（24.21.0 / 26.13.0）に基づく package.json。`node` 条件は
+/// 暗黙有効化しないため `import` が選ばれ、`default` / `node` / `main` は
+/// 使われない。`*` サブパスと exact サブパスも含める。
+const edge_package_files = [_]TarFile{
+    .{ .path = "package/package.json", .content =
+    \\{"name":"edge-pkg","version":"2.0.0","type":"module",
+    \\ "main":"legacy/index.js",
+    \\ "exports":{
+    \\   ".":{"node":"./node/index.js","import":"./esm/index.js","default":"./cjs/index.js"},
+    \\   "./feature/*":"./esm/feature/*.js",
+    \\   "./exact":"./esm/exact.js"}}
+    },
+    .{ .path = "package/esm/index.js", .content = "export default 'edge-root';\n" },
+    .{ .path = "package/esm/feature/a.js", .content = "export default 'edge-feature-a';\n" },
+    .{ .path = "package/esm/exact.js", .content = "export default 'edge-exact';\n" },
+    .{ .path = "package/cjs/index.js", .content = "export default 'edge-cjs';\n" },
+    .{ .path = "package/node/index.js", .content = "export default 'edge-node';\n" },
+    .{ .path = "package/legacy/index.js", .content = "export default 'edge-legacy';\n" },
+};
+
+const edge_plugin_source =
+    \\import root from "edge-pkg";
+    \\import feature from "edge-pkg/feature/a";
+    \\import exact from "edge-pkg/exact";
+    \\export default { "meta": { "type": "const", "value": root + feature + exact } };
+    \\
+;
+
+fn writeEdgeProject(temporary: *std.testing.TmpDir, io: std.Io) !void {
+    try writeProjectWithNpm(temporary, io, "edge-pkg = \"^2.0.0\"", edge_plugin_source);
+}
+
+const EdgeModules = struct {
+    root: bool = false,
+    feature: bool = false,
+    exact: bool = false,
+    cjs: bool = false,
+    node: bool = false,
+    legacy: bool = false,
+};
+
+fn inspectEdgeModules(program: *const lnako.ir.nako_ir.Program) EdgeModules {
+    var found = EdgeModules{};
+    for (program.javascript_modules) |module| {
+        if (std.mem.indexOf(u8, module.source, "edge-root") != null) found.root = true;
+        if (std.mem.indexOf(u8, module.source, "edge-feature-a") != null) found.feature = true;
+        if (std.mem.indexOf(u8, module.source, "edge-exact") != null) found.exact = true;
+        if (std.mem.indexOf(u8, module.source, "edge-cjs") != null) found.cjs = true;
+        if (std.mem.indexOf(u8, module.source, "edge-node") != null) found.node = true;
+        if (std.mem.indexOf(u8, module.source, "edge-legacy") != null) found.legacy = true;
+    }
+    return found;
+}
+
+fn expectEdgeResolution(modules: EdgeModules) !void {
+    // `exports` の import 条件・`*` サブパス・exact サブパスだけが解決され、
+    // node 条件 / default / legacy main は選ばれない。
+    try testing.expect(modules.root);
+    try testing.expect(modules.feature);
+    try testing.expect(modules.exact);
+    try testing.expect(!modules.cjs);
+    try testing.expect(!modules.node);
+    try testing.expect(!modules.legacy);
+}
+
+test "package.json 本格パース: interpreter compile と AOT 埋め込みが同じ入口を解決する" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var temporary = test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "cache");
+    const cache_root = try temporary.dir.realPathFileAlloc(io, "cache", gpa);
+    defer gpa.free(cache_root);
+
+    try writeEdgeProject(&temporary, io);
+    const app_root = try temporary.dir.realPathFileAlloc(io, "app", gpa);
+    defer gpa.free(app_root);
+    try prepareLockAndCacheFor(gpa, io, app_root, cache_root, .{
+        .name = "edge-pkg",
+        .version = "2.0.0",
+        .files = &edge_package_files,
+    });
+
+    // (1) interpreter 経路（`lnako run --compat-js` と同じ compileInput）。
+    {
+        var stderr: std.Io.Writer.Allocating = .init(gpa);
+        defer stderr.deinit();
+        const program = (try compileMain(gpa, io, app_root, cache_root, &stderr)) orelse return error.UnexpectedCompileFailure;
+        var compiled = program;
+        defer compiled.deinit();
+        try expectEdgeResolution(inspectEdgeModules(&compiled));
+    }
+
+    // (2) AOT 経路。`build --compat-js` は生成時に解決した npm binding を
+    // payload へ埋め込み、起動時の再コンパイルでは cache/FS を読まない。
+    const main_path = try std.fs.path.join(gpa, &.{ app_root, "main.nako3" });
+    defer gpa.free(main_path);
+    const stub_path = try std.fs.path.join(gpa, &.{ app_root, "lnako-stub" });
+    defer gpa.free(stub_path);
+    const output_path = try std.fs.path.join(gpa, &.{ app_root, "out.bin" });
+    defer gpa.free(output_path);
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/lnako-stub", .data = "EXE" });
+    try embedded_pipeline.writeCompatExecutable(gpa, io, stub_path, main_path, output_path, .{}, cache_root);
+
+    var package = (try compat_embedded.readExecutable(gpa, io, output_path)) orelse return error.UnexpectedEmbeddedPayload;
+    defer package.deinit();
+    // root / features/a / exact の 3 解決だけが payload に記録される。
+    try testing.expectEqual(@as(usize, 3), package.npm_imports.len);
+
+    // cache と世代 deps（`.nako`）を消しても、payload の解決対応表だけで
+    // 同じ入口を復元できる（起動時再コンパイルは cache/FS に依存しない）。
+    try temporary.dir.deleteTree(io, "cache");
+    try temporary.dir.deleteTree(io, "app/.nako");
+    var stderr: std.Io.Writer.Allocating = .init(gpa);
+    defer stderr.deinit();
+    const program = (try compile_pipeline.compileInputWithProvider(gpa, package.entry_path, .{
+        .compat_js = true,
+        .forced_mode = package.forced_mode,
+        .package_resolver = package.packageResolver(),
+        .npm_module_resolver = package.npmModuleResolver(),
+    }, &stderr.writer, package.sourceProvider())) orelse return error.UnexpectedCompileFailure;
+    var compiled = program;
+    defer compiled.deinit();
+    try expectEdgeResolution(inspectEdgeModules(&compiled));
+}
+
+test "package.json 不正は interpreter compile と AOT 埋め込みの両経路で拒否される" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var temporary = test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "cache");
+    const cache_root = try temporary.dir.realPathFileAlloc(io, "cache", gpa);
+    defer gpa.free(cache_root);
+
+    // name/version は identity 検査を通るが exports のキーが混在している
+    // package.json（Node 実測: ERR_INVALID_PACKAGE_CONFIG）。
+    const broken_files = [_]TarFile{
+        .{ .path = "package/package.json", .content =
+        \\{"name":"edge-bad","version":"1.0.0",
+        \\ "exports":{".":"./index.js","./sub":"./sub.js","import":"./esm.mjs"}}
+        },
+        .{ .path = "package/index.js", .content = "export default 1;\n" },
+        .{ .path = "package/sub.js", .content = "export default 2;\n" },
+        .{ .path = "package/esm.mjs", .content = "export default 3;\n" },
+    };
+    try writeProjectWithNpm(&temporary, io, "edge-bad = \"^1.0.0\"",
+        \\import sub from "edge-bad/sub";
+        \\export default { "meta": { "type": "const", "value": sub } };
+        \\
+    );
+    const app_root = try temporary.dir.realPathFileAlloc(io, "app", gpa);
+    defer gpa.free(app_root);
+    try prepareLockAndCacheFor(gpa, io, app_root, cache_root, .{
+        .name = "edge-bad",
+        .version = "1.0.0",
+        .files = &broken_files,
+    });
+
+    // interpreter: package.json 不正として fail-closed の診断になる。
+    {
+        var stderr: std.Io.Writer.Allocating = .init(gpa);
+        defer stderr.deinit();
+        try testing.expect((try compileMain(gpa, io, app_root, cache_root, &stderr)) == null);
+        try testing.expect(std.mem.indexOf(u8, stderr.written(), "静的に解決できない取り込み指定") != null);
+    }
+
+    // AOT: 生成時の graph 解決も同じ理由で失敗し、生成物を残さない。
+    {
+        const main_path = try std.fs.path.join(gpa, &.{ app_root, "main.nako3" });
+        defer gpa.free(main_path);
+        const stub_path = try std.fs.path.join(gpa, &.{ app_root, "lnako-stub" });
+        defer gpa.free(stub_path);
+        const output_path = try std.fs.path.join(gpa, &.{ app_root, "out.bin" });
+        defer gpa.free(output_path);
+        try temporary.dir.writeFile(io, .{ .sub_path = "app/lnako-stub", .data = "EXE" });
+        try testing.expectError(
+            error.InvalidCompatSourceGraph,
+            embedded_pipeline.writeCompatExecutable(gpa, io, stub_path, main_path, output_path, .{}, cache_root),
+        );
+        try testing.expectError(error.FileNotFound, temporary.dir.access(io, "app/out.bin", .{}));
+    }
 }
 
 /// tar entry を gzip 圧縮した byte 列を作る（`provider_test.zig` と同じ手法）。
