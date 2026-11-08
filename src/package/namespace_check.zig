@@ -8,8 +8,9 @@
 //! - `empty`: alias が空、または正規化後に空（`@` 単体など）。
 //! - `duplicate`: 同一 scope で正規化 namespace が同じで別 package
 //!   （`my-util` と `my_util` の衝突を含む）。
-//! - `invalid_char`: 正規化で `_` へ畳まれる文字・先頭数字など、公開
-//!   namespace が alias 表記と変わるもの。
+//! - `invalid_char`: 公開 namespace が alias 表記と変わる文字。定義済みの
+//!   変換（`-`→`_`、`/`→`__`、先頭 `@` の除去）は除外し、それ以外の文字と
+//!   先頭数字（`@` を除いた後の先頭）を診断する。
 //! - `reserved`: なでしこ3 の予約語と同名の alias。
 //! - `module_collision`: プロジェクト既存 module（basename）と同じ公開
 //!   namespace になる alias。
@@ -148,17 +149,22 @@ pub fn analyze(
                     ),
                 });
             }
-            if (collidingModule(normalized, module_names)) |module_name| {
-                try issues.append(arena, .{
-                    .scope = scope.name,
-                    .alias = alias,
-                    .kind = .module_collision,
-                    .detail = try std.fmt.allocPrint(
-                        arena,
-                        "alias \"{s}\" の公開 namespace \"{s}\" は既存 module \"{s}\" と同じです",
-                        .{ alias, normalized, module_name },
-                    ),
-                });
+            // 既存 module との衝突は project root scope の alias だけを対象に
+            // する。package scope の修飾名は package 内の module 空間で解決
+            // され、project 直下の入口 module 名とは衝突しない。
+            if (std.mem.eql(u8, scope.name, "root")) {
+                if (collidingModule(normalized, module_names)) |module_name| {
+                    try issues.append(arena, .{
+                        .scope = scope.name,
+                        .alias = alias,
+                        .kind = .module_collision,
+                        .detail = try std.fmt.allocPrint(
+                            arena,
+                            "alias \"{s}\" の公開 namespace \"{s}\" は既存 module \"{s}\" と同じです",
+                            .{ alias, normalized, module_name },
+                        ),
+                    });
+                }
             }
             const entry = try seen.getOrPut(arena, normalized);
             if (entry.found_existing) {
@@ -184,10 +190,13 @@ pub fn analyze(
 
 /// 正規化で意味が変わる文字を説明する。問題が無ければ null。
 fn invalidChar(alias: []const u8) ?[]const u8 {
+    // 正規化は先頭の `@` を剥がしてから identifier を組み立てるため、
+    // 先頭数字の判定も `@` を剥がした位置で行う（`@1x` → `_1x`）。
+    const start: usize = if (alias.len > 0 and alias[0] == '@') 1 else 0;
     for (alias, 0..) |byte, index| {
         if (byte >= 0x80) continue;
         if (std.ascii.isAlphanumeric(byte)) {
-            if (index == 0 and std.ascii.isDigit(byte)) {
+            if (index == start and std.ascii.isDigit(byte)) {
                 return "先頭が数字なので \"_\" が補われます";
             }
             continue;
@@ -310,6 +319,29 @@ test "namespace: 既存moduleと同じnamespaceをcollisionとして診断する
     }, &.{ "util", "main" });
     try testing.expectEqual(@as(usize, 1), countKind(issues, .module_collision));
     try testing.expectEqualStrings("util", issues[0].alias);
+}
+
+test "namespace: 先頭@を除いた直後の数字をinvalid_charとして診断する" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const issues = try analyzeFixture(arena.allocator(), &.{
+        .{ .alias = "@1lib", .package = "pkg:a" },
+    }, &.{});
+    try testing.expectEqual(@as(usize, 1), countKind(issues, .invalid_char));
+    try testing.expect(std.mem.indexOf(u8, issues[0].detail, "_1lib") != null);
+}
+
+test "namespace: package scopeのaliasはproject rootのmodule名と衝突扱いにしない" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const scopes = [_]Scope{
+        .{ .name = "root", .dependencies = &.{} },
+        .{ .name = "pkg:a", .dependencies = &.{
+            .{ .alias = "util", .package = "pkg:b" },
+        } },
+    };
+    const issues = try analyze(arena.allocator(), &scopes, &.{"util"});
+    try testing.expectEqual(@as(usize, 0), countKind(issues, .module_collision));
 }
 
 test "namespace: package scopeも診断し順序を固定する" {

@@ -13,6 +13,7 @@
 //!   「不明」にする（適合を証明できないことを不適合と混同しない）。
 
 const std = @import("std");
+const builtin = @import("builtin");
 const diag = @import("diagnostics.zig");
 const lock_mod = @import("lock.zig");
 const manifest_mod = @import("manifest.zig");
@@ -146,20 +147,15 @@ fn readPackageManifest(
         defer gpa.free(bytes);
         var diagnostics = diag.List.init(gpa);
         defer diagnostics.deinit();
-        const prior_errors = diagnostics.errorCount();
-        const parsed = (if (candidate.npkg)
+        // manifest parse は検証エラー時に error.InvalidManifest を返し、
+        // diagnostics には既存分がある場合もあるため戻り値だけで判定する。
+        return (if (candidate.npkg)
             manifest_mod.parseNpkgMetadata(gpa, bytes, &diagnostics)
         else
             manifest_mod.parse(gpa, bytes, &diagnostics)) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             else => continue,
         };
-        if (diagnostics.errorCount() > prior_errors) {
-            var owned = parsed;
-            owned.deinit();
-            continue;
-        }
-        return parsed;
     }
     return error.ManifestUnreadable;
 }
@@ -172,21 +168,27 @@ fn openPackageDir(
 ) !std.Io.Dir {
     const path = resolvePackagePath(gpa, project_root, package_rel_path) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
+        error.UnsafePath => return error.UnsafePath,
     };
     defer gpa.free(path);
-    if (std.fs.path.isAbsolute(path)) return std.Io.Dir.openDirAbsolute(io, path, .{});
-    return std.Io.Dir.cwd().openDir(io, path, .{});
+    // 途中 path の symlink 追従は許可する（`/tmp`→`/private/tmp` のような
+    // 正当な構成や、trust 検査済みの宣言 path を扱うため）。ここは読取り
+    // だけを行い、package tree 自体の信頼境界は env_state/sync 側が担う。
+    return std.Io.Dir.openDirAbsolute(io, path, .{});
 }
 
 /// environment.json の package `path` は host 形式と `/` 形式の双方が
 /// 現れ得るため、比較・open 前に host の区切り文字へ揃える。
-fn resolvePackagePath(gpa: Allocator, project_root: []const u8, package_rel_path: []const u8) Allocator.Error![]u8 {
+fn resolvePackagePath(gpa: Allocator, project_root: []const u8, package_rel_path: []const u8) (Allocator.Error || error{UnsafePath})![]u8 {
+    if (std.mem.indexOfScalar(u8, package_rel_path, 0) != null) return error.UnsafePath;
     const normalized = try gpa.dupe(u8, package_rel_path);
     defer gpa.free(normalized);
     var buffer = try gpa.alloc(u8, normalized.len);
     defer gpa.free(buffer);
     for (normalized, 0..) |byte, index| {
-        buffer[index] = if (byte == '/' or byte == '\\') std.fs.path.sep else byte;
+        // Windows の fixture/手書き環境は `/` と `\\` が混在し得る。
+        // POSIX では `\\` が正当なファイル名文字なので変換しない。
+        buffer[index] = if (byte == '/' or (builtin.os.tag == .windows and byte == '\\')) std.fs.path.sep else byte;
     }
     return std.fs.path.resolve(gpa, &.{ project_root, buffer });
 }
@@ -212,25 +214,24 @@ fn evaluateManifest(
 
     for (manifest.exports) |export_decl| {
         if (export_decl.path != null) has_source = true;
-        for ([_][]const manifest_mod.ArtifactDecl{ export_decl.native, export_decl.esm }) |decls| {
-            for (decls) |decl| {
-                decl_count += 1;
-                const evaluated = try evaluateArtifact(arena, gpa, decl, effective_target);
-                switch (evaluated.result) {
-                    .pass => any_pass = true,
-                    .unknown => any_unknown = true,
-                    .fail => {},
-                }
-                if (evaluated.text) |text| {
-                    if (!containsText(texts.items, text)) try texts.append(gpa, text);
-                } else {
-                    saw_unconditional = true;
-                }
+        // ESM artifact は compat-js 前提のため OS 条件表示の対象外。
+        for (export_decl.native) |decl| {
+            decl_count += 1;
+            const evaluated = try evaluateArtifact(arena, gpa, decl, effective_target);
+            switch (evaluated.result) {
+                .pass => any_pass = true,
+                .unknown => any_unknown = true,
+                .fail => {},
+            }
+            if (evaluated.text) |text| {
+                if (!containsText(texts.items, text)) try texts.append(gpa, text);
+            } else {
+                saw_unconditional = true;
             }
         }
     }
 
-    var condition: []const u8 = if (has_source or saw_unconditional or texts.items.len > 0) "全 OS" else "不明";
+    var condition: []const u8 = "不明";
     if (texts.items.len > 0 or has_source or saw_unconditional) {
         var joined: std.ArrayList(u8) = .empty;
         defer joined.deinit(gpa);
@@ -244,18 +245,17 @@ fn evaluateManifest(
         if (joined.items.len > 0) condition = try arena.dupe(u8, joined.items);
     }
 
-    const availability: Availability = if (target == null)
-        .unknown
-    else if (has_source or saw_unconditional or any_pass)
-        .available
-    else if (decl_count == 0 or any_unknown)
-        .unknown
-    else
-        .unavailable;
+    const availability: Availability = blk: {
+        // source・無条件 native は target 不明でも全 OS で利用できる。
+        if (has_source or saw_unconditional or any_pass) break :blk .available;
+        if (target == null) break :blk .unknown;
+        if (decl_count == 0 or any_unknown) break :blk .unknown;
+        break :blk .unavailable;
+    };
 
     return .{
         .package_key = package_key,
-        .condition = try arena.dupe(u8, condition),
+        .condition = condition,
         .availability = availability,
     };
 }
@@ -276,8 +276,9 @@ fn evaluateArtifact(
     target: Target,
 ) error{OutOfMemory}!ArtifactEvaluation {
     // 結果テキストは Report arena が所有する（呼出し側の一覧が借用する）。
+    // ArenaAllocator の free は末尾確保を巻き戻し得るため、`deinit` せず
+    // arena 全体の解放に委ねる。
     var parts: std.ArrayList([]const u8) = .empty;
-    defer parts.deinit(arena);
     var result: DeclOutcome = .pass;
 
     if (decl.when) |text| {
@@ -298,6 +299,18 @@ fn evaluateArtifact(
             .unknown;
         result = mergeResult(result, outcome);
     }
+    if (decl.features.len > 0) {
+        // feature 選択に依存する artifact は OS 可否として確定できない。
+        var feature_text: std.ArrayList(u8) = .empty;
+        try feature_text.appendSlice(arena, "features [");
+        for (decl.features, 0..) |feature, index| {
+            if (index > 0) try feature_text.appendSlice(arena, ", ");
+            try feature_text.appendSlice(arena, feature);
+        }
+        try feature_text.appendSlice(arena, "]");
+        try parts.append(arena, feature_text.items);
+        result = mergeResult(result, .unknown);
+    }
     if (decl.libc) |libc| {
         try parts.append(arena, try std.fmt.allocPrint(arena, "libc {s}", .{libc}));
         const target_libc = if (target.libc) |value| value else target.abi;
@@ -312,12 +325,11 @@ fn evaluateArtifact(
 
     if (parts.items.len == 0) return .{ .result = result, .text = null };
     var joined: std.ArrayList(u8) = .empty;
-    defer joined.deinit(arena);
     for (parts.items, 0..) |part, index| {
         if (index > 0) try joined.appendSlice(arena, ", ");
         try joined.appendSlice(arena, part);
     }
-    return .{ .result = result, .text = try arena.dupe(u8, joined.items) };
+    return .{ .result = result, .text = joined.items };
 }
 
 fn evaluateWhen(gpa: Allocator, text: []const u8, target: Target) error{OutOfMemory}!DeclOutcome {
@@ -538,6 +550,88 @@ test "OS条件: target不明なら利用可否はunknownで条件は表示する
     const result = try evaluateFixture(arena.allocator(), temporary.dir, io, null);
     try testing.expectEqual(Availability.unknown, result.availability);
     try testing.expectEqualStrings("os == 'windows'", result.condition);
+}
+
+test "OS条件: ESMのみのpackageはruntime前提のため不明として扱う" {
+    var temporary = test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    const io = std.testing.io;
+    try writePackage(temporary.dir, io,
+        \\[package]
+        \\name = "test"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\[[exports]]
+        \\name = "main"
+        \\esm = { path = "lib/index.mjs", when = "os == 'macos'" }
+    );
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const result = try evaluateFixture(arena.allocator(), temporary.dir, io, .{ .runtime = "lnako", .os = "macos", .cpu = "aarch64", .abi = "gnu" });
+    try testing.expectEqual(Availability.unknown, result.availability);
+    try testing.expectEqualStrings("不明", result.condition);
+}
+
+test "OS条件: features指定だけのartifactは不明として表示する" {
+    var temporary = test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    const io = std.testing.io;
+    try writePackage(temporary.dir, io,
+        \\[package]
+        \\name = "test"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\[[exports]]
+        \\name = "main"
+        \\native = { path = "lib/mac.dylib", features = ["with-gpu"] }
+        \\[features]
+        \\with-gpu = []
+    );
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const result = try evaluateFixture(arena.allocator(), temporary.dir, io, .{ .runtime = "lnako", .os = "macos", .cpu = "aarch64", .abi = "gnu" });
+    try testing.expectEqual(Availability.unknown, result.availability);
+    try testing.expectEqualStrings("features [with-gpu]", result.condition);
+}
+
+test "OS条件: target不明でも共通sourceは全OSで利用可能" {
+    var temporary = test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    const io = std.testing.io;
+    try writePackage(temporary.dir, io,
+        \\[package]
+        \\name = "test"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\[[exports]]
+        \\name = "main"
+        \\path = "src/test.nako3"
+    );
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const result = try evaluateFixture(arena.allocator(), temporary.dir, io, null);
+    try testing.expectEqual(Availability.available, result.availability);
+    try testing.expectEqualStrings("全 OS", result.condition);
+}
+
+test "OS条件: libcはtargetにabiもlibcも無ければ不明" {
+    var temporary = test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    const io = std.testing.io;
+    try writePackage(temporary.dir, io,
+        \\[package]
+        \\name = "test"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\[[exports]]
+        \\name = "main"
+        \\native = { path = "lib/libpod.so", libc = "musl" }
+    );
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const result = try evaluateFixture(arena.allocator(), temporary.dir, io, .{ .runtime = "lnako", .os = "linux" });
+    try testing.expectEqual(Availability.unknown, result.availability);
+    try testing.expectEqualStrings("libc musl", result.condition);
 }
 
 test "OS条件: manifestが無いpackageは不明として扱う" {

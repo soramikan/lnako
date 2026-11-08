@@ -1055,6 +1055,26 @@ pub fn checkProject(a: Allocator, io: std.Io, args: []const []const u8, start_di
     const feature_manifest: ?*const manifest_mod.Manifest =
         if (inspect.lock_state == .fresh) &project_var.manifest else null;
 
+    // OS 条件評価の target。check は現行 profile の target を使うが、
+    // min-os 照合に必要な OS バージョンは lock 記録値しか無い場合がある
+    // ため、fresh lock の target から補う。
+    var check_target = lnako.package.command_conditions.Target{
+        .runtime = "lnako",
+        .os = inspect.target.os,
+        .cpu = inspect.target.cpu,
+        .abi = inspect.target.abi,
+        .os_version = inspect.target.os_version,
+        .compat_js = inspect.target.compat_js,
+        .optimize = inspect.target.optimize,
+    };
+    if (check_target.os_version == null and inspect.lock_state == .fresh) {
+        if (try lnako.package.command_conditions.targetFromLock(a, io, project_var.root, a)) |lock_target| {
+            if (std.mem.eql(u8, lock_target.os, check_target.os)) {
+                check_target.os_version = lock_target.os_version;
+            }
+        }
+    }
+
     // 命令 metadata 静的検査。環境が current のときのみ（stale/missing は
     // 索引が信頼できないため skipped）。再代入ではなく if 式で初期化し、
     // inspectEnvironmentDir が OOM で失敗しても defer が未初期化の
@@ -1071,15 +1091,7 @@ pub fn checkProject(a: Allocator, io: std.Io, args: []const []const u8, start_di
                     .requested = flags.features.items,
                     .use_default_features = !flags.no_default_features,
                 },
-                .target = .{
-                    .runtime = "lnako",
-                    .os = inspect.target.os,
-                    .cpu = inspect.target.cpu,
-                    .abi = inspect.target.abi,
-                    .os_version = inspect.target.os_version,
-                    .compat_js = inspect.target.compat_js,
-                    .optimize = inspect.target.optimize,
-                },
+                .target = check_target,
             },
             &diagnostics,
         )

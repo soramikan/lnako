@@ -435,10 +435,13 @@ pub fn inspectEnvironmentDir(
             );
             try conditions.append(arena, condition);
             if (condition.availability == .unavailable) {
-                try uninspected_list.append(arena, .{
-                    .package_key = package_key,
-                    .reason = .os_unavailable,
-                });
+                // source 再生成失敗など既に未検査記録がある場合は重複させない。
+                if (!hasUninspected(uninspected_list.items, package_key)) {
+                    try uninspected_list.append(arena, .{
+                        .package_key = package_key,
+                        .reason = .os_unavailable,
+                    });
+                }
                 continue;
             }
         }
@@ -633,6 +636,13 @@ fn collectPackageEdges(gpa: Allocator, from: []const u8, value: ?std.json.Value,
     }
 }
 
+fn hasUninspected(items: []const Uninspected, package_key: []const u8) bool {
+    for (items) |item| {
+        if (std.mem.eql(u8, item.package_key, package_key)) return true;
+    }
+    return false;
+}
+
 /// プロジェクト直下の source module 名（basename）を集める。alias の公開
 /// namespace が既存 module と同じになると `{namespace}__{名前}` の解決が
 /// 曖昧になるため、その衝突診断にだけ使う。サブディレクトリは辿らない
@@ -642,11 +652,12 @@ fn collectProjectModuleNames(arena: Allocator, io: std.Io, root_dir: std.Io.Dir)
     defer dir.close(io);
     var names: std.ArrayList([]const u8) = .empty;
     var iterator = dir.iterate();
-    var visited: usize = 0;
+    var files: usize = 0;
     while (iterator.next(io) catch null) |entry| {
-        visited += 1;
-        if (visited > 512) break;
+        // 上限はファイル数で数える（dir が大量にあっても取りこぼさない）。
         if (entry.kind != .file) continue;
+        files += 1;
+        if (files > 512) break;
         const extension = std.fs.path.extension(entry.name);
         if (!isNakoSource(entry.name)) continue;
         const stem = entry.name[0 .. entry.name.len - extension.len];
