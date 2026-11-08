@@ -1,0 +1,9 @@
+[package]
+name = "package-common-reject-scope-alias"
+version = "0.1.0"
+license = "MIT"
+
+# `util` はroot scopeにだけ宣言する。package scopeのdemoからは見えない。
+[dependencies.path]
+demo = { path = "demo" }
+util = { path = "util" }

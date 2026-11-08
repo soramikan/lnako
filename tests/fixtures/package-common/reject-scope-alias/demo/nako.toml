@@ -1,0 +1,8 @@
+[package]
+name = "package-common-reject-scope-demo"
+version = "1.0.0"
+license = "MIT"
+
+[[exports]]
+name = "main"
+path = "src/demo.nako3"

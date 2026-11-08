@@ -1,0 +1,7 @@
+{
+  "reason": "package treeの外を指すsymlink entry",
+  "lnakoDiagnostic": "E029_INVALID_VALUE",
+  "lnakoDetail": "cannot hash path dependency",
+  "cnakoDiagnostic": "E029_INVALID_VALUE",
+  "cnakoDetail": "cannot hash path dependency"
+}

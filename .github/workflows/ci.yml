@@ -325,7 +325,7 @@ jobs:
         run: zig build package-schema-check
       - name: Package manifest tool tests
         if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
-        run: node --test tools/semver_range_test.mjs tools/schema_validator_test.mjs
+        run: node --test tools/semver_range_test.mjs tools/schema_validator_test.mjs tools/cnako_package_loader_test.mjs
       - name: Benchmark runner tests
         if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
         run: node --test tools/benchmark_runner_test.mjs tools/setup_benchmark_gonako_test.mjs tools/pre_push_hook_test.mjs
@@ -812,6 +812,12 @@ jobs:
       - name: Differential package import AOT oracle
         if: matrix.task == 'native' && matrix.optimizationKey == 'O2'
         run: node tools/compare_package_import_aot_oracle.mjs --no-build
+      # `パッケージ:`／`pkg:` 取り込みを lnako と公式cnako3 v3.7.24 の双方で
+      # 実行して stdout を比較する。cnako側は #61 の委譲loader契約
+      # （lnako sync → environment.json）をテスト用adapterで接続する。
+      - name: Differential package import cnako oracle
+        if: matrix.task == 'native' && matrix.optimizationKey == 'O2'
+        run: node tools/compare_package_import_oracle.mjs --no-build --oracle .cache/oracle/nadesiko3-3.7.24
       - name: Upload native AOT oracle artifact
         if: matrix.task == 'native' && always()
         continue-on-error: true
@@ -1081,6 +1087,12 @@ jobs:
       - name: Differential package import AOT oracle
         if: matrix.task == 'native' && matrix.fixtureShardIndex == 0 && matrix.optimizationKey == 'O2-O3'
         run: node tools/compare_package_import_aot_oracle.mjs --no-build
+      # `パッケージ:`／`pkg:` 取り込みを lnako と公式cnako3 v3.7.24 の双方で
+      # 実行して stdout を比較する。cnako側は #61 の委譲loader契約
+      # （lnako sync → environment.json）をテスト用adapterで接続する。
+      - name: Differential package import cnako oracle
+        if: matrix.task == 'native' && matrix.fixtureShardIndex == 0 && matrix.optimizationKey == 'O2-O3'
+        run: node tools/compare_package_import_oracle.mjs --no-build --oracle .cache/oracle/nadesiko3-3.7.24
       - name: Upload native AOT oracle artifact
         if: matrix.task == 'native' && always()
         continue-on-error: true
@@ -1328,6 +1340,12 @@ jobs:
       - name: Differential package import AOT oracle
         if: matrix.task == 'native' && matrix.fixtureShardIndex == 0 && matrix.optimizationKey == 'O2-O3'
         run: node tools/compare_package_import_aot_oracle.mjs --no-build
+      # `パッケージ:`／`pkg:` 取り込みを lnako と公式cnako3 v3.7.24 の双方で
+      # 実行して stdout を比較する。cnako側は #61 の委譲loader契約
+      # （lnako sync → environment.json）をテスト用adapterで接続する。
+      - name: Differential package import cnako oracle
+        if: matrix.task == 'native' && matrix.fixtureShardIndex == 0 && matrix.optimizationKey == 'O2-O3'
+        run: node tools/compare_package_import_oracle.mjs --no-build --oracle .cache/oracle/nadesiko3-3.7.24
       - name: Upload native AOT oracle artifact
         if: matrix.task == 'native' && always()
         continue-on-error: true
