@@ -56,6 +56,15 @@ const scratch_permissions: std.Io.File.Permissions = if (builtin.os.tag == .wind
 else
     .fromMode(0o700);
 
+/// scratch dir 名の前置。scratch は `<base>/lnako-npm-<hex>` に作られるため、
+/// 所属判定（テスト含む）はこの定義を単一の源として path component を照合する。
+pub const scratch_dir_prefix = "lnako-npm-";
+/// scratch dir 名の hex 部分の長さ（`createScratch` の 8 byte random を小文字
+/// hex 化した長さ）。判定側が名前の形を検証する時の単一の源。
+pub const scratch_dir_hex_len: usize = scratch_random_bytes * 2;
+/// scratch dir 名に使う乱数 byte 数。
+const scratch_random_bytes = 8;
+
 /// 世代 tree の identity 検査で読む `package.json` の上限。
 const max_package_json_bytes: usize = 1024 * 1024;
 
@@ -657,11 +666,11 @@ fn createScratch(gpa: Allocator, io: std.Io) !Scratch {
     var attempt: usize = 0;
     var name: ?[]u8 = null;
     while (attempt < 8) : (attempt += 1) {
-        var random: [8]u8 = undefined;
+        var random: [scratch_random_bytes]u8 = undefined;
         std.Io.random(io, &random);
         const hex = std.fmt.bytesToHex(random, .lower);
         var buf: [32]u8 = undefined;
-        const candidate = try std.fmt.bufPrint(&buf, "lnako-npm-{s}", .{hex});
+        const candidate = try std.fmt.bufPrint(&buf, "{s}{s}", .{ scratch_dir_prefix, hex });
         parent.createDir(io, candidate, scratch_permissions) catch |err| switch (err) {
             error.PathAlreadyExists => continue,
             else => return err,
@@ -713,6 +722,29 @@ fn tempBase(gpa: Allocator) Allocator.Error!?[]u8 {
         return try std.fs.path.join(gpa, &.{ profile, "AppData", "Local", "Temp" });
     }
     return try gpa.dupe(u8, "/tmp");
+}
+
+/// scratch の基点（TMPDIR→TEMP→TMP、Windows は USERPROFILE 配下）の
+/// canonical 絶対 path を返す。scratch dir 自体は常に
+/// `<base>/lnako-npm-<hex>` なので、呼出し側はこの path 境界で module が
+/// scratch 由来かを判定できる（基点名の部分文字列に依存しない）。基点を
+/// canonical path として開けない環境では null を返す。
+pub fn scratchBaseReal(allocator: Allocator, io: std.Io) !?[]u8 {
+    const base = (try tempBase(allocator)) orelse return null;
+    defer allocator.free(base);
+    var dir = std.Io.Dir.openDirAbsolute(io, base, .{}) catch |err| {
+        if (err == error.OutOfMemory) return error.OutOfMemory;
+        if (err == error.Canceled) return error.Canceled;
+        return null;
+    };
+    defer dir.close(io);
+    var buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const length = dir.realPath(io, &buffer) catch |err| {
+        if (err == error.OutOfMemory) return error.OutOfMemory;
+        if (err == error.Canceled) return error.Canceled;
+        return null;
+    };
+    return try allocator.dupe(u8, buffer[0..length]);
 }
 
 /// cache key を scratch の単一 dir 名として使えるか。`cache.Store` の key
