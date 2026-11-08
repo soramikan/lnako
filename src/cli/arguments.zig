@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const lnako = @import("lnako");
 
 pub const BuildBackend = enum { aot, embedded };
@@ -14,6 +15,9 @@ pub const BuildOptions = struct {
     backend: ?BuildBackend = null,
     forced_mode: lnako.frontend.token.Mode = .{},
     llvm_dir: ?[]const u8 = null,
+    /// `--compat-js --backend aot` 生成物へ同梱した package の license 一覧
+    /// （SPDX 2.3 JSON）の出力先。Issue #56。
+    sbom: ?[]const u8 = null,
 };
 
 pub fn parseBuildOptions(arguments: []const []const u8) !BuildOptions {
@@ -25,6 +29,7 @@ pub fn parseBuildOptions(arguments: []const []const u8) !BuildOptions {
     var backend: ?BuildBackend = null;
     var forced_mode: lnako.frontend.token.Mode = .{};
     var llvm_dir: ?[]const u8 = null;
+    var sbom: ?[]const u8 = null;
     var index: usize = 1;
     while (index < arguments.len) : (index += 1) {
         const argument = arguments[index];
@@ -59,6 +64,10 @@ pub fn parseBuildOptions(arguments: []const []const u8) !BuildOptions {
             index += 1;
             if (index >= arguments.len) return error.MissingLlvmDir;
             llvm_dir = arguments[index];
+        } else if (std.mem.eql(u8, argument, "--sbom")) {
+            index += 1;
+            if (index >= arguments.len) return error.MissingSbomPath;
+            sbom = arguments[index];
         } else if (std.mem.eql(u8, argument, "--emit")) {
             index += 1;
             if (index >= arguments.len) return error.MissingEmitKind;
@@ -82,7 +91,103 @@ pub fn parseBuildOptions(arguments: []const []const u8) !BuildOptions {
         .backend = backend,
         .forced_mode = forced_mode,
         .llvm_dir = llvm_dir,
+        .sbom = sbom,
     };
+}
+
+/// `--sbom` の出力先が、生成物・入力 source と同じファイルを指さないかを
+/// 判定する。相対 path は cwd 基準で絶対化し、実在する path は実体 path へ
+/// 解決する。生成前で file が無い場合も親 directory の実体 path + basename で
+/// 比較する（symlink 経由の同一 file を lexical 比較で見逃さない）。
+pub fn sameDestination(allocator: std.mem.Allocator, io: std.Io, left: []const u8, right: []const u8) !bool {
+    const left_absolute = try absoluteForComparison(allocator, io, left);
+    defer allocator.free(left_absolute);
+    const right_absolute = try absoluteForComparison(allocator, io, right);
+    defer allocator.free(right_absolute);
+    if (std.mem.eql(u8, left_absolute, right_absolute)) return true;
+    // 既存 file は path に加えてファイル識別子でも比較する。hardlink は
+    // 異なる path でも同じ file を指すため、path 比較だけでは --sbom が
+    // 入力や生成物を切り詰める指定を見逃す。
+    if (sameFileIdentity(io, left_absolute, right_absolute)) return true;
+    // case-insensitive な FS（Windows、macOS の既定 APFS）では、まだ存在
+    // しない出力先の大小文字違いを実体 path で区別できない。親 directory が
+    // 同一で basename だけが大小文字で異なる場合は同じ file とみなす
+    // （同一親で case-sensitive な別 file を意図した場合も明示エラーになるが、
+    // 生成物の破壊より安全側に倒す）。
+    if (builtin.os.tag == .windows or builtin.os.tag == .macos) {
+        const left_parent = std.fs.path.dirname(left_absolute) orelse "";
+        const right_parent = std.fs.path.dirname(right_absolute) orelse "";
+        if (std.mem.eql(u8, left_parent, right_parent)) {
+            return std.ascii.eqlIgnoreCase(std.fs.path.basename(left_absolute), std.fs.path.basename(right_absolute));
+        }
+    }
+    return false;
+}
+
+/// 2 つの path が同じ file を指すか（hardlink 検出）。file 識別子は
+/// `Stat.inode`（POSIX は inode、Windows は FileIndex）を使う。どちらかが
+/// 存在しない・stat できない場合は「同一でない」として false を返し、
+/// 呼出し側は path 比較の結果を維持する。
+fn sameFileIdentity(io: std.Io, left: []const u8, right: []const u8) bool {
+    const left_stat = std.Io.Dir.cwd().statFile(io, left, .{}) catch return false;
+    const right_stat = std.Io.Dir.cwd().statFile(io, right, .{}) catch return false;
+    if (left_stat.kind != .file or right_stat.kind != .file) return false;
+    return left_stat.inode == right_stat.inode;
+}
+
+/// symlink を辿る上限。循環 link で無限再帰しないための固定値。
+const max_symlink_depth: usize = 8;
+
+fn absoluteForComparison(allocator: std.mem.Allocator, io: std.Io, path: []const u8) ![]u8 {
+    return absoluteForComparisonDepth(allocator, io, path, 0);
+}
+
+fn absoluteForComparisonDepth(allocator: std.mem.Allocator, io: std.Io, path: []const u8, depth: usize) ![]u8 {
+    // 実在する file/dir は realpath が symlink を解決する。
+    // realPathFileAlloc は sentinel slice を返すため、通常 slice として返すと
+    // 解放長が 1 ずれる。dupe してから sentinel 側を解放する。
+    if (std.Io.Dir.cwd().realPathFileAlloc(io, path, allocator)) |resolved| {
+        defer allocator.free(resolved);
+        return allocator.dupe(u8, resolved);
+    } else |_| {}
+    const normalized = try absoluteLexical(allocator, io, path);
+    // 生成前の出力先でも leaf が symlink なら target を解決する（dangling
+    // symlink は realPathFileAlloc では解決できない）。
+    if (depth < max_symlink_depth) {
+        var buffer: [std.fs.max_path_bytes]u8 = undefined;
+        if (std.Io.Dir.cwd().readLink(io, normalized, &buffer)) |length| {
+            const target = buffer[0..length];
+            const target_absolute = if (std.fs.path.isAbsolute(target))
+                try allocator.dupe(u8, target)
+            else blk: {
+                const parent = std.fs.path.dirname(normalized) orelse ".";
+                break :blk try std.fs.path.join(allocator, &.{ parent, target });
+            };
+            defer allocator.free(target_absolute);
+            allocator.free(normalized);
+            return absoluteForComparisonDepth(allocator, io, target_absolute, depth + 1);
+        } else |_| {}
+    }
+    // 親 directory の実体 path + basename で比較する。basename は
+    // normalized への slice なので、join が終わるまで解放しない。
+    const parent = std.fs.path.dirname(normalized) orelse return normalized;
+    const basename = std.fs.path.basename(normalized);
+    const real_parent = std.Io.Dir.cwd().realPathFileAlloc(io, parent, allocator) catch return normalized;
+    defer allocator.free(real_parent);
+    const combined = try std.fs.path.join(allocator, &.{ real_parent, basename });
+    allocator.free(normalized);
+    return combined;
+}
+
+/// 相対 path は cwd 基準で絶対化し、`.`/`..` を正規化する（symlink は見ない）。
+fn absoluteLexical(allocator: std.mem.Allocator, io: std.Io, path: []const u8) ![]u8 {
+    // 絶対 path は cwd に依存しないため取得しない。
+    if (std.fs.path.isAbsolute(path)) return std.fs.path.resolve(allocator, &.{path});
+    const cwd = try std.Io.Dir.cwd().realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(cwd);
+    const joined = try std.fs.path.join(allocator, &.{ cwd, path });
+    defer allocator.free(joined);
+    return std.fs.path.resolve(allocator, &.{joined});
 }
 
 /// `--dncl`/`--dncl2` フラグから強制する構文モードを得る。
@@ -180,6 +285,88 @@ test "buildの出力形式と最適化レベルを解析する" {
     try std.testing.expectEqual(lnako.backend.llvm.compiler.Emit.object, options.emit);
     try std.testing.expectError(error.MissingOutput, parseBuildOptions(&.{"main.nako3"}));
     try std.testing.expectError(error.InvalidEmitKind, parseBuildOptions(&.{ "main.nako3", "-o", "main", "--emit", "asm" }));
+}
+
+test "--sbomの出力先が生成物・入力と同じfileかを実体pathで判定する" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    const cwd = try std.Io.Dir.cwd().realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(cwd);
+    const absolute_app = try std.fs.path.join(allocator, &.{ cwd, "ghost", "app" });
+    defer allocator.free(absolute_app);
+    const absolute_other = try std.fs.path.join(allocator, &.{ cwd, "ghost", "other" });
+    defer allocator.free(absolute_other);
+
+    // 絶対 path 同士の同一判定。
+    try std.testing.expect(try sameDestination(allocator, io, absolute_app, absolute_app));
+    // 相対 path は cwd 基準で絶対化し、`.`/`..` を正規化して比較する。
+    try std.testing.expect(try sameDestination(allocator, io, absolute_app, "ghost/../ghost/app"));
+    // basename だけの比較にしない（別 directory の同名 file は別）。
+    try std.testing.expect(!try sameDestination(allocator, io, absolute_app, absolute_other));
+    try std.testing.expect(!try sameDestination(allocator, io, absolute_app, "ghost/other"));
+    try std.testing.expect(!try sameDestination(allocator, io, absolute_app, "app"));
+
+    // case-insensitive FS では未作成 file の大小文字違いも同一とみなす
+    // （macOS/Windows のみ。Linux は別 file として許可する）。
+    const case_variant = try sameDestination(allocator, io, absolute_app, "ghost/APP");
+    if (builtin.os.tag == .windows or builtin.os.tag == .macos) {
+        try std.testing.expect(case_variant);
+    } else {
+        try std.testing.expect(!case_variant);
+    }
+
+    // symlink 経由の同一 file も実体 path で判定する（dangling を含む）。
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.writeFile(io, .{ .sub_path = "app", .data = "bin" });
+    try temporary.dir.symLink(io, "app", "alias", .{});
+    try temporary.dir.symLink(io, "future-app", "dangling", .{});
+    const root = try temporary.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(root);
+    const real_app = try std.fs.path.join(allocator, &.{ root, "app" });
+    defer allocator.free(real_app);
+    const real_alias = try std.fs.path.join(allocator, &.{ root, "alias" });
+    defer allocator.free(real_alias);
+    const real_dangling = try std.fs.path.join(allocator, &.{ root, "dangling" });
+    defer allocator.free(real_dangling);
+    const future_app = try std.fs.path.join(allocator, &.{ root, "future-app" });
+    defer allocator.free(future_app);
+    try std.testing.expect(try sameDestination(allocator, io, real_app, real_alias));
+    try std.testing.expect(try sameDestination(allocator, io, future_app, real_dangling));
+
+    // 親 directory は実在し対象 file だけが未作成の場合は、親の実体 path と
+    // basename で比較する（basename は解放済み buffer を参照しない）。
+    const missing_a = try std.fs.path.join(allocator, &.{ root, "future-a" });
+    defer allocator.free(missing_a);
+    const missing_b = try std.fs.path.join(allocator, &.{ root, "future-b" });
+    defer allocator.free(missing_b);
+    try std.testing.expect(!try sameDestination(allocator, io, missing_a, missing_b));
+    try std.testing.expect(try sameDestination(allocator, io, missing_a, missing_a));
+    const missing_dot = try std.fs.path.join(allocator, &.{ root, ".", "future-a" });
+    defer allocator.free(missing_dot);
+    try std.testing.expect(try sameDestination(allocator, io, missing_a, missing_dot));
+
+    // hardlink は別 path でも同じ file として扱う（--sbom が入力/生成物を
+    // 切り詰める指定を拒否する）。Windows の Threaded Io は hardLink を
+    // OperationUnsupported で拒否するため、この経路は POSIX でだけ検証する。
+    if (builtin.os.tag != .windows) {
+        try temporary.dir.writeFile(io, .{ .sub_path = "source.nako3", .data = "値=1\n" });
+        try std.Io.Dir.hardLink(temporary.dir, "source.nako3", temporary.dir, "link.nako3", io, .{});
+        const source_path = try std.fs.path.join(allocator, &.{ root, "source.nako3" });
+        defer allocator.free(source_path);
+        const link_path = try std.fs.path.join(allocator, &.{ root, "link.nako3" });
+        defer allocator.free(link_path);
+        try std.testing.expect(try sameDestination(allocator, io, source_path, link_path));
+    }
+}
+
+test "buildの--sbom出力先を解析する" {
+    const options = try parseBuildOptions(&.{ "main.nako3", "-o", "main", "--compat-js", "--backend", "aot", "--sbom", "main.spdx.json" });
+    try std.testing.expectEqualStrings("main.spdx.json", options.sbom.?);
+    // --sbom 無指定は null（従来どおり SBOM を作らない）。
+    const without = try parseBuildOptions(&.{ "main.nako3", "-o", "main", "--compat-js", "--backend", "aot" });
+    try std.testing.expect(without.sbom == null);
+    try std.testing.expectError(error.MissingSbomPath, parseBuildOptions(&.{ "main.nako3", "-o", "main", "--compat-js", "--backend", "aot", "--sbom" }));
 }
 
 test "buildのcompat-js backendを解析する" {

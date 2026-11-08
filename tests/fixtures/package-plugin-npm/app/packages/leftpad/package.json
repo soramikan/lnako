@@ -1,0 +1,7 @@
+{
+  "name": "leftpad-dev-tooling",
+  "version": "9.9.9",
+  "license": "GPL-3.0",
+  "private": true,
+  "description": "開発補助用 package.json。path 依存の同梱 metadata は nako.toml が正であることを E2E で固定するための罠。"
+}

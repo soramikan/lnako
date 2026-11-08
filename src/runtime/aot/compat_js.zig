@@ -1236,8 +1236,11 @@ fn jsonString(value: ?std.json.Value) ?[]const u8 {
 }
 
 /// 生成物へ収録したESM manifest（path/source/identity）をQuickJSへ登録する。
-/// manifestはJSON配列で、各要素は `path`・`source`・`is_plugin`・
-/// `namespaces`・`package_root`・`bare_aliases` を持つ。
+/// manifest は schema 2 の object `{"schema":2,"modules":[...],"packages":[...]}`
+/// で、各 module は `path`・`source`・`is_plugin`・`namespaces`・
+/// `package_root`・`bare_aliases` を持つ。旧形式の配列（schema 1 相当）も
+/// 受理する。`packages` は生成物の自己記述（SBOM/監査用）で、実行時の
+/// 登録には使わない。
 pub export fn lnako_aot_compat_esm_register(manifest: ?[*]const u8, length: usize) callconv(.c) void {
     const runtime = if (state.active_runtime) |*active| active else return;
     const bytes = if (manifest) |pointer| pointer[0..length] else return;
@@ -1253,8 +1256,30 @@ pub export fn lnako_aot_compat_esm_register(manifest: ?[*]const u8, length: usiz
     defer parsed.deinit();
     const modules = switch (parsed.value) {
         .array => |array| array.items,
+        .object => |object| modules_of: {
+            // schema 2 の object manifest。未知の schema は module 形が変わり
+            // 得るため黙って解釈せず失敗させる（schema 欠落は旧手書き
+            // manifest 互換のため schema 2 とみなす）。
+            if (object.get("schema")) |schema| {
+                if (schema != .integer or schema.integer != 2) {
+                    runtime.setFailureText("unsupported compat ESM manifest schema");
+                    return;
+                }
+            }
+            const modules_value = object.get("modules") orelse {
+                runtime.setFailureText("compat ESM manifest has no modules");
+                return;
+            };
+            break :modules_of switch (modules_value) {
+                .array => |array| array.items,
+                else => {
+                    runtime.setFailureText("compat ESM manifest modules is not an array");
+                    return;
+                },
+            };
+        },
         else => {
-            runtime.setFailureText("compat ESM manifest is not an array");
+            runtime.setFailureText("compat ESM manifest is not an array or object");
             return;
         },
     };
@@ -2191,6 +2216,49 @@ test "compat AOT runtimeはESM manifestを登録してimportできる" {
     lnako_aot_compat_js_eval(&out, &arguments, arguments.len);
     try std.testing.expectEqual(@as(u8, @backingInt(Tag.number)), out.tag);
     try std.testing.expectEqual(@as(f64, 5), @as(f64, @bitCast(out.payload)));
+    lnako_aot_compat_deinit();
+}
+
+test "compat AOT runtimeはschema 2 manifestのmodulesとpackagesを受理する" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    // `--compat-js --backend aot` の生成物は schema 2（object）で、同梱
+    // package の metadata を併せて持つ。packages は実行時登録に影響せず、
+    // modules の登録だけが QuickJS へ渡ることを固定する。
+    const manifest =
+        \\{"schema":2,"modules":[{"path":"/lnako-compat-test/schema2.mjs","source":"export function add(a, b) { return a + b; }","is_plugin":false,"namespaces":[],"package_root":null,"bare_aliases":[]}],"packages":[{"name":"left-pad","version":"1.0.0","license":"MIT","root":"/tmp/npm_left-pad","kind":"npm","entries":["index.js"]}]}
+    ;
+    lnako_aot_compat_esm_register(manifest.ptr, manifest.len);
+    const units = try std.unicode.utf8ToUtf16LeAlloc(std.testing.allocator, "import('/lnako-compat-test/schema2.mjs').then(m => m.add(2,3))");
+    defer std.testing.allocator.free(units);
+    var arguments = [_]Value{try state.active_runtime.?.createString(units)};
+    var out: Value = .{};
+    lnako_aot_compat_js_eval(&out, &arguments, arguments.len);
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.number)), out.tag);
+    try std.testing.expectEqual(@as(f64, 5), @as(f64, @bitCast(out.payload)));
+    lnako_aot_compat_deinit();
+}
+
+test "compat AOT runtimeは未知schemaのmanifestを解釈せず失敗する" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const manifest =
+        \\{"schema":999,"modules":[],"packages":[]}
+    ;
+    lnako_aot_compat_esm_register(manifest.ptr, manifest.len);
+    try std.testing.expect(state.active_runtime.?.has_pending_exception);
     lnako_aot_compat_deinit();
 }
 

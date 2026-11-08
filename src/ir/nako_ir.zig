@@ -214,6 +214,14 @@ pub const NativePluginPackage = struct {
     namespace: []const u8,
 };
 
+/// JavaScript module を所有する package の帰属。`npm` は依存の出自
+/// （npm instance か path 依存の nako package か）を表し、同梱 package の
+/// metadata をどちらの manifest から読むかの判断に使う。
+pub const PackageAttribution = struct {
+    root: []const u8,
+    npm: bool = false,
+};
+
 pub const JavaScriptModule = struct {
     path: []const u8,
     source: []const u8,
@@ -234,6 +242,30 @@ pub const JavaScriptModule = struct {
     /// QuickJS module_normalize が package 所有 referrer から bare を
     /// この path へ写す。空なら bare 別名なし。
     bare_aliases: []const []const u8 = &.{},
+    /// この module を所有する package の全帰属。`package_root` は実行時の
+    /// 解決境界に使う代表 1 件だけなので、同一 ESM file を複数 package が
+    /// 共有する場合（symlink 経由の入れ子 package 等）の帰属は失われる。
+    /// 同梱 package の記録（manifest/SBOM）はこちらを使って全 root を拾う。
+    package_attributions: []const PackageAttribution = &.{},
+};
+
+/// 生成物へ source を同梱した package（`--compat-js` の crate 依存）。
+/// SBOM と ESM manifest の双方が同じ記録を読む。`root` は npm cache tree
+/// または path 依存 package の canonical root。
+pub const BundledPackageKind = enum { npm, nako };
+
+pub const BundledPackage = struct {
+    name: []const u8,
+    version: []const u8,
+    /// 宣言 license（npm は package.json `license`、nako は nako.toml
+    /// `package.license`）。宣言が無い場合は "NOASSERTION"。
+    license: []const u8,
+    root: []const u8,
+    kind: BundledPackageKind = .npm,
+    /// `root` 配下で実際に同梱した module の root 相対 path（重複なし・昇順）。
+    /// package.json `exports` / `main` から辿った entry と、その相対 import の
+    /// 子孫を含む（= 生成物へ入った module の一覧）。
+    entries: []const []const u8 = &.{},
 };
 
 pub const Program = struct {
@@ -252,6 +284,10 @@ pub const Program = struct {
     module_paths: []const []const u8 = &.{},
     compat_js: bool = false,
     javascript_modules: []JavaScriptModule = &.{},
+    /// `javascript_modules` のうち package root 配下のものを package 単位へ
+    /// 集約した記録（`--compat-js` の生成物だけが持つ）。CLI が compile 直後に
+    /// 収集し、LLVM emitter の ESM manifest と `--sbom` 出力が読む。
+    bundled_packages: []BundledPackage = &.{},
     native_plugin_paths: []const []const u8 = &.{},
     /// `pkg:` import経由のnative plugin。命令は `{namespace}__{命令}` の
     /// 修飾名でのみ公開し、無修飾名では呼べない。直接path importと同じ
@@ -303,6 +339,23 @@ pub const Program = struct {
             module.namespaces = try cloneStrings(allocator, module.namespaces);
             module.bare_aliases = try cloneStrings(allocator, module.bare_aliases);
             module.package_root = if (module.package_root) |root| try allocator.dupe(u8, root) else null;
+            const attributions = try allocator.alloc(PackageAttribution, module.package_attributions.len);
+            for (module.package_attributions, attributions) |source, *target| target.* = .{
+                .root = try allocator.dupe(u8, source.root),
+                .npm = source.npm,
+            };
+            module.package_attributions = attributions;
+        }
+        const bundled_packages = try allocator.alloc(BundledPackage, self.bundled_packages.len);
+        for (self.bundled_packages, bundled_packages) |source_package, *target_package| {
+            target_package.* = .{
+                .name = try allocator.dupe(u8, source_package.name),
+                .version = try allocator.dupe(u8, source_package.version),
+                .license = try allocator.dupe(u8, source_package.license),
+                .root = try allocator.dupe(u8, source_package.root),
+                .kind = source_package.kind,
+                .entries = try cloneStrings(allocator, source_package.entries),
+            };
         }
         const native_plugin_paths = try allocator.alloc([]const u8, self.native_plugin_paths.len);
         for (self.native_plugin_paths, native_plugin_paths) |source_path, *target_path| target_path.* = try allocator.dupe(u8, source_path);
@@ -330,6 +383,7 @@ pub const Program = struct {
             .module_paths = module_paths,
             .compat_js = self.compat_js,
             .javascript_modules = javascript_modules,
+            .bundled_packages = bundled_packages,
             .native_plugin_paths = native_plugin_paths,
             .native_plugin_packages = native_plugin_packages,
             .http_server_plugin_imported = self.http_server_plugin_imported,

@@ -299,15 +299,21 @@ pub fn collectModuleData(emitter: *Emitter) !void {
         if (system_constant.isEraData(name)) try emitter.system_era_data.append(emitter.allocator, global_index);
     }
     if (emitter.program.compat_js and emitter.program.javascript_modules.len > 0) {
-        emitter.compat_esm_manifest = try buildCompatEsmManifest(emitter.allocator, emitter.program.javascript_modules);
+        emitter.compat_esm_manifest = try buildCompatEsmManifest(emitter.allocator, emitter.program.javascript_modules, emitter.program.bundled_packages);
     }
 }
 
 /// `--compat-js` 生成物へ収録するESM情報。source/identity（path・source・
-/// namespace・package root・bare alias）をJSONで持ち、起動時にQuickJSへ
-/// 登録する。通常AOTはこのmanifestを生成しない。`is_plugin`/`namespaces` は
-/// ESM plugin命令のAOT dispatch（follow-up）で消費する。
-fn buildCompatEsmManifest(allocator: std.mem.Allocator, modules: []const ir.JavaScriptModule) ![]u8 {
+/// namespace・package root・bare alias）と、同梱した package の metadata
+/// （name・version・license・package root 相対の解決済み entry）をJSONで持つ。
+/// 起動時にQuickJSへ登録するのは `modules` だけで、`packages` は生成物の
+/// 自己記述（`--sbom` と監査）用。通常AOTはこのmanifestを生成しない。
+/// `is_plugin`/`namespaces` は ESM plugin命令のAOT dispatch（follow-up）で
+/// 消費する。
+///
+/// schema 2 で `{"schema":2,"modules":[...],"packages":[...]}` の object に
+/// なった。runtime は旧形式の配列も受理する（後方互換）。
+fn buildCompatEsmManifest(allocator: std.mem.Allocator, modules: []const ir.JavaScriptModule, packages: []const ir.BundledPackage) ![]u8 {
     const ManifestModule = struct {
         path: []const u8,
         source: []const u8,
@@ -315,6 +321,19 @@ fn buildCompatEsmManifest(allocator: std.mem.Allocator, modules: []const ir.Java
         namespaces: []const []const u8,
         package_root: ?[]const u8,
         bare_aliases: []const []const u8,
+    };
+    const ManifestPackage = struct {
+        name: []const u8,
+        version: []const u8,
+        license: []const u8,
+        root: []const u8,
+        kind: []const u8,
+        entries: []const []const u8,
+    };
+    const Manifest = struct {
+        schema: u32 = 2,
+        modules: []const ManifestModule,
+        packages: []const ManifestPackage,
     };
     const entries = try allocator.alloc(ManifestModule, modules.len);
     defer allocator.free(entries);
@@ -328,7 +347,19 @@ fn buildCompatEsmManifest(allocator: std.mem.Allocator, modules: []const ir.Java
             .bare_aliases = module.bare_aliases,
         };
     }
-    return std.json.Stringify.valueAlloc(allocator, entries, .{});
+    const package_entries = try allocator.alloc(ManifestPackage, packages.len);
+    defer allocator.free(package_entries);
+    for (packages, package_entries) |package, *entry| {
+        entry.* = .{
+            .name = package.name,
+            .version = package.version,
+            .license = package.license,
+            .root = package.root,
+            .kind = @tagName(package.kind),
+            .entries = package.entries,
+        };
+    }
+    return std.json.Stringify.valueAlloc(allocator, Manifest{ .modules = entries, .packages = package_entries }, .{});
 }
 
 pub fn emitDeclarations(emitter: *Emitter) !void {
@@ -511,4 +542,62 @@ fn writeLlvmByteString(writer: *std.Io.Writer, bytes: []const u8) !void {
             try writer.print("\\{X:0>2}", .{byte});
         }
     }
+}
+
+test "compat ESM manifestは同梱packageの全fieldを転記する" {
+    const allocator = std.testing.allocator;
+    const modules = [_]ir.JavaScriptModule{
+        .{
+            .path = "/src/plugin.mjs",
+            .source = "export default {};\n",
+            .is_plugin = true,
+            .namespaces = &.{"leftpad"},
+            .package_root = "/src/packages/leftpad",
+            .bare_aliases = &.{"left-pad"},
+        },
+    };
+    const packages = [_]ir.BundledPackage{
+        .{
+            .name = "left-pad",
+            .version = "1.0.0",
+            .license = "MIT",
+            .root = "/deps/npm_left-pad",
+            .kind = .npm,
+            .entries = &.{ "index.js", "lib/a.js" },
+        },
+        .{
+            .name = "leftpad",
+            .version = "1.2.3",
+            .license = "Apache-2.0",
+            .root = "/src/packages/leftpad",
+            .kind = .nako,
+        },
+    };
+    const bytes = try buildCompatEsmManifest(allocator, &modules, &packages);
+    defer allocator.free(bytes);
+
+    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, bytes, .{});
+    defer parsed.deinit();
+    const document = parsed.value.object;
+    try std.testing.expectEqual(@as(i64, 2), document.get("schema").?.integer);
+    const module_items = document.get("modules").?.array.items;
+    try std.testing.expectEqual(@as(usize, 1), module_items.len);
+    const module = module_items[0].object;
+    try std.testing.expectEqualStrings("/src/plugin.mjs", module.get("path").?.string);
+    try std.testing.expect(module.get("is_plugin").?.bool);
+    try std.testing.expectEqual(@as(usize, 1), module.get("bare_aliases").?.array.items.len);
+
+    const package_items = document.get("packages").?.array.items;
+    try std.testing.expectEqual(@as(usize, 2), package_items.len);
+    const npm_package = package_items[0].object;
+    try std.testing.expectEqualStrings("left-pad", npm_package.get("name").?.string);
+    try std.testing.expectEqualStrings("1.0.0", npm_package.get("version").?.string);
+    try std.testing.expectEqualStrings("MIT", npm_package.get("license").?.string);
+    try std.testing.expectEqualStrings("/deps/npm_left-pad", npm_package.get("root").?.string);
+    try std.testing.expectEqualStrings("npm", npm_package.get("kind").?.string);
+    try std.testing.expectEqual(@as(usize, 2), npm_package.get("entries").?.array.items.len);
+    const nako_package = package_items[1].object;
+    try std.testing.expectEqualStrings("nako", nako_package.get("kind").?.string);
+    try std.testing.expectEqualStrings("Apache-2.0", nako_package.get("license").?.string);
+    try std.testing.expectEqual(@as(usize, 0), nako_package.get("entries").?.array.items.len);
 }
