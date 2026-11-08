@@ -117,6 +117,7 @@ pub const package = struct {
     pub const command_inspect = @import("package/command_inspect.zig");
     pub const npkg_build = @import("package/npkg_build.zig");
     pub const npkg_verify = @import("package/npkg_verify.zig");
+    pub const publish = @import("package/publish.zig");
     pub const fetch = @import("package/fetch.zig");
     pub const provider = @import("package/provider.zig");
     pub const npm = @import("package/npm.zig");

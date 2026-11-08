@@ -137,7 +137,8 @@
   - **配布拡張 P1**: native source build（#59）、AOT 静的 plugin 同梱（#11）、workspace（#60）。
   - **他処理系/後続**: wnako（#62）、cnako Node 拡充（#63）、cross build（#64）、WASM PoC（#65）、cnako Node 完結依存管理（#70）、階層名前空間「の」（#182）。
   - **レジストリ**（別リポ [nako-registry](https://github.com/soramikan/nako-registry)）: #1–#6 すべて OPEN。中央サーバー切替は nako-registry#5 が gate。
-  - **明示拒否中**: `publish` CLI 未実装（環境 generation の “publish” 語は内部用）。npm 依存の lock 拒否は #53 で撤去済み。
+  - **#57 publish（dry-run・static registry 最小スライス実装・Issue OPEN）**: `lnako package publish` は既定 dry-run で、manifest/lock（`nako.lock` の manifestSha256）整合、`.npkg` の再生成と `verify`、公開先 registry/owner/認証（`LNAKO_REGISTRY` / `LNAKO_REGISTRY_OWNER` / `LNAKO_REGISTRY_TOKEN` の Bearer）を検証して未公開/公開済み/失敗を表示する。`--registry <url>`（または環境変数）で明示した registry にだけ、`--no-dry-run` で artifact `.npkg` と PS01 version record を PUT する（loopback 以外の平文 http は既定拒否、実 registry への既定送信なし）。再実行は同一版・同一 artifact hash をスキップし、同一版の内容差替えは公開前照会の時点で競合として拒否する（照会後の並行 publish の最終的な排他は registry 側の公開 API・生成 CI が担う）。artifact PUT 後・record PUT 前の失敗は同じ artifact を再送して復旧する。git/http/npm 依存は static registry の version record に表現できないため公開を拒否する（path 依存は `.npkg` に同梱されるため許可）。ローカル HTTP fixture で dry-run 成功/失敗、PUT 経路、再実行、競合、送信失敗→再実行を検証する。**残ゲート**: 初期 backend の GitHub Releases upload、registry 側の index 自動登録（nako-registry#2）、中央 publication API への transport 差し替え、複数 artifact/OS 別 binary の公開、`package verify` 相当の target 適合を公開時にどこまで要求するかの確定。
+  - **明示拒否中**: npm 依存の lock 拒否は #53 で撤去済み。`publish` の実 registry 送信は明示指定時のみで、既定の外部送信は行わない。
 - **低レイヤーAPI・ストリームI/O**：
   - カタログ63命令をすべて実装済み（#27–#38, #36 等）。正本は [`docs/low-level-api/catalog.json`](low-level-api/catalog.json)、現状の一覧は [`docs/low-level-api/IMPLEMENTATION_STATUS.md`](low-level-api/IMPLEMENTATION_STATUS.md)。
   - **実装済み命令（63/63）**: カタログ掲載の全命令を Interpreter / AOT で実装。位置系4命令（`ファイル位置変更` / `ファイル位置取得` / `ファイル位置指定読込` / `ファイル位置指定書込`）は [#27](https://github.com/soramikan/lnako/issues/27) で完了。
