@@ -112,3 +112,6 @@ CIのRelease candidate artifactにも両方を含め、Release workflowの昇格
 
 Windows x86_64 のcompat AOTリンクは未対応です。Windowsでは
 `--backend embedded` または `run --compat-js` を使用してください。
+
+パッケージ作者向けの `.npkg` 生成・検証と公開の現行範囲は
+[パッケージの作成・公開・配布](package-system/PUBLISHING.md) を参照してください。

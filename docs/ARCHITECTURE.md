@@ -26,6 +26,7 @@
 | runtime values | binary64、UTF-16、BigInt、配列、挿入順辞書、Promise、timer、正確なGC |
 | LLVM backend | IR検証、debug metadata、PassBuilder O0〜O3、TargetMachine、LLD |
 | host/plugin | filesystem、process、encoding、HTTP、crypto、ZIPなどの純Zig adapter |
+| package | `nako.toml`/`nako.lock` の解析、PubGrub解決、cache、`.nako` 環境、package取り込み解決、`.npkg` 生成・検証 |
 | QuickJS adapter | `--compat-js` の4命令とJS値変換。通常モードから分離 |
 
 ## 値とメモリ
@@ -55,6 +56,14 @@ LLVM/LLD 22.1.8を使い、Nako SSA IRを検証してLLVM IRへ変換します�
 QuickJSは互換性境界を明示するための別経路です。4命令、9 case（成功6、期待失敗3）を `compat-js-evidence.json` で管理し、native dispatch evidenceへ合算しません。
 
 配布する `lnako` 実行ファイルにはQuickJSを静的リンクし、`run --compat-js` と `build --compat-js` が追加toolchainなしで動作します。AOTの実行時ライブラリは2つに分離します。通常AOTの `liblnako_runtime.a` はQuickJS stubだけを持ち、`quickjs_enabled=false` のoptionsを受け取るため、通常のAOT生成物にQuickJSは含まれません。`build --compat-js` の既定は従来の同梱実行ファイル方式（`lnako` バイナリ＋埋め込みsource）です。LLVM AOT＋QuickJSは `--backend aot` の明示opt-inで、専用の `liblnako_runtime_compat.a` をリンクし、生成物へESM manifest（source/identity）を収録して起動時にQuickJSへ登録します。
+
+## パッケージシステム
+
+`nako.toml` を依存宣言の正本、`nako.lock` を解決結果の正本、`.nako/environment.json` を実体化済み環境の正本とします。`lock` は PubGrub で Public ID ごとに1版へ解決し、feature の和集合と選択 profile の target（runtime・os・cpu・abi・compat-js・optimize）を適用します。`sync` は cache から検証済みの実体を `.nako/env/<generation>/` へ構築し、`.nako/environment.json` を原子的に公開します。`run` / `test` / `build` は入力を含むプロジェクトを検出すると同じ準備を自動化し、`--locked` / `--offline` / `--no-sync` で制御します。
+
+ソースの `パッケージ:` / `pkg:` は import resolver が manifest の alias・lock・環境の対応表から公開 export へ解決します。module の canonical ID・物理 path・公開 namespace は別々に保持し、公開名は `{alias}__`（subpath 取り込みでは `{alias}__{subpath}__`）の接頭辞で写像します。パッケージ内の相対取り込みは境界の内側に限定し、package 由来の plugin 命令は修飾名だけで公開します。`.npkg` は決定的な ZIP 正規形として生成し、`package verify` が初期化コードを実行せずに構造・索引・target 適合を検査します。
+
+仕様は [パッケージシステム仕様案](package-system/SPECIFICATION.md)、利用手順は [使い始める](GETTING_STARTED.md)、公開と配布は [パッケージの作成・公開・配布](package-system/PUBLISHING.md) を参照してください。
 
 ## plugin
 

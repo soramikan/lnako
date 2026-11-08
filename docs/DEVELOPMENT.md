@@ -7,7 +7,7 @@
 
 | 対象 | 固定値 | 備考 |
 | --- | --- | --- |
-| Zig | 0.16.0 | 言語およびビルドシステム |
+| Zig | 0.17.0 | 言語およびビルドシステム |
 | LLVM / LLD | 22.1.8 | ベースライン（21.x–23.x 実行時対応） |
 | なでしこ3 | v3.7.24 | commit `aa18c7e640523938c680958fe731418cc6f7a58f` |
 | Node.js | 24.15.0 | 公式oracle差分テスト専用 |
@@ -99,6 +99,23 @@ node tools/check_compat_js_evidence.mjs --no-build
 ```
 
 OS依存値や外部通信を扱うfixtureは、固定入力、loopback、synthetic adapterなどの境界を明記します。
+
+## パッケージシステムの検証
+
+```sh
+zig build package-schema-check                     # schema適合・不適合例
+node tools/check_package_schema.mjs                # 同上（CLIから直接）
+node tools/check_package_isolation.mjs             # build.zig.zon 収録対象の分離
+node tools/compare_package_import_oracle.mjs       # cnako/lnako 共通の取り込みfixture（--no-build でビルド省略）
+node tools/compare_package_import_aot_oracle.mjs --no-build
+node --test tools/cnako_package_loader_test.mjs    # 委譲loader（テスト用adapter）
+node tools/check_package_plugin_npm_e2e.mjs        # ESM pluginとnpmのE2E（-Dcompat-js=true のビルドが必要）
+```
+
+- `tests/fixtures/package-common/` は path 依存だけを使い、外部ネットワークへ出ません。Interpreter と公式 cnako3（委譲 loader 経由）で同じソースを実行します。
+- `tests/fixtures/package-aot/` は package import の AOT O0〜O3 比較用です。
+- `tests/fixtures/package-plugin-npm/` は ESM plugin と npm bare import の併用で、packument と tarball を loopback の fixture registry から配信します。`LNAKO_NPM_REGISTRY` で取得先を差し替えます。
+- `lnako lock` → `lnako sync --offline` の経路で外部ネットワークと npm CLI を使いません。`package-plugin-npm` は loopback の fixture registry を起動し、`LNAKO_NPM_REGISTRY` をそこへ向けます。
 
 ## ドキュメント化の規則
 

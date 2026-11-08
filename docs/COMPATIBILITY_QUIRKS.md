@@ -7,8 +7,9 @@
 | [Parser](compatibility/PARSER.md) | 正規化、DNCL/DNCL2、インデント、助詞、診断 |
 | [Runtime](compatibility/RUNTIME.md) | JSON、値変換、配列・表・辞書、文字列、Promise、正規表現 |
 | [Node / Host](compatibility/NODE_HOST.md) | path、stdin、HTTP、process、network、archive、OS境界 |
-| [AOT](compatibility/AOT.md) | LLVM、manifest、終了・例外、Buffer、plugin、attestation |
-| [QuickJS](compatibility/COMPAT_JS.md) | JS固有4命令と明示的compat-js境界 |
+| [AOT](compatibility/AOT.md) | LLVM、manifest、終了・例外、Buffer、plugin、compat-js AOT、attestation |
+| [QuickJS](compatibility/COMPAT_JS.md) | JS固有4命令と明示的compat-js境界、npm bare importとESM plugin |
+| [cnako移行](compatibility/CNAKO_MIGRATION.md) | パッケージ取り込み、namespace、plugin命令名、既知の差異 |
 
 ## 記録フォーマット
 

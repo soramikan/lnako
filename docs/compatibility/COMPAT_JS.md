@@ -100,6 +100,23 @@ interpreter/officialとの意図的な差分です（Nako値がJS関数値を保
 interpreterのhost値bridgeを持たないため、`sys.__getSysVar`等はstrict stubとして
 失敗し、`console`などinterpreterがbootstrapするグローバルは存在しません。
 
+### npm bare import と ESM plugin
+
+npm の ESM package は、lock と cache から解決した結果だけを使います。実行時に npm CLI や Node.js を起動しません。
+
+- `build --compat-js`（embedded、既定）は payload format v8 に npm bare import の解決対応表を収録し、起動時の再コンパイルで cache やファイルシステムなしに復元します。lock と cache はビルド時に必要です。
+- `--backend aot` は ESM manifest に path・source・所属 namespace・package root・bare alias を収録し、起動時に QuickJS へ module として登録します。bare import は compile 時に解決したモジュール source を生成物へ埋め込むため、実行先に npm・Node.js・cache は不要です。ビルド時に cache が欠けていると解決に失敗します。
+- ESM plugin の命令は AOT から呼び出せません。plugin 命令の AOT dispatch は未対応です。plugin モジュール内部の bare import は起動時の bare alias 登録で解決され、`JS実行` の引数内で書いた `import("...")` も同じ alias で解決されます。参照 fixture は `tests/fixtures/package-plugin-npm/`（`aot-main.nako3`）です。
+- ESM-only の path 依存（`esm` だけを宣言したパッケージ）を lock で解決するには、`compat-js = true` を宣言した profile を置きます。lock と sync は、`default` が無ければ唯一の profile を自動で選びます。
+
+参照 fixture の流れ:
+
+```sh
+LNAKO_NPM_REGISTRY=http://127.0.0.1:<port> lnako lock --package-cache-dir <cache>
+lnako sync --offline --package-cache-dir <cache>
+lnako run main.nako3 --compat-js
+```
+
 ### 配布アーカイブ
 
 配布アーカイブは通常AOT runtime（`liblnako_runtime.a` / `lnako_runtime.lib`）と
@@ -110,6 +127,7 @@ Windows x86_64 のcompat AOTリンクは、ZigのMinGW向けにビルドしたQu
 `__mingw_*` / pthread 系シンボルを参照し、配布LLVM（MSVC向けclang/lld-link）の
 リンク行では解決できないため未対応です（follow-up）。Windowsでは
 `--backend embedded` または `run --compat-js` を使用してください。分離・
-dispatchの生成物検査はLinuxとmacOSで実施します。
+dispatchの生成物検査はLinuxとmacOSで実施します。配布物の同梱規則は
+[パッケージの作成・公開・配布](../package-system/PUBLISHING.md)も参照してください。
 
 QuickJS証拠を `native` entryのAOT証拠へ合算しません。native分類、QuickJS case、AOT artifact、3 OS attestationはそれぞれ [`../COMPATIBILITY_EVIDENCE.md`](../COMPATIBILITY_EVIDENCE.md) の別state・別経路です。
