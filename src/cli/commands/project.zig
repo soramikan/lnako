@@ -1055,10 +1055,11 @@ pub fn checkProject(a: Allocator, io: std.Io, args: []const []const u8, start_di
     const feature_manifest: ?*const manifest_mod.Manifest =
         if (inspect.lock_state == .fresh) &project_var.manifest else null;
 
-    // OS 条件評価の target。check は現行 profile の target を使うが、
-    // min-os 照合に必要な OS バージョンは lock 記録値しか無い場合がある
-    // ため、fresh lock の target から補う。
-    var check_target = lnako.package.command_conditions.Target{
+    // OS 条件評価の target。check は現行 profile の解決結果を使う
+    // （`--os-version` 指定時のみ osVersion を持つ）。fresh lock の
+    // `input.target` とは鮮度比較で一致するため、ここで lock を読み直す
+    // 必要はない。runtime は check の要求 runtime（lnako）と一致する。
+    const check_target = lnako.package.command_conditions.Target{
         .runtime = "lnako",
         .os = inspect.target.os,
         .cpu = inspect.target.cpu,
@@ -1067,13 +1068,6 @@ pub fn checkProject(a: Allocator, io: std.Io, args: []const []const u8, start_di
         .compat_js = inspect.target.compat_js,
         .optimize = inspect.target.optimize,
     };
-    if (check_target.os_version == null and inspect.lock_state == .fresh) {
-        if (try lnako.package.command_conditions.targetFromLock(a, io, project_var.root, a)) |lock_target| {
-            if (std.mem.eql(u8, lock_target.os, check_target.os)) {
-                check_target.os_version = lock_target.os_version;
-            }
-        }
-    }
 
     // 命令 metadata 静的検査。環境が current のときのみ（stale/missing は
     // 索引が信頼できないため skipped）。再代入ではなく if 式で初期化し、

@@ -149,13 +149,16 @@ fn readPackageManifest(
         defer diagnostics.deinit();
         // manifest parse は検証エラー時に error.InvalidManifest を返し、
         // diagnostics には既存分がある場合もあるため戻り値だけで判定する。
-        return (if (candidate.npkg)
+        // 正本の `nako.toml` が存在して壊れている場合は、配布メタデータへ
+        // 黙ってフォールバックせず未検査（ManifestUnreadable）に倒す。
+        const parsed = (if (candidate.npkg)
             manifest_mod.parseNpkgMetadata(gpa, bytes, &diagnostics)
         else
             manifest_mod.parse(gpa, bytes, &diagnostics)) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
-            else => continue,
+            else => if (candidate.npkg) continue else return error.ManifestUnreadable,
         };
+        return parsed;
     }
     return error.ManifestUnreadable;
 }
@@ -181,11 +184,9 @@ fn openPackageDir(
 /// 現れ得るため、比較・open 前に host の区切り文字へ揃える。
 fn resolvePackagePath(gpa: Allocator, project_root: []const u8, package_rel_path: []const u8) (Allocator.Error || error{UnsafePath})![]u8 {
     if (std.mem.indexOfScalar(u8, package_rel_path, 0) != null) return error.UnsafePath;
-    const normalized = try gpa.dupe(u8, package_rel_path);
-    defer gpa.free(normalized);
-    var buffer = try gpa.alloc(u8, normalized.len);
+    const buffer = try gpa.alloc(u8, package_rel_path.len);
     defer gpa.free(buffer);
-    for (normalized, 0..) |byte, index| {
+    for (package_rel_path, 0..) |byte, index| {
         // Windows の fixture/手書き環境は `/` と `\\` が混在し得る。
         // POSIX では `\\` が正当なファイル名文字なので変換しない。
         buffer[index] = if (byte == '/' or (builtin.os.tag == .windows and byte == '\\')) std.fs.path.sep else byte;
@@ -204,6 +205,7 @@ fn evaluateManifest(
     const effective_target = target orelse defaultTarget();
     var has_source = false;
     var saw_unconditional = false;
+    var has_esm = false;
     var decl_count: usize = 0;
     var any_pass = false;
     var any_unknown = false;
@@ -214,6 +216,7 @@ fn evaluateManifest(
 
     for (manifest.exports) |export_decl| {
         if (export_decl.path != null) has_source = true;
+        if (export_decl.esm.len > 0) has_esm = true;
         // ESM artifact は compat-js 前提のため OS 条件表示の対象外。
         for (export_decl.native) |decl| {
             decl_count += 1;
@@ -247,9 +250,14 @@ fn evaluateManifest(
 
     const availability: Availability = blk: {
         // source・無条件 native は target 不明でも全 OS で利用できる。
-        if (has_source or saw_unconditional or any_pass) break :blk .available;
+        if (has_source or saw_unconditional) break :blk .available;
+        // target 不明時は marker の結果を信用しない（runtime 単独条件などが
+        // 空 target で偽陽性の available にならないように unknown 固定）。
         if (target == null) break :blk .unknown;
-        if (decl_count == 0 or any_unknown) break :blk .unknown;
+        if (any_pass) break :blk .available;
+        // ESM が併存する package は --compat-js で利用でき得るため、
+        // native の不一致だけで「利用不可」と断定しない。
+        if (decl_count == 0 or any_unknown or has_esm) break :blk .unknown;
         break :blk .unavailable;
     };
 
@@ -634,6 +642,47 @@ test "OS条件: libcはtargetにabiもlibcも無ければ不明" {
     try testing.expectEqualStrings("libc musl", result.condition);
 }
 
+test "OS条件: native不適合でもESM併存なら利用不可と断定しない" {
+    var temporary = test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    const io = std.testing.io;
+    try writePackage(temporary.dir, io,
+        \\[package]
+        \\name = "test"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\[[exports]]
+        \\name = "main"
+        \\native = { path = "lib/win.dll", when = "os == 'windows'" }
+        \\esm = { path = "lib/index.mjs" }
+    );
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const result = try evaluateFixture(arena.allocator(), temporary.dir, io, .{ .runtime = "lnako", .os = "macos", .cpu = "aarch64", .abi = "gnu" });
+    try testing.expectEqual(Availability.unknown, result.availability);
+    try testing.expectEqualStrings("os == 'windows'", result.condition);
+}
+
+test "OS条件: target不明時はruntime条件の偽陽性で利用可能にしない" {
+    var temporary = test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    const io = std.testing.io;
+    try writePackage(temporary.dir, io,
+        \\[package]
+        \\name = "test"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\[[exports]]
+        \\name = "main"
+        \\native = { path = "lib/index.node", when = "runtime == 'lnako'" }
+    );
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const result = try evaluateFixture(arena.allocator(), temporary.dir, io, null);
+    try testing.expectEqual(Availability.unknown, result.availability);
+    try testing.expectEqualStrings("runtime == 'lnako'", result.condition);
+}
+
 test "OS条件: manifestが無いpackageは不明として扱う" {
     var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
@@ -667,6 +716,30 @@ test "OS条件: materialize済みNAKO-PKG/METADATA.tomlから条件を読む" {
     const result = try evaluateFixture(arena.allocator(), temporary.dir, io, .{ .runtime = "lnako", .os = "macos", .cpu = "aarch64", .abi = "gnu" });
     try testing.expectEqual(Availability.available, result.availability);
     try testing.expectEqualStrings("os == 'macos'", result.condition);
+}
+
+test "OS条件: 壊れたnako.tomlはMETADATAへフォールバックせず不明" {
+    var temporary = test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    const io = std.testing.io;
+    try temporary.dir.createDirPath(io, "pkg/NAKO-PKG");
+    try temporary.dir.writeFile(io, .{ .sub_path = "pkg/nako.toml", .data = "[package\nname = broken" });
+    try temporary.dir.writeFile(io, .{ .sub_path = "pkg/NAKO-PKG/METADATA.toml", .data =
+        \\schemaVersion = 1
+        \\nativePluginAbi = "lnako_plugin_v1"
+        \\[package]
+        \\name = "test"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\[[exports]]
+        \\name = "main"
+        \\native = { path = "lib/mac.dylib", when = "os == 'macos'" }
+    });
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const result = try evaluateFixture(arena.allocator(), temporary.dir, io, .{ .runtime = "lnako", .os = "macos" });
+    try testing.expectEqual(Availability.unknown, result.availability);
+    try testing.expectEqualStrings("不明", result.condition);
 }
 
 test "OS条件: nako.lockからtargetを読む" {

@@ -45,7 +45,8 @@ pub const UninspectedReason = enum {
     source_unreadable,
     native_without_metadata,
     js_without_metadata,
-    /// 宣言命令の実装が現在の OS 条件に一致せず、静的に利用できない。
+    /// 宣言命令の実装の target 条件（OS 以外の marker を含む）に一致せず、
+    /// 静的に利用できない。
     os_unavailable,
 };
 
@@ -344,7 +345,7 @@ pub fn inspectEnvironmentDir(
     defer package_edges.deinit(gpa);
 
     // OS 条件評価に使う project root と target。root を解決できない環境は
-    // 条件を「不明」として扱い、命令検査自体は継続する。
+    // 条件評価を省略し（conditions 空）、命令検査自体は継続する。
     const project_root: ?[]const u8 = root_dir.realPathFileAlloc(io, ".", arena) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => null,
@@ -505,7 +506,7 @@ pub fn inspectEnvironmentDir(
 
     // 名前空間 alias 診断。既存の alias 解決は変更せず、空・重複・不正文字・
     // 予約語・既存 module との衝突だけを報告する。
-    const module_names = try collectProjectModuleNames(arena, io, root_dir);
+    const module_names = try collectProjectModuleNames(arena, io, root_dir, diagnostics);
     const scopes = try collectNamespaceScopes(arena, parsed.value.object, packages_value.object);
     report.alias_count = countAliases(scopes);
     report.namespace_issues = try namespace_check.analyze(arena, scopes, module_names);
@@ -647,22 +648,49 @@ fn hasUninspected(items: []const Uninspected, package_key: []const u8) bool {
 /// namespace が既存 module と同じになると `{namespace}__{名前}` の解決が
 /// 曖昧になるため、その衝突診断にだけ使う。サブディレクトリは辿らない
 /// （project root 直下の入口 module が対象。`.nako` は除外される）。
-fn collectProjectModuleNames(arena: Allocator, io: std.Io, root_dir: std.Io.Dir) error{OutOfMemory}![]const []const u8 {
+fn collectProjectModuleNames(
+    arena: Allocator,
+    io: std.Io,
+    root_dir: std.Io.Dir,
+    diagnostics: *diag.List,
+) error{OutOfMemory}![]const []const u8 {
     var dir = root_dir.openDir(io, ".", .{ .iterate = true }) catch return &.{};
     defer dir.close(io);
     var names: std.ArrayList([]const u8) = .empty;
     var iterator = dir.iterate();
     var files: usize = 0;
-    while (iterator.next(io) catch null) |entry| {
-        // 上限はファイル数で数える（dir が大量にあっても取りこぼさない）。
+    while (true) {
+        const maybe_entry = iterator.next(io) catch |err| {
+            // 走査を完了できない場合、module 衝突を「0 件」と表示しない。
+            try diagnostics.addFmt(
+                diag.E029_INVALID_VALUE,
+                .warning,
+                ".nako/environment.json",
+                .{},
+                "project root の module 名を走査できませんでした（既存 module との namespace 衝突は未検査）: {s}",
+                .{@errorName(err)},
+            );
+            return names.items;
+        };
+        const entry = maybe_entry orelse break;
         if (entry.kind != .file) continue;
-        files += 1;
-        if (files > 512) break;
-        const extension = std.fs.path.extension(entry.name);
         if (!isNakoSource(entry.name)) continue;
+        // 上限は module 候補の数で数え、超えたら「0 件」と誤表示しない。
+        files += 1;
+        if (files > 512) {
+            try diagnostics.addFmt(
+                diag.E029_INVALID_VALUE,
+                .warning,
+                ".nako/environment.json",
+                .{},
+                "project root の module 候補が 512 件を超えたため既存 module 衝突は一部未検査です",
+                .{},
+            );
+            break;
+        }
+        const extension = std.fs.path.extension(entry.name);
         const stem = entry.name[0 .. entry.name.len - extension.len];
         if (stem.len == 0) continue;
-        // `.nako` など管理ディレクトリは entry.kind で先に落ちる。
         try names.append(arena, try arena.dupe(u8, stem));
     }
     std.mem.sort([]const u8, names.items, {}, struct {
