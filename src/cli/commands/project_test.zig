@@ -327,7 +327,7 @@ test "check は package 宣言命令の OS 条件と名前空間 alias 件数を
 
     try cli.run(a, "check", &.{}, app_root);
     const text = cli.out.written();
-    try testing.expect(std.mem.indexOf(u8, text, "命令 OS 条件: 現在の OS=") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "命令 OS 条件: 対象 OS=") != null);
     try testing.expect(std.mem.indexOf(u8, text, expected_condition) != null);
     try testing.expect(std.mem.indexOf(u8, text, "利用可能") != null);
     try testing.expect(std.mem.indexOf(u8, text, "名前空間: alias 1 件（問題 0 件）") != null);
@@ -362,13 +362,21 @@ test "check --json は名前空間aliasのerrorでもJSONを出して失敗す�
     defer parsed.deinit();
     const package_key = parsed.value.object.get("dependencies").?.array.items[0].object.get("package").?.string;
     // 既存 dependencies の先頭へ空 alias を差し込む（env shape は有効なまま）。
+    const needle = "\"dependencies\":[{";
+    const position = std.mem.indexOf(u8, env_bytes, needle) orelse return error.TestUnexpectedResult;
     const replacement = try std.fmt.allocPrint(
         a,
         "\"dependencies\":[{{\"alias\":\"@\",\"package\":\"{s}\"}}, {{",
         .{package_key},
     );
     defer a.free(replacement);
-    const replaced = try std.mem.replaceOwned(u8, a, env_bytes, "\"dependencies\":[{", replacement);
+    // 先頭の root dependencies だけを置換する（package scope の dependencies
+    // を巻き込まない）。
+    const replaced = try std.fmt.allocPrint(
+        a,
+        "{s}{s}{s}",
+        .{ env_bytes[0..position], replacement, env_bytes[position + needle.len ..] },
+    );
     defer a.free(replaced);
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = env_path, .data = replaced });
 

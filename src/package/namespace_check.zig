@@ -20,7 +20,6 @@
 //! して扱う（呼出し側が `isError` で判定する）。
 
 const std = @import("std");
-const builtin = @import("builtin");
 const import_resolver = @import("import_resolver.zig");
 const lexer = @import("../frontend/lexer.zig");
 
@@ -429,17 +428,17 @@ pub fn scanProjectModules(arena: Allocator, io: std.Io, root_dir: std.Io.Dir) er
     var iterator = dir.iterate();
     while (true) {
         const maybe_entry = iterator.next(io) catch {
-            return .{
-                .names = try sortedModuleNames(arena, candidates.items),
-                .complete = false,
-                .reason = "project root の列挙が途中で失敗しました",
-            };
+            var partial = try boundedModuleScan(arena, candidates.items);
+            partial.complete = false;
+            partial.reason = "project root の列挙が途中で失敗しました";
+            return partial;
         };
         const entry = maybe_entry orelse break;
         // 通常ファイルと、通常ファイルを指す symlink を対象にする。
         const is_regular = switch (entry.kind) {
             .file => true,
-            .sym_link => blk: {
+            // 型不明（一部 NFS/FUSE）と symlink は stat で通常ファイルかを確かめる。
+            .sym_link, .unknown => blk: {
                 const stat = dir.statFile(io, entry.name, .{}) catch break :blk false;
                 break :blk stat.kind == .file;
             },
@@ -449,7 +448,12 @@ pub fn scanProjectModules(arena: Allocator, io: std.Io, root_dir: std.Io.Dir) er
         if (!isNakoSource(entry.name)) continue;
         try candidates.append(arena, try arena.dupe(u8, entry.name));
     }
-    const limited = try sortedModuleNames(arena, candidates.items);
+    return boundedModuleScan(arena, candidates.items);
+}
+
+/// 候補をソートしてから上限を適用する（FS 列挙順に依存しない）。
+fn boundedModuleScan(arena: Allocator, candidates: []const []const u8) error{OutOfMemory}!ModuleScan {
+    const limited = try sortedModuleNames(arena, candidates);
     var names: std.ArrayList([]const u8) = .empty;
     for (limited) |name| {
         if (names.items.len >= max_project_modules) {
@@ -478,6 +482,11 @@ fn sortedModuleNames(arena: Allocator, names: []const []const u8) error{OutOfMem
     return sorted;
 }
 
+fn scanStateText(scan_complete: ?bool) []const u8 {
+    const complete = scan_complete orelse return "skipped";
+    return if (complete) "complete" else "incomplete";
+}
+
 fn isNakoSource(path: []const u8) bool {
     const extension = std.fs.path.extension(path);
     return std.ascii.eqlIgnoreCase(extension, ".nako3") or
@@ -490,7 +499,7 @@ pub fn summaryJson(
     gpa: Allocator,
     alias_count: usize,
     issues: []const Issue,
-    scan_complete: bool,
+    scan_complete: ?bool,
     scan_reason: ?[]const u8,
 ) error{OutOfMemory}![]const u8 {
     var out: std.ArrayList(u8) = .empty;
@@ -498,7 +507,7 @@ pub fn summaryJson(
     const header = try std.fmt.allocPrint(
         gpa,
         "{{\"aliases\":{d},\"scan\":\"{s}\"",
-        .{ alias_count, if (scan_complete) "complete" else "incomplete" },
+        .{ alias_count, scanStateText(scan_complete) },
     );
     defer gpa.free(header);
     try out.appendSlice(gpa, header);

@@ -1059,16 +1059,21 @@ pub fn checkProject(a: Allocator, io: std.Io, args: []const []const u8, start_di
     // OS 条件評価の target。check は現行 profile の解決結果（runtime・
     // os/cpu/abi・言語バージョン）を使う。fresh lock の `input.target` とは
     // 鮮度比較で一致するため、ここで lock を読み直す必要はない。
-    const check_target = lnako.package.command_conditions.Target{
-        .runtime = inspect.runtime,
-        .os = inspect.target.os,
-        .cpu = inspect.target.cpu,
-        .abi = inspect.target.abi,
-        .os_version = inspect.target.os_version,
-        .compat_js = inspect.target.compat_js,
-        .optimize = inspect.target.optimize,
-        .version = if (inspect.nako_version) |text| semver.Version.parse(text) catch null else null,
-    };
+    // lock が陳腐なときの環境に入っている実装は現行選択の target で選ばれて
+    // いないため、条件評価は unknown（target なし）に留める。
+    const check_target: ?lnako.package.command_conditions.Target = if (inspect.lock_state == .fresh)
+        .{
+            .runtime = inspect.runtime,
+            .os = inspect.target.os,
+            .cpu = inspect.target.cpu,
+            .abi = inspect.target.abi,
+            .os_version = inspect.target.os_version,
+            .compat_js = inspect.target.compat_js,
+            .optimize = inspect.target.optimize,
+            .version = if (inspect.nako_version) |text| semver.Version.parse(text) catch null else null,
+        }
+    else
+        null;
 
     // 命令 metadata 静的検査。環境が current のときのみ（stale/missing は
     // 索引が信頼できないため skipped）。再代入ではなく if 式で初期化し、
@@ -1126,7 +1131,7 @@ pub fn checkProject(a: Allocator, io: std.Io, args: []const []const u8, start_di
             a,
             command_report.alias_count,
             command_report.namespace_issues,
-            command_report.namespace_scan_complete,
+            if (command_report.inspected) command_report.namespace_scan_complete else null,
             command_report.namespace_scan_reason,
         );
         defer a.free(namespace_json);
@@ -1175,7 +1180,7 @@ pub fn checkProject(a: Allocator, io: std.Io, args: []const []const u8, start_di
         }
         // package 宣言命令の OS 条件と、現在の target での利用可否。
         if (command_report.conditions.len > 0) {
-            try stdout.print("  命令 OS 条件: 現在の OS={s}\n", .{inspect.target.os});
+            try stdout.print("  命令 OS 条件: 対象 OS={s}\n", .{inspect.target.os});
             for (command_report.conditions) |condition| {
                 try stdout.print("    {s}: {s}（{s}）\n", .{
                     condition.package_key,
@@ -1189,8 +1194,9 @@ pub fn checkProject(a: Allocator, io: std.Io, args: []const []const u8, start_di
             }
         }
         // namespace alias の診断（空・重複・不正文字・予約語・既存 module 衝突）。
-        if (command_report.alias_count > 0 or command_report.namespace_issues.len > 0 or
-            !command_report.namespace_scan_complete)
+        if (command_report.inspected and
+            (command_report.alias_count > 0 or command_report.namespace_issues.len > 0 or
+                !command_report.namespace_scan_complete))
         {
             try stdout.print("  名前空間: alias {d} 件（問題 {d} 件）", .{
                 command_report.alias_count,

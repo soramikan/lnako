@@ -79,6 +79,9 @@ pub const Report = struct {
     features: ?FeatureImpact = null,
     /// package 宣言命令を持つ package の OS 条件と現在の target での利用可否。
     conditions: []const command_conditions.PackageCondition = &.{},
+    /// 環境を読んで命令検査を実行したか。false は skipped で、本文/JSON に
+    /// 「未検査」を一切主張しない。
+    inspected: bool = false,
     /// project root の module 名走査を完了できたか。false の間は既存 module
     /// との namespace 衝突が未検査であることを本文/JSON に明示する。
     namespace_scan_complete: bool = true,
@@ -242,7 +245,7 @@ pub fn loadDeclaredCommands(
         if (entry.value_ptr.object.get("path")) |path_value| {
             if (path_value == .string) {
                 if (!target_resolved) {
-                    target = try command_conditions.targetFromLock(gpa, io, root_path, arena);
+                    target = try command_conditions.targetFromLock(gpa, io, root_dir, root_path, arena);
                     target_resolved = true;
                 }
                 const condition = try command_conditions.evaluatePackage(
@@ -316,6 +319,7 @@ pub fn inspectEnvironmentDir(
         report.sharing = .failed;
         return report;
     }
+    report.inspected = true;
     const packages_value = parsed.value.object.get("packages") orelse {
         report.sharing = .guaranteed;
         return report;
@@ -356,7 +360,7 @@ pub fn inspectEnvironmentDir(
         else => null,
     };
     const target = options.target orelse if (project_root) |root|
-        try command_conditions.targetFromLock(gpa, io, root, arena)
+        try command_conditions.targetFromLock(gpa, io, root_dir, root, arena)
     else
         null;
     var conditions: std.ArrayList(command_conditions.PackageCondition) = .empty;
@@ -411,6 +415,7 @@ pub fn inspectEnvironmentDir(
         // 衝突・不一致の検査対象にも「宣言済み」にもしない。commands
         // metadata が無い package でも条件を評価し、利用不可を未検査として
         // 記録する（Windows 環境を別 profile で検査した場合など）。
+        var package_unavailable = false;
         if (project_root) |root| {
             const condition = try command_conditions.evaluatePackage(
                 arena,
@@ -423,35 +428,36 @@ pub fn inspectEnvironmentDir(
                 target,
             );
             try conditions.append(arena, condition);
-            if (condition.availability == .unavailable) {
-                if (!hasUninspected(uninspected_list.items, package_key)) {
-                    try uninspected_list.append(arena, .{
-                        .package_key = package_key,
-                        .reason = .os_unavailable,
-                    });
-                }
-                // 利用不可の命令は衝突・不一致の検査対象にしない。
-                continue;
-            }
+            package_unavailable = condition.availability == .unavailable;
+        }
+
+        // metadata 欠落と OS 不一致は別の未検査理由として併記する。OS 不一致を
+        // 理由に metadata 欠落を strict sharing で隠さない。
+        const os_unavailable = package_unavailable;
+        if (os_unavailable and !hasUninspectedReason(uninspected_list.items, package_key, .os_unavailable)) {
+            try uninspected_list.append(arena, .{
+                .package_key = package_key,
+                .reason = .os_unavailable,
+            });
         }
 
         if (commands.len == 0) {
             if (export_flags.has_native and !export_flags.has_source and !export_flags.has_js) {
-                if (!hasUninspected(uninspected_list.items, package_key)) {
+                if (!hasUninspectedReason(uninspected_list.items, package_key, .native_without_metadata)) {
                     try uninspected_list.append(arena, .{
                         .package_key = package_key,
                         .reason = .native_without_metadata,
                     });
                 }
             } else if (export_flags.has_js and !export_flags.has_source) {
-                if (!hasUninspected(uninspected_list.items, package_key)) {
+                if (!hasUninspectedReason(uninspected_list.items, package_key, .js_without_metadata)) {
                     try uninspected_list.append(arena, .{
                         .package_key = package_key,
                         .reason = .js_without_metadata,
                     });
                 }
             } else if (export_flags.has_source and !source_regeneration_failed) {
-                if (!hasUninspected(uninspected_list.items, package_key)) {
+                if (!hasUninspectedReason(uninspected_list.items, package_key, .missing_metadata)) {
                     try uninspected_list.append(arena, .{
                         .package_key = package_key,
                         .reason = .missing_metadata,
@@ -460,6 +466,9 @@ pub fn inspectEnvironmentDir(
             }
             continue;
         }
+
+        // 利用不可の命令は衝突・不一致の検査対象にしない。
+        if (os_unavailable) continue;
 
         for (commands) |command| {
             report.inspected_count += 1;
@@ -653,9 +662,9 @@ fn collectPackageEdges(gpa: Allocator, from: []const u8, value: ?std.json.Value,
     }
 }
 
-fn hasUninspected(items: []const Uninspected, package_key: []const u8) bool {
+fn hasUninspectedReason(items: []const Uninspected, package_key: []const u8, reason: UninspectedReason) bool {
     for (items) |item| {
-        if (std.mem.eql(u8, item.package_key, package_key)) return true;
+        if (std.mem.eql(u8, item.package_key, package_key) and item.reason == reason) return true;
     }
     return false;
 }

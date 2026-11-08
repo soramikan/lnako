@@ -57,16 +57,26 @@ fn defaultTarget() Target {
 pub fn targetFromLock(
     gpa: Allocator,
     io: std.Io,
+    root_dir: ?std.Io.Dir,
     project_root: []const u8,
     arena: Allocator,
 ) error{OutOfMemory}!?Target {
-    const lock_path = std.fs.path.join(gpa, &.{ project_root, "nako.lock" }) catch return error.OutOfMemory;
-    defer gpa.free(lock_path);
+    // 環境を読んだ固定 root があれば handle 相対で lock も読む（root の
+    // rename/replace 後に別プロジェクトの lock を読まない）。
     // 他の lock 読み取り経路（env_state / import_resolver / project）と同じ
     // 64 MiB 上限に揃える。上限超過は lock 不在と同じ unknown 扱いにする。
-    const bytes = std.Io.Dir.cwd().readFileAlloc(io, lock_path, gpa, .limited(64 * 1024 * 1024)) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        else => return null,
+    const bytes = if (root_dir) |root|
+        root.readFileAlloc(io, "nako.lock", gpa, .limited(64 * 1024 * 1024)) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return null,
+        }
+    else blk: {
+        const lock_path = std.fs.path.join(gpa, &.{ project_root, "nako.lock" }) catch return error.OutOfMemory;
+        defer gpa.free(lock_path);
+        break :blk std.Io.Dir.cwd().readFileAlloc(io, lock_path, gpa, .limited(64 * 1024 * 1024)) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return null,
+        };
     };
     defer gpa.free(bytes);
     var scratch = std.heap.ArenaAllocator.init(gpa);
@@ -82,11 +92,10 @@ pub fn targetFromLock(
     // 意味検証に失敗した lock の target は評価に使わない（不正な os/abi で
     // package を unavailable と誤判定しない）。resolver 版の差は許容し、
     // stale resolver を理由に target を捨てない。
-    const prior_errors = diagnostics.errorCount();
     lock_mod.validateWith(&lock, &diagnostics, .{ .allow_stale_resolver = true }) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
     };
-    if (diagnostics.errorCount() > prior_errors) return null;
+    if (diagnostics.errorCount() > 0) return null;
     const resolved = try targetOfLock(arena, &lock);
     return resolved;
 }
@@ -888,7 +897,7 @@ test "OS条件: lockのnakoVersionをmarkerのversion条件へ渡す" {
     defer testing.allocator.free(root);
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
-    const target = (try targetFromLock(testing.allocator, io, root, arena.allocator())) orelse return error.TestUnexpectedResult;
+    const target = (try targetFromLock(testing.allocator, io, null, root, arena.allocator())) orelse return error.TestUnexpectedResult;
     try testing.expect(target.version != null);
     try testing.expectEqual(@as(u64, 3), target.version.?.major);
     try testing.expectEqual(@as(u64, 7), target.version.?.minor);
@@ -906,7 +915,7 @@ test "OS条件: 意味検証に失敗するlockのtargetは使わない" {
     defer testing.allocator.free(root);
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
-    try testing.expect((try targetFromLock(testing.allocator, io, root, arena.allocator())) == null);
+    try testing.expect((try targetFromLock(testing.allocator, io, null, root, arena.allocator())) == null);
 }
 
 test "OS条件: manifestが無いpackageは不明として扱う" {
@@ -979,7 +988,7 @@ test "OS条件: nako.lockからtargetを読む" {
     defer testing.allocator.free(root);
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
-    const target = (try targetFromLock(testing.allocator, io, root, arena.allocator())) orelse return error.TestUnexpectedResult;
+    const target = (try targetFromLock(testing.allocator, io, null, root, arena.allocator())) orelse return error.TestUnexpectedResult;
     try testing.expectEqualStrings("linux", target.os);
     try testing.expectEqualStrings("x86_64", target.cpu);
     try testing.expectEqualStrings("lnako", target.runtime);
@@ -993,7 +1002,7 @@ test "OS条件: lockが無ければtargetはnull" {
     defer testing.allocator.free(root);
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
-    try testing.expect((try targetFromLock(testing.allocator, io, root, arena.allocator())) == null);
+    try testing.expect((try targetFromLock(testing.allocator, io, null, root, arena.allocator())) == null);
 }
 
 /// `check --json` の `commands.conditions` を決定的に組み立てる。

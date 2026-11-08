@@ -377,8 +377,11 @@ test "OS条件: commands metadataが無いpackageでもOS条件とos_unavailable
 
     try testing.expectEqual(@as(usize, 1), report.conditions.len);
     try testing.expectEqual(command_conditions.Availability.unavailable, report.conditions[0].availability);
-    try testing.expectEqual(@as(usize, 1), report.uninspected.len);
+    // OS 不一致と metadata 欠落は別理由として併記し、strict sharing が
+    // metadata 欠落を見逃さない。
+    try testing.expectEqual(@as(usize, 2), report.uninspected.len);
     try testing.expectEqual(command_inspect.UninspectedReason.os_unavailable, report.uninspected[0].reason);
+    try testing.expectEqual(command_inspect.UninspectedReason.native_without_metadata, report.uninspected[1].reason);
 }
 
 test "名前空間: module候補が512件を超える場合は決定的に打ち切り未検査を表示する" {
