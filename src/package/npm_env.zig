@@ -236,7 +236,8 @@ fn readVerifiedArchive(
     };
     const bytes = cached orelse blk: {
         // cache 欠落。`--offline` は従来どおり取得せず fail-closed する
-        // （診断は既存のまま）。online は lock の url から取得する。
+        // （失敗分類は既存の not_found のまま）。online は lock の url から
+        // 取得する。
         if (params.session.policy.offline) {
             return params.session.fail(
                 .not_found,
@@ -277,7 +278,6 @@ fn fetchIntoCache(
     try fetch.verifyHash(params.session, fetched, sha256, url, .artifact);
     const owned = try params.gpa.dupe(u8, fetched);
     errdefer params.gpa.free(owned);
-    // `Store.removeEntry` の error set は I/O のみ（OOM/Canceled は含まない）。
     // 検証できない既存 entry（改竄・不完全）が残っていると、`publishStaging` は
     // tree digest と marker の一致だけで既存 entry を保持し、壊れた
     // `source.archive` を残してしまう。取得した検証済み bytes で作り直すため
