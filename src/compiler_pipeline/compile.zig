@@ -39,9 +39,10 @@ pub const InputOptions = struct {
 /// 依存の出自を後段（manifest/SBOM）へ引き継ぐ。
 fn attributionFor(allocator: std.mem.Allocator, module: *const lnako.semantic.module_graph.LoadedModule) !?lnako.ir.nako_ir.PackageAttribution {
     const root = module.package_root orelse return null;
-    const owner = module.package_owner;
-    const npm = if (owner) |value| !std.mem.startsWith(u8, value, "pkg:") else false;
-    return .{ .root = try allocator.dupe(u8, root), .npm = npm };
+    // owner が無い場合は出自を断定できない。帰属を作らず、後段で
+    // package.json → nako.toml の順に試す unknown 経路へ委ねる。
+    const owner = module.package_owner orelse return null;
+    return .{ .root = try allocator.dupe(u8, root), .npm = !std.mem.startsWith(u8, owner, "pkg:") };
 }
 
 pub fn compileInput(allocator: std.mem.Allocator, io: std.Io, path: []const u8, options: InputOptions, stderr: *std.Io.Writer) !?lnako.ir.nako_ir.Program {

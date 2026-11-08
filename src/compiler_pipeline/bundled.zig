@@ -71,8 +71,7 @@ pub fn collect(allocator: std.mem.Allocator, io: std.Io, program: *lnako.ir.nako
             previous = entry;
         }
         const entries = try arena.alloc([]const u8, unique);
-        for (builder.entries.items[0..unique], entries) |entry, *destination_entry|
-            destination_entry.* = try arena.dupe(u8, entry);
+        for (builder.entries.items[0..unique], entries) |entry, *destination_entry| destination_entry.* = entry;
         destination.* = .{
             .name = metadata.name,
             .version = metadata.version,
@@ -215,7 +214,8 @@ fn declaredLicense(declared: ?[]const u8) []const u8 {
 /// module path から作った entry も platform 非依存な表記へ揃え、生成物や
 /// SBOM の内容が OS で変わらないようにする。
 fn normalizedEntry(allocator: std.mem.Allocator, entry: []const u8) ![]const u8 {
-    if (std.mem.indexOfScalar(u8, entry, '\\') == null) return allocator.dupe(u8, entry);
+    // POSIX の `\\` は区切りではなくファイル名の文字なので変換しない。
+    if (std.fs.path.sep != '\\' or std.mem.indexOfScalar(u8, entry, '\\') == null) return allocator.dupe(u8, entry);
     const normalized = try allocator.alloc(u8, entry.len);
     for (entry, normalized) |byte, *destination| destination.* = if (byte == '\\') '/' else byte;
     return normalized;
@@ -227,10 +227,10 @@ fn normalizedEntry(allocator: std.mem.Allocator, entry: []const u8) ![]const u8 
 fn relativeEntry(root: []const u8, path: []const u8) ?[]const u8 {
     if (path.len <= root.len or !std.mem.startsWith(u8, path, root)) return null;
     // 共通 prefix の兄弟 directory（`leftpad` と `leftpad2`）を誤帰属させない
-    // ため、root 境界の直後が区切りであることを要求する。module_graph の
-    // `pathWithinRoot` と同じ判定。
-    const boundary = path[root.len];
-    if (boundary != '/' and boundary != '\\') return null;
+    // ため、root 境界の直後が platform の区切りであることを要求する
+    // （POSIX の `\\` は正当なファイル名文字なので境界にしない）。
+    // module_graph の `pathWithinRoot` と同じ判定。
+    if (path[root.len] != std.fs.path.sep) return null;
     const rest = path[root.len + 1 ..];
     if (rest.len == 0) return null;
     return rest;
@@ -346,11 +346,20 @@ test "metadataの無いpackage rootは同梱物から黙って落とさない" {
 }
 
 test "relativeEntryは共通prefixの兄弟directoryを誤帰属させない" {
-    try std.testing.expectEqualStrings("index.js", relativeEntry("/pkg/leftpad", "/pkg/leftpad/index.js").?);
+    const allocator = std.testing.allocator;
+    const root = try platformPath(allocator, "/pkg/leftpad");
+    defer allocator.free(root);
+    const inside = try platformPath(allocator, "/pkg/leftpad/index.js");
+    defer allocator.free(inside);
+    const sibling = try platformPath(allocator, "/pkg/leftpad2/index.js");
+    defer allocator.free(sibling);
+    const trailing = try platformPath(allocator, "/pkg/leftpad/");
+    defer allocator.free(trailing);
+    try std.testing.expectEqualStrings("index.js", relativeEntry(root, inside).?);
     // `leftpad2` は `leftpad` の配下ではない（区切り境界を要求する）。
-    try std.testing.expect(relativeEntry("/pkg/leftpad", "/pkg/leftpad2/index.js") == null);
-    try std.testing.expect(relativeEntry("/pkg/leftpad", "/pkg/leftpad") == null);
-    try std.testing.expect(relativeEntry("/pkg/leftpad/", "/pkg/leftpad/index.js") == null);
+    try std.testing.expect(relativeEntry(root, sibling) == null);
+    try std.testing.expect(relativeEntry(root, root) == null);
+    try std.testing.expect(relativeEntry(trailing, inside) == null);
 }
 
 test "依存の出自がnpmならpackage.jsonだけを読む" {
@@ -567,7 +576,21 @@ test "entryの区切りはplatform非依存に正規化する" {
     defer arena.deinit();
     const allocator = arena.allocator();
     try std.testing.expectEqualStrings("lib/a.js", try normalizedEntry(allocator, "lib/a.js"));
-    // Windows の module path から来た entry も `/` へ揃える。
-    try std.testing.expectEqualStrings("lib/a.js", try normalizedEntry(allocator, "lib\\a.js"));
+    if (std.fs.path.sep == '\\') {
+        // Windows の module path から来た entry も `/` へ揃える。
+        try std.testing.expectEqualStrings("lib/a.js", try normalizedEntry(allocator, "lib\\a.js"));
+    } else {
+        // POSIX の `\\` はファイル名の文字なので変換しない。
+        try std.testing.expectEqualStrings("lib\\a.js", try normalizedEntry(allocator, "lib\\a.js"));
+    }
     try std.testing.expectEqualStrings("index.js", try normalizedEntry(allocator, "index.js"));
+}
+
+/// テスト用: `/` 区切りの文字列を実行 platform の区切りへ変換する。
+fn platformPath(allocator: std.mem.Allocator, text: []const u8) ![]u8 {
+    const path = try allocator.dupe(u8, text);
+    if (std.fs.path.sep == '\\') for (path) |*byte| {
+        if (byte.* == '/') byte.* = '\\';
+    };
+    return path;
 }

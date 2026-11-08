@@ -347,14 +347,17 @@ test "--sbomの出力先が生成物・入力と同じfileかを実体pathで判
     try std.testing.expect(try sameDestination(allocator, io, missing_a, missing_dot));
 
     // hardlink は別 path でも同じ file として扱う（--sbom が入力/生成物を
-    // 切り詰める指定を拒否する）。
-    try temporary.dir.writeFile(io, .{ .sub_path = "source.nako3", .data = "値=1\n" });
-    try std.Io.Dir.hardLink(temporary.dir, "source.nako3", temporary.dir, "link.nako3", io, .{});
-    const source_path = try std.fs.path.join(allocator, &.{ root, "source.nako3" });
-    defer allocator.free(source_path);
-    const link_path = try std.fs.path.join(allocator, &.{ root, "link.nako3" });
-    defer allocator.free(link_path);
-    try std.testing.expect(try sameDestination(allocator, io, source_path, link_path));
+    // 切り詰める指定を拒否する）。Windows の Threaded Io は hardLink を
+    // OperationUnsupported で拒否するため、この経路は POSIX でだけ検証する。
+    if (builtin.os.tag != .windows) {
+        try temporary.dir.writeFile(io, .{ .sub_path = "source.nako3", .data = "値=1\n" });
+        try std.Io.Dir.hardLink(temporary.dir, "source.nako3", temporary.dir, "link.nako3", io, .{});
+        const source_path = try std.fs.path.join(allocator, &.{ root, "source.nako3" });
+        defer allocator.free(source_path);
+        const link_path = try std.fs.path.join(allocator, &.{ root, "link.nako3" });
+        defer allocator.free(link_path);
+        try std.testing.expect(try sameDestination(allocator, io, source_path, link_path));
+    }
 }
 
 test "buildの--sbom出力先を解析する" {

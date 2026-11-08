@@ -75,7 +75,9 @@ pub const Document = struct {
     name: []const u8,
     documentNamespace: []const u8,
     creationInfo: CreationInfo,
-    documentComment: []const u8 = document_comment,
+    /// SPDX 2.3 JSON schema の document level field は `comment`（tag-value の
+    /// DocumentComment ではない）。
+    comment: []const u8 = document_comment,
     packages: []const Package,
     files: []const File = &.{},
     relationships: []const Relationship,
@@ -388,6 +390,11 @@ fn isBinaryOperator(token: []const u8) bool {
 /// 演算子や未対応の表記（空白区切りの語、全角、`/` 等）は識別子ではない。
 fn isSpdxIdentifier(token: []const u8) bool {
     if (std.mem.eql(u8, token, "AND") or std.mem.eql(u8, token, "OR") or std.mem.eql(u8, token, "WITH")) return false;
+    // `NONE`/`NOASSERTION` は式の中では使えない（式全体の代替値）。
+    if (std.mem.eql(u8, token, "NONE") or std.mem.eql(u8, token, "NOASSERTION")) return false;
+    // `LicenseRef-...` は参照先の抽出ライセンス情報が必須。ここでは定義を
+    // 出力しないため、宣言を式として通さず NOASSERTION へ落とす。
+    if (std.mem.startsWith(u8, token, "LicenseRef-")) return false;
     var core = token;
     if (std.mem.endsWith(u8, core, "+")) {
         core = core[0 .. core.len - 1];
@@ -491,6 +498,9 @@ test "同梱packageのlicenseとLICENSEファイルをSPDX 2.3で出力する" {
     const parsed = try std.json.parseFromSlice(std.json.Value, allocator, text, .{});
     defer parsed.deinit();
     const document = parsed.value.object;
+    // SPDX 2.3 JSON schema の document field は `comment`（documentComment は無い）。
+    try std.testing.expect(document.get("comment") != null);
+    try std.testing.expect(document.get("documentComment") == null);
     try std.testing.expect(document.get("packages").?.array.items.len == 2);
     try std.testing.expect(document.get("files").?.array.items.len == 1);
     try std.testing.expect(document.get("documentNamespace").?.string.len != 0);
@@ -592,7 +602,7 @@ test "宣言licenseをSPDXのlicense expressionへ正規化する" {
     }
     // 解析しないため、SPDX 式として解釈できない宣言は結論せず NOASSERTION にし、
     // 元の宣言を comment に残す（未定義の LicenseRef は出力しない）。
-    const invalid = [_][]const u8{ "MIT/X11", "(MIT", "MIT ()", "AND MIT", "MIT AND", "MIT AND OR BSD", "MIT WITH", "独自ライセンス", "MIT and Apache-2.0", "GPL-2.0++", "MIT/Terms" };
+    const invalid = [_][]const u8{ "MIT/X11", "(MIT", "MIT ()", "AND MIT", "MIT AND", "MIT AND OR BSD", "MIT WITH", "独自ライセンス", "MIT and Apache-2.0", "GPL-2.0++", "MIT/Terms", "LicenseRef-Proprietary", "MIT OR NONE", "NOASSERTION OR MIT" };
     for (invalid) |declared| {
         var arena = std.heap.ArenaAllocator.init(allocator);
         defer arena.deinit();
