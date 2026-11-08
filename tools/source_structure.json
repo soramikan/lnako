@@ -38,6 +38,10 @@
         "reason": "manifest・lock・environment・filesystemを同一Resolverで相互検証する境界。env materialize 連携で世代 deps の固定ハンドルと ACL 検査を配線した分を含む（監視対象・hard limit内）",
         "limitKb": 86
       },
+      "src/package/command_inspect.zig": {
+        "reason": "命令 metadata 静的検査（環境 snapshot・source 再生成・feature 影響・OS 条件照合表示・namespace alias 診断）を同一検査単位で維持（監視対象・90KB上限）",
+        "limitKb": 90
+      },
       "src/package/project.zig": {
         "reason": "path/git/http依存解決とlock生成の統合オーケストレーション（分割を継続検討・90KB上限）",
         "limitKb": 90

@@ -1071,6 +1071,15 @@ pub fn checkProject(a: Allocator, io: std.Io, args: []const []const u8, start_di
                     .requested = flags.features.items,
                     .use_default_features = !flags.no_default_features,
                 },
+                .target = .{
+                    .runtime = "lnako",
+                    .os = inspect.target.os,
+                    .cpu = inspect.target.cpu,
+                    .abi = inspect.target.abi,
+                    .os_version = inspect.target.os_version,
+                    .compat_js = inspect.target.compat_js,
+                    .optimize = inspect.target.optimize,
+                },
             },
             &diagnostics,
         )
@@ -1101,13 +1110,19 @@ pub fn checkProject(a: Allocator, io: std.Io, args: []const []const u8, start_di
                 .{ pkg_json, item.reasonText() },
             ));
         }
+        const conditions_json = try lnako.package.command_conditions.conditionsJson(a, command_report.conditions);
+        const namespace_json = try lnako.package.namespace_check.summaryJson(
+            a,
+            command_report.alias_count,
+            command_report.namespace_issues,
+        );
         // feature 定義が無い / manifest 未供給なら key 自体を出さない。
         const features_json: []const u8 = if (command_report.features) |impact|
             try std.fmt.allocPrint(a, ",\"features\":{s}", .{try lnako.package.command_inspect.featureImpactJson(a, impact)})
         else
             "";
         try stdout.print(
-            "{{\"schemaVersion\":1,\"manifest\":\"ok\",\"lock\":\"{s}\",\"environment\":\"{s}\",\"needed\":[{s}],\"commands\":{{\"sharing\":\"{s}\",\"inspected\":{d},\"uninspected\":[{s}],\"collisions\":{d},\"mismatches\":{d}}}{s}}}\n",
+            "{{\"schemaVersion\":1,\"manifest\":\"ok\",\"lock\":\"{s}\",\"environment\":\"{s}\",\"needed\":[{s}],\"commands\":{{\"sharing\":\"{s}\",\"inspected\":{d},\"uninspected\":[{s}],\"collisions\":{d},\"mismatches\":{d},\"conditions\":{s},\"namespaces\":{s}}}{s}}}\n",
             .{
                 lock_state,
                 if (inspect.environment == null) "missing" else if (inspect.environment_current) "current" else "stale",
@@ -1117,6 +1132,8 @@ pub fn checkProject(a: Allocator, io: std.Io, args: []const []const u8, start_di
                 uninspected_json.items,
                 command_report.collision_count,
                 command_report.mismatch_count,
+                conditions_json,
+                namespace_json,
                 features_json,
             },
         );
@@ -1136,6 +1153,35 @@ pub fn checkProject(a: Allocator, io: std.Io, args: []const []const u8, start_di
         if (command_report.uninspected.len > 0) {
             for (command_report.uninspected) |item| {
                 try stdout.print("    未検査: {s} ({s})\n", .{ item.package_key, item.reasonText() });
+            }
+        }
+        // package 宣言命令の OS 条件と、現在の target での利用可否。
+        if (command_report.conditions.len > 0) {
+            try stdout.print("  命令 OS 条件: 現在の OS={s}\n", .{inspect.target.os});
+            for (command_report.conditions) |condition| {
+                try stdout.print("    {s}: {s}（{s}）\n", .{
+                    condition.package_key,
+                    condition.condition,
+                    switch (condition.availability) {
+                        .available => "利用可能",
+                        .unavailable => "利用不可",
+                        .unknown => "不明",
+                    },
+                });
+            }
+        }
+        // namespace alias の診断（空・重複・不正文字・予約語・既存 module 衝突）。
+        if (command_report.alias_count > 0 or command_report.namespace_issues.len > 0) {
+            try stdout.print("  名前空間: alias {d} 件（問題 {d} 件）\n", .{
+                command_report.alias_count,
+                command_report.namespace_issues.len,
+            });
+            for (command_report.namespace_issues) |issue| {
+                try stdout.print("    名前空間 alias: {s} [{s}] {s}\n", .{
+                    issue.scope,
+                    lnako.package.namespace_check.kindText(issue.kind),
+                    issue.detail,
+                });
             }
         }
         if (command_report.features) |impact| {

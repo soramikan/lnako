@@ -277,6 +277,62 @@ test "check は選択 feature の専用依存と推移依存を JSON と本文�
     try testing.expect(std.mem.indexOf(u8, stale_json, "\"features\":") == null);
 }
 
+test "check は package 宣言命令の OS 条件と名前空間 alias 件数を本文と JSON へ出す" {
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const a = arena_impl.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "app/lib-native/src");
+    try temporary.dir.createDirPath(io, "app/lib-native/lib");
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "app/lib-native/nako.toml",
+        .data =
+        \\[package]
+        \\name = "lib-native"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[[exports]]
+        \\name = "lib-native"
+        \\path = "src/index.nako3"
+        \\native = { path = "lib/any.dll", when = "os == 'macos' or os == 'linux' or os == 'windows'" }
+        \\
+        ,
+    });
+    // 標準命令と衝突しない公開名にする（`表示` は builtin）。
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/lib-native/src/index.nako3", .data = "●あいさつとは\nここまで\n" });
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/lib-native/lib/any.dll", .data = "not-a-real-library" });
+    const app_root = try temporary.dir.realPathFileAlloc(io, "app", a);
+    try appManifest(a, app_root,
+        \\[dependencies.path]
+        \\lib-native = { path = "lib-native" }
+        \\
+    );
+    const main_path = try std.fs.path.join(a, &.{ app_root, "main.nako3" });
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = main_path, .data = "「ok」を表示\n" });
+
+    var cli = Cli.init(a);
+    var flags = project_cmd.PrepFlags{};
+    try project_cmd.prepareForExecution(a, io, main_path, &flags, &cli.env, "run", &cli.err.writer);
+
+    const expected_condition = "全 OS | os == 'macos' or os == 'linux' or os == 'windows'";
+    try cli.run(a, "check", &.{"--json"}, app_root);
+    const json = cli.out.written();
+    try testing.expect(std.mem.indexOf(u8, json, "\"conditions\":[{\"package\":\"pkg:") != null);
+    try testing.expect(std.mem.indexOf(u8, json, "\"condition\":\"") != null);
+    try testing.expect(std.mem.indexOf(u8, json, expected_condition) != null);
+    try testing.expect(std.mem.indexOf(u8, json, "\"availability\":\"available\"") != null);
+    try testing.expect(std.mem.indexOf(u8, json, "\"namespaces\":{\"aliases\":1,\"issues\":[]}") != null);
+
+    try cli.run(a, "check", &.{}, app_root);
+    const text = cli.out.written();
+    try testing.expect(std.mem.indexOf(u8, text, "命令 OS 条件: 現在の OS=") != null);
+    try testing.expect(std.mem.indexOf(u8, text, expected_condition) != null);
+    try testing.expect(std.mem.indexOf(u8, text, "利用可能") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "名前空間: alias 1 件（問題 0 件）") != null);
+}
+
 test "prepareForExecution は lock と .nako 環境を自動準備する" {
     var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_impl.deinit();

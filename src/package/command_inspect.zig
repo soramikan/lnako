@@ -13,10 +13,12 @@
 //! `partial`、衝突/不一致/厳格失敗は `failed`。
 
 const std = @import("std");
+const command_conditions = @import("command_conditions.zig");
 const diag = @import("diagnostics.zig");
 const environment_mod = @import("environment.zig");
 const features_mod = @import("features.zig");
 const manifest_mod = @import("manifest.zig");
+const namespace_check = @import("namespace_check.zig");
 const npkg_commands = @import("npkg_commands.zig");
 const npkg_commands_gen = @import("npkg_commands_gen.zig");
 const npkg_files = @import("npkg_files.zig");
@@ -43,6 +45,8 @@ pub const UninspectedReason = enum {
     source_unreadable,
     native_without_metadata,
     js_without_metadata,
+    /// 宣言命令の実装が現在の OS 条件に一致せず、静的に利用できない。
+    os_unavailable,
 };
 
 pub const Uninspected = struct {
@@ -55,6 +59,7 @@ pub const Uninspected = struct {
             .source_unreadable => "source_unreadable",
             .native_without_metadata => "native_without_metadata",
             .js_without_metadata => "js_without_metadata",
+            .os_unavailable => "os_unavailable",
         };
     }
 };
@@ -71,6 +76,12 @@ pub const Report = struct {
     /// 記録されていない（旧形式）/ 選択の展開が失敗した。
     /// `check` は環境が現行 lock と整合するときだけ manifest を渡す。
     features: ?FeatureImpact = null,
+    /// package 宣言命令を持つ package の OS 条件と現在の target での利用可否。
+    conditions: []const command_conditions.PackageCondition = &.{},
+    /// 検査した import 依存 alias の件数（root + package scope）。
+    alias_count: usize = 0,
+    /// namespace alias の診断（空・重複・不正文字・予約語・既存 module 衝突）。
+    namespace_issues: []const namespace_check.Issue = &.{},
 
     pub fn deinit(self: *Report) void {
         self.arena.deinit();
@@ -95,6 +106,9 @@ pub const Options = struct {
     /// `nako.toml` の解析結果。null は feature 影響を表示しない。
     manifest: ?*const manifest_mod.Manifest = null,
     features: FeatureRequest = .{},
+    /// OS 条件評価に使う target。null は `nako.lock` の `input.target` を
+    /// 使い、それも読めなければ利用可否を unknown として扱う。
+    target: ?command_conditions.Target = null,
 };
 
 /// 非 default feature だけが引き込む root 依存と、そこからしか到達できない
@@ -196,6 +210,10 @@ pub fn loadDeclaredCommands(
     const packages_value = parsed.value.object.get("packages") orelse return index;
     if (packages_value != .object) return index;
 
+    // OS 条件評価の target は lock から一度だけ読む。lock が無ければ
+    // unknown として扱い、利用不可と断言しない。
+    var target: ?command_conditions.Target = null;
+    var target_resolved = false;
     var iterator = packages_value.object.iterator();
     while (iterator.next()) |entry| {
         if (entry.value_ptr.* != .object) continue;
@@ -212,7 +230,29 @@ pub fn loadDeclaredCommands(
             };
         }
         const key = try arena.dupe(u8, entry.key_ptr.*);
-        try index.packages.put(arena, key, .{ .available = true, .commands = commands });
+        // 宣言命令の実装が現在の OS 条件に一致しない package は、索引を
+        // 「検査済み」として渡さない（呼出しを「宣言がありません」と
+        // 誤診断させず、未検査として記録させる）。
+        var usable = true;
+        if (entry.value_ptr.object.get("path")) |path_value| {
+            if (path_value == .string) {
+                if (!target_resolved) {
+                    target = try command_conditions.targetFromLock(gpa, io, root_path, arena);
+                    target_resolved = true;
+                }
+                const condition = try command_conditions.evaluatePackage(
+                    arena,
+                    gpa,
+                    io,
+                    root_path,
+                    path_value.string,
+                    key,
+                    target,
+                );
+                usable = condition.availability != .unavailable;
+            }
+        }
+        try index.packages.put(arena, key, .{ .available = usable, .commands = commands });
     }
     return index;
 }
@@ -303,6 +343,18 @@ pub fn inspectEnvironmentDir(
     var package_edges: std.ArrayList(PackageEdge) = .empty;
     defer package_edges.deinit(gpa);
 
+    // OS 条件評価に使う project root と target。root を解決できない環境は
+    // 条件を「不明」として扱い、命令検査自体は継続する。
+    const project_root: ?[]const u8 = root_dir.realPathFileAlloc(io, ".", arena) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => null,
+    };
+    const target = options.target orelse if (project_root) |root|
+        try command_conditions.targetFromLock(gpa, io, root, arena)
+    else
+        null;
+    var conditions: std.ArrayList(command_conditions.PackageCondition) = .empty;
+
     var package_it = packages_value.object.iterator();
     while (package_it.next()) |entry| {
         const package_key = try arena.dupe(u8, entry.key_ptr.*);
@@ -368,6 +420,29 @@ pub fn inspectEnvironmentDir(
             continue;
         }
 
+        // 宣言命令の実装 OS 条件。共通 source が無く、宣言した artifact が
+        // 現在の OS と一致しない package は「未検査/利用不可」として扱い、
+        // 衝突・不一致の検査対象にも「宣言済み」にもしない。
+        if (project_root) |root| {
+            const condition = try command_conditions.evaluatePackage(
+                arena,
+                gpa,
+                io,
+                root,
+                rel_path,
+                package_key,
+                target,
+            );
+            try conditions.append(arena, condition);
+            if (condition.availability == .unavailable) {
+                try uninspected_list.append(arena, .{
+                    .package_key = package_key,
+                    .reason = .os_unavailable,
+                });
+                continue;
+            }
+        }
+
         for (commands) |command| {
             report.inspected_count += 1;
             const name = command.name;
@@ -423,6 +498,24 @@ pub fn inspectEnvironmentDir(
     }
 
     report.uninspected = try arena.dupe(Uninspected, uninspected_list.items);
+    report.conditions = try arena.dupe(command_conditions.PackageCondition, conditions.items);
+
+    // 名前空間 alias 診断。既存の alias 解決は変更せず、空・重複・不正文字・
+    // 予約語・既存 module との衝突だけを報告する。
+    const module_names = try collectProjectModuleNames(arena, io, root_dir);
+    const scopes = try collectNamespaceScopes(arena, parsed.value.object, packages_value.object);
+    report.alias_count = countAliases(scopes);
+    report.namespace_issues = try namespace_check.analyze(arena, scopes, module_names);
+    for (report.namespace_issues) |issue| {
+        try diagnostics.addFmt(
+            if (issue.kind == .duplicate) diag.E012_ALIAS_COLLISION else diag.E029_INVALID_VALUE,
+            if (namespace_check.isError(issue.kind)) .err else .warning,
+            issue.scope,
+            .{},
+            "namespace alias: {s}",
+            .{issue.detail},
+        );
+    }
 
     if (options.manifest) |manifest| {
         if (root_dependencies_present) {
@@ -444,8 +537,12 @@ pub fn inspectEnvironmentDir(
     } else if (report.uninspected.len > 0) {
         report.sharing = .partial;
         if (options.strict_sharing) {
-            report.sharing = .failed;
+            var strict_failed = false;
             for (report.uninspected) |item| {
+                // OS 条件で利用できない package は「静的に検査できない」範囲
+                // ではないため、厳格共用検査の失敗理由に数えない。
+                if (item.reason == .os_unavailable) continue;
+                strict_failed = true;
                 try diagnostics.addFmt(
                     diag.E033_STRICT_SHARING_FAILED,
                     .err,
@@ -455,6 +552,7 @@ pub fn inspectEnvironmentDir(
                     .{ item.package_key, item.reasonText() },
                 );
             }
+            if (strict_failed) report.sharing = .failed;
         }
     } else {
         report.sharing = .guaranteed;
@@ -533,6 +631,82 @@ fn collectPackageEdges(gpa: Allocator, from: []const u8, value: ?std.json.Value,
         if (package_value != .string) continue;
         try out.append(gpa, .{ .from = from, .to = package_value.string });
     }
+}
+
+/// プロジェクト直下の source module 名（basename）を集める。alias の公開
+/// namespace が既存 module と同じになると `{namespace}__{名前}` の解決が
+/// 曖昧になるため、その衝突診断にだけ使う。サブディレクトリは辿らない
+/// （project root 直下の入口 module が対象。`.nako` は除外される）。
+fn collectProjectModuleNames(arena: Allocator, io: std.Io, root_dir: std.Io.Dir) error{OutOfMemory}![]const []const u8 {
+    var dir = root_dir.openDir(io, ".", .{ .iterate = true }) catch return &.{};
+    defer dir.close(io);
+    var names: std.ArrayList([]const u8) = .empty;
+    var iterator = dir.iterate();
+    var visited: usize = 0;
+    while (iterator.next(io) catch null) |entry| {
+        visited += 1;
+        if (visited > 512) break;
+        if (entry.kind != .file) continue;
+        const extension = std.fs.path.extension(entry.name);
+        if (!isNakoSource(entry.name)) continue;
+        const stem = entry.name[0 .. entry.name.len - extension.len];
+        if (stem.len == 0) continue;
+        // `.nako` など管理ディレクトリは entry.kind で先に落ちる。
+        try names.append(arena, try arena.dupe(u8, stem));
+    }
+    std.mem.sort([]const u8, names.items, {}, struct {
+        fn lessThan(_: void, a: []const u8, b: []const u8) bool {
+            return std.mem.order(u8, a, b) == .lt;
+        }
+    }.lessThan);
+    return names.items;
+}
+
+/// environment.json の root / package scope の import 依存表を
+/// namespace 診断用に写す。
+fn collectNamespaceScopes(
+    arena: Allocator,
+    root_object: std.json.ObjectMap,
+    packages_object: std.json.ObjectMap,
+) error{OutOfMemory}![]const namespace_check.Scope {
+    var scopes: std.ArrayList(namespace_check.Scope) = .empty;
+    try scopes.append(arena, .{
+        .name = try arena.dupe(u8, "root"),
+        .dependencies = try collectNamespaceDependencies(arena, root_object.get("dependencies")),
+    });
+    var iterator = packages_object.iterator();
+    while (iterator.next()) |entry| {
+        if (entry.value_ptr.* != .object) continue;
+        const dependencies = entry.value_ptr.object.get("dependencies") orelse continue;
+        try scopes.append(arena, .{
+            .name = try arena.dupe(u8, entry.key_ptr.*),
+            .dependencies = try collectNamespaceDependencies(arena, dependencies),
+        });
+    }
+    return scopes.items;
+}
+
+fn collectNamespaceDependencies(arena: Allocator, value: ?std.json.Value) error{OutOfMemory}![]const namespace_check.Dependency {
+    const items = value orelse return &.{};
+    if (items != .array) return &.{};
+    var dependencies: std.ArrayList(namespace_check.Dependency) = .empty;
+    for (items.array.items) |item| {
+        if (item != .object) continue;
+        const alias_value = item.object.get("alias") orelse continue;
+        const package_value = item.object.get("package") orelse continue;
+        if (alias_value != .string or package_value != .string) continue;
+        try dependencies.append(arena, .{
+            .alias = try arena.dupe(u8, alias_value.string),
+            .package = try arena.dupe(u8, package_value.string),
+        });
+    }
+    return dependencies.items;
+}
+
+fn countAliases(scopes: []const namespace_check.Scope) usize {
+    var count: usize = 0;
+    for (scopes) |scope| count += scope.dependencies.len;
+    return count;
 }
 
 /// 環境 graph と manifest `[features]` から feature 影響を求める。
@@ -1945,4 +2119,8 @@ test "command inspect: feature 影響 JSON は固定順で出力する" {
     const empty = try featureImpactJson(a, .{});
     defer a.free(empty);
     try testing.expectEqualStrings("{\"selected\":[],\"common\":[],\"dedicated\":[]}", empty);
+}
+
+test {
+    _ = @import("command_inspect_conditions_test.zig");
 }
