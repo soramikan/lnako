@@ -51,7 +51,7 @@ attestation jobは、3 OSのdispatch証拠とnative AOT aggregateに加え、sou
 
 - AOT各jobは、公式oracle比較結果、compile manifest、runtime traceをOS・shard・optimization単位でartifactへ保存します。
 - dispatch evidence、coverage shard、native AOT aggregateは、後段jobでpartitionとprovenanceを再検査します。
-- toolchainはZig 0.16.0、LLVM/LLD 22.1.8、QuickJS 2026-06-04、Node.js 24.15.0を固定します。
+- toolchainはZig 0.17.0、LLVM/LLD 22.1.8、QuickJS 2026-06-04、Node.js 24.15.0を固定します。
 - Zig cacheはjobごとに意味のあるhost/AOT対象だけを保存し、toolchain cacheとは分離します。cacheサイズを変える場合は、cache clear、固定toolchain退避、job時間、wall clock、runner合計、総cache容量をcold/warm両方で記録します。
 
 参考として、run [`33748912548`](https://github.com/soramikan/lnako/actions/runs/33748912548) は54/54成功でした。wall clockとrunner合計は別指標で、前者は利用者の待ち時間、後者は各jobの実行時間合計です。

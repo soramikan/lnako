@@ -65,6 +65,17 @@
 - 差分テストID: `check_native_plugin_abi`
 - TODO識別子: `TODO: aot-native-plugin-static-bundle`
 
+## compat-js AOTの未接続範囲
+
+- 公式実測・source根拠: 公式cnako3はNode.js上で動作するため、AOTコンパイル経路を持ちません。LLVM AOT＋QuickJSはlnakoのopt-in機能であり、公式互換証拠とは別に扱います。
+- lnakoの現在動作: `--compat-js --backend aot` は通常AOTとは別の `liblnako_runtime_compat.a` をリンクし、生成物へESM manifest（path・source・namespace・package root・bare alias）を収録します。`JS実行` と `JS関数実行` の最小dispatch、ESM module登録、compile時にlock/cacheから解決したbare npm importを実装・検証しています。`JSメソッド実行`、`JSオブジェクト取得`、ネストした配列・辞書と関数引数の接続、値・Promise・callback・GCの完全接続、AOT compat dispatchのtrace記録、ESM plugin命令のAOT dispatch、Windows x86_64のcompat AOTリンクは未対応です。
+- 判定: 未実装
+- 対象経路: AOT
+- 差分テストID: `check_aot_quickjs_separation`、`check_package_plugin_npm_e2e`
+- TODO識別子: なし（Issue #55 の残ゲート）
+
+`build --compat-js` の既定はembeddedで、`--backend aot` を明示した場合だけこの経路になります。詳細な値変換規則と生成物の検査は [QuickJS互換モード](COMPAT_JS.md) を参照してください。
+
 ## 3 OS attestation
 
 - 公式実測・source根拠: macOS arm64、Linux x86_64 GNU、Windows x86_64 MSVCは別toolchain・別OS状態を持つため、1環境のtraceから他OSの実行を推定できません。

@@ -125,20 +125,43 @@
 
 ## 進行中および今後の継続課題
 
-- **パッケージシステムの実装**（Project [#2](https://github.com/users/soramikan/projects/2)、label `package-system`）:
-  - **基盤（CLOSED）**: 仕様・schema・適合例（#43）、manifest/TOML/SemVer/marker/features（#44）、PubGrub（#45）、複数profile `nako.lock`・部分更新（#46）、path/Git/URL/静的registry provider（#47）、cache・検証展開・排他・環境復旧（#48）、`.npkg` 生成/検証（#51）、共通.nako3優先・runtime条件（#69）。
-  - **CLI・実行前準備（コード完了・Issue OPEN）**: `init`/`add`/`remove`/`lock`/`update`/`tree`/`why`/`check`/`sync`/`package build|verify|cache` と `run`/`test`/`build` 前の自動準備、`--locked`/`--offline`/`--no-sync`（#49、PR #176）。受け入れcheckbox未更新のため Issue は OPEN のまま。
-  - **package import（lnako 実装済・ゲート未了）**: `パッケージ:`/`pkg:` alias・subpath、export 境界、environment scope、Interpreter 経路（#50、PR #196）。未達は cnako 共通fixture（#61 連動）、3 OS での LLVM AOT O0〜O3 実測、共通 E2E。
-  - **#52 命令 metadata 静的検査（部分実装・Issue OPEN）**: `command_inspect` + `lnako check` でロードなし検査・衝突/不一致 E029・未検査 `partial`・`--strict-sharing` E033 まで（PR #211）。feature `[features]` と environment の import graph から **共通/専用 root 依存と専用推移依存** を `check` 本文・JSON `features` に表示（`--features` / `--no-default-features` の選択を反映）。`environment.json` root の `dependencies` を再利用判定の許可フィールドへ追加（従来は root 依存を持つ環境が常に stale で命令検査が走らなかった）。**残ゲート**: parser/semantic への declared command 接続、JS/native 実登録照合、OS 条件の照合表示、名前空間 check。残ゲート消化後に #52 close。
-  - **#53 npm 取得（部分実装・Issue OPEN）**: `src/package/npm.zig` で fixture catalog / registry packument 解決、integrity（`sha512-`）、cache 格納、peer（E017）・context（E018）、lock `npmInstances` 配線。`rejectNpmDeps` 撤去。`sync` は `src/package/npm_env.zig` で lock の `sha256`+`url` から cache key を再導出し、tarball を照合してから `<gen>/deps/npm_<instance>` へ materialize する（network・Node・npm CLI なし、cache 欠落は診断で失敗）。npm の cache は取得用 integrity key と lock から再導出できる内容アドレス key の二重公開。QuickJS ESM 実行・Node lifecycle script は非対象（#54）。ローカル HTTP fixture が packument と tarball を配信する hermetic E2E（`lnako lock` → `lnako sync --offline`、integrity 不一致・packument 404 の失敗経路を含む）を追加し、取得先は `LNAKO_NPM_REGISTRY` で差し替えられる。package.json の本格パース（`name`/`version`/`type`/`main`/`module`/`exports` の型検査、BOM・重複キー・不正 JSON の診断）は `src/package/package_json.zig` に集約した。残ゲート: cache 欠落時の sync 側 tarball 取得。
-  - **#54 QuickJS ESM（部分実装・Issue OPEN）**: `npm_esm` で package.json 入口（exports の条件オブジェクトを挿入順に評価し import/default のみ有効、module/main、node/browser 非暗黙）と exports サブパス（exact / `*` wildcard、Node と同じ空マッチ除外・key 優先順・`*` を含む specifier は exact 一致をスキップしてパターン解決、配列 fallback の lastException、target 包含検証、`PackageJsonInvalid` / `InvalidSpecifier` 分類）、root 入口を持たないサブパス専用 package の registry 登録、tarball tree unpack、module_graph bare→npm コールバック、QuickJS bare alias。`exports` がある package は root 入口を `module`/`main`/`index.js` へフォールバックせず、exports target に拡張子補完をしない（Node と同じ）。`exports` が string/array/object 以外（`null`・数値・真偽値）なら exports 無し扱い（Node 24.21.0 / 26.13.0 で実測）、重複キーは後勝ち（JS の JSON.parse と同じ）。package.json のパースは `src/package/package_json.zig` に集約し、BOM 受理と重複キー後勝ち、`name` / `type` の文字列検査（非文字列は package.json 不正）、`version` / `main` / `module` の型寛容（非文字列は無視）を Node 24/26 実測に合わせる。`exports` を持たない package は `module` → `main` → `index.js` の候補を、Node の legacy main 解決順（候補そのもの → `.js` → `<候補>/index.js`。Node は `.json` / `.node` も補完）で存在確認し、欠落する候補は次へ進む。lnako は ESM 専用拡張として `.mjs` と `<候補>/index.mjs` も補完する（Node 実測では `.mjs` は試行されない意図的差異）。`main:"/"` のような区切りのみの値も Node 実測どおり index.js へ落ちる。`main` / `module` が package root 外を指す場合、Node は root 外の実ファイルを解決し得る（無ければ index.js）のに対し、lnako は fail-closed で `PackageJsonInvalid` にする（意図的差異）。`module` は Node の ESM 解決が使わない lnako 独自拡張。`exports` を持たない package の `name/sub` は Node の従来解決に対応せず `BareNotFound`（安全側、下記境界表）。`src/package/npm_resolver.zig` が lock の `npmInstances` と cache から `BareRegistry` を構築し、`import_resolver`→`compile` 経由で `module_graph.npm_module_resolver` へ配線する。cache は lock の `sha256` で raw archive を再検証して TMPDIR 配下の private scratch へ展開し（network・Node・npm CLI なし、cache 欠落は fail-closed）、`left-pad` と `left-pad/sub` を compile の fixture で解決する。instance の展開は bare name が要求されたときだけ行い、無関係な instance の cache 欠落で解決を止めない。`lnako build --compat-js` は payload v8 に npm import の解決対応表を埋め込み、起動時の再コンパイルで cache/FS なしに復元する。compile は公開世代の `<gen>/deps/npm_<instance>` を provenance marker と `environment.json.lockSha256` の一致で再利用し、不一致・欠落時は cache→scratch へ fallback する（世代 tree だけで解決できる場合は cache dir/TMPDIR を触らない）。参照 plugin+npm E2E は `tests/fixtures/package-plugin-npm` と `tools/check_package_plugin_npm_e2e.mjs`（CI の compat job）で、`lnako lock`→`sync --offline`→`run --compat-js` の plugin 登録と npm bare import の同時実行を固定した。AOT は npm bare import の解決と ESM manifest 収録までを確認し、ESM plugin 命令の AOT dispatch は follow-up とする。残ゲート: 同一 name の複数 version / lock `context` 別解決（現状は `AmbiguousInstances` で fail-closed）、importer 依存 scope の絞り込み（lock は npmInstances を root carrier へ集約するため、現状は Node の hoisting 相当で全 package から解決可能。宣言元 package への分散は #53 残ゲート）、cache miss の instance 単位診断表示、`lnako test` / `lnako check <file>` の `--package-cache-dir` 伝播（両コマンドは `--compat-js` を受けないため、compat-js 伝播とセットで有効化する）。
-  - **#55 AOT+QuickJS（最小スライス実装・Issue OPEN）**: `--compat-js --backend aot` の明示opt-inで通常AOTと別の `liblnako_runtime_compat.a` をリンクし、ESM manifest（source/identity）を生成物へ収録して起動時にQuickJSへ登録する。`JS実行` と `JS関数実行`（関数名文字列・プリミティブと浅い配列/辞書の引数および戻り値の最小dispatch。ネスト・関数・BigInt・bytesはAOT/interpreterで同一文言の明示エラー。Promise戻り値はdrain/awaitで解決値を変換し、reject/pendingは明示エラー）をAOT化し、既定の `--compat-js` は従来のembeddedを維持する。配布アーカイブとRelease candidateには両runtimeを同梱する。残ゲート: `JSメソッド実行`/`JSオブジェクト取得` のAOT対応、ネストした配列/辞書・関数引数の接続、値・Promise・callback・GCの完全接続、AOT compat dispatchのtrace記録、Windows x86_64のcompat AOTリンク（MinGW由来QuickJSシンボル）。
-  - **初回 P0 残主鎖**: #52 残ゲートと並行で #53 残 → QuickJS ESM（#54）→ AOT+QuickJS（#55）→ 依存同梱（#56）→ publish（#57）→ 3 OS E2E/文書（#58）。cnako 上流接続・公開版（#61）は import ゲート兼用。
-  - **配布拡張 P1**: native source build（#59）、AOT 静的 plugin 同梱（#11）、workspace（#60）。
-  - **他処理系/後続**: wnako（#62）、cnako Node 拡充（#63）、cross build（#64）、WASM PoC（#65）、cnako Node 完結依存管理（#70）、階層名前空間「の」（#182）。
-  - **レジストリ**（別リポ [nako-registry](https://github.com/soramikan/nako-registry)）: #1–#6 すべて OPEN。中央サーバー切替は nako-registry#5 が gate。
-  - **#57 publish（dry-run・static registry 最小スライス実装・Issue OPEN）**: `lnako package publish` は既定 dry-run で、manifest/lock（`nako.lock` の manifestSha256）整合、`.npkg` の再生成と `verify`、公開先 registry/owner/認証（`LNAKO_REGISTRY` / `LNAKO_REGISTRY_OWNER` / `LNAKO_REGISTRY_TOKEN` の Bearer）を検証して未公開/公開済み/失敗を表示する。`--registry <url>`（または環境変数）で明示した registry にだけ、`--no-dry-run` で artifact `.npkg` と PS01 version record を PUT する（loopback 以外の平文 http は既定拒否、実 registry への既定送信なし）。再実行は同一版・同一 artifact hash をスキップし、同一版の内容差替えは公開前照会の時点で競合として拒否する（照会後の並行 publish の最終的な排他は registry 側の公開 API・生成 CI が担う）。artifact PUT 後・record PUT 前の失敗は同じ artifact を再送して復旧する。git/http/npm 依存は static registry の version record に表現できないため公開を拒否する（path 依存は `.npkg` に同梱されるため許可）。ローカル HTTP fixture で dry-run 成功/失敗、PUT 経路、再実行、競合、送信失敗→再実行を検証する。**残ゲート**: 初期 backend の GitHub Releases upload、registry 側の index 自動登録（nako-registry#2）、中央 publication API への transport 差し替え、複数 artifact/OS 別 binary の公開、`package verify` 相当の target 適合を公開時にどこまで要求するかの確定。
-  - **明示拒否中**: npm 依存の lock 拒否は #53 で撤去済み。`publish` の実 registry 送信は明示指定時のみで、既定の外部送信は行わない。
+### パッケージシステムの台帳
+
+Project [#2](https://github.com/users/soramikan/projects/2)、label `package-system`。仕様は[仕様案](package-system/SPECIFICATION.md)と[schema version 規則](package-system/SCHEMA_VERSIONS.md)、実装は `src/package/` を正本とします。状態は完了・部分実装・未着手で示し、残っているゲートだけを列挙します。
+
+| 領域 | 状態 | 残ゲート |
+| --- | --- | --- |
+| 仕様・schema・適合例（#43） | 完了 | なし |
+| manifest・TOML・SemVer・marker・features（#44） | 完了 | なし |
+| PubGrub resolver（#45） | 完了 | なし |
+| 複数 profile の `nako.lock` と部分更新（#46） | 完了 | なし |
+| path・Git・URL・静的 registry provider（#47） | 完了 | なし |
+| cache・検証付き展開・排他・環境復旧（#48） | 完了 | なし |
+| `.npkg` 生成と検証（#51） | 完了 | なし |
+| 共通 `.nako3` 優先・runtime 条件・環境参照契約（#69） | 完了 | なし |
+| 依存管理 CLI・実行前準備・`--locked`/`--offline`/`--no-sync`（#49） | 完了 | なし |
+| package import（#50） | 部分実装 | cnako 共通 fixture の両処理系受理（#210、cnako 本体は #61）、AOT O0〜O3 の3 OS 実行検証の残り（#209） |
+| 命令 metadata の静的検査（#52） | 部分実装 | JS/native の実登録照合（declared command 接続・OS 条件の照合表示・名前空間 check は #211/#227/#251 で実装済み） |
+| npm 取得（#53） | 部分実装 | cache 欠落時の sync 側 tarball 取得。Node lifecycle script は対象外 |
+| QuickJS ESM（#54） | 部分実装 | 下記の npm ESM 境界。QuickJS ESM の実行は `--compat-js` のみ |
+| AOT + QuickJS（#55） | 部分実装 | `JSメソッド実行`/`JSオブジェクト取得` の AOT、ネストした配列・辞書と関数引数、値・Promise・callback・GC の完全接続、AOT dispatch trace、Windows x86_64 の compat AOT リンク |
+| 依存同梱（#56） | 未着手 | `build --bundle-deps`、移動可能な loader、license/SBOM、source-only 依存の同梱 |
+| publish（#57） | 部分実装 | 実 registry backend の upload/index 登録、中央 publication API、OS 別 binary 公開、target 適合を公開時にどこまで要求するかの確定（dry-run と static registry への冪等 PUT は実装済み） |
+| 3 OS E2E・文書（#58） | 部分実装 | 参照パッケージの E2E、3 OS 結合、公開から取得までの E2E。利用・公開・QuickJS/AOT 制約・cnako 移行の文書は反映済み |
+| cnako 接続（#61） | 未着手 | cnako 本体の共通ソース取り込み、`lnako sync` 委譲、上流公開リリース |
+| レジストリ（別リポ） | 未着手 | nako-registry の #1–#6。中央サーバー切替は nako-registry#5 が gate |
+
+補足:
+
+- `lnako add --npm` は未対応です。npm 依存は `nako.toml` の `[dependencies.npm]` へ直接宣言し、`lnako lock` で解決します。
+- `lnako package` の操作は `build`・`verify`・`cache` だけです。`publish` は未実装です。
+- ESM-only の path 依存（`esm` だけを宣言したパッケージ）を lock で解決するには、`compat-js = true` を宣言した profile を置きます。
+- npm の materialize は network・Node.js・npm CLI を使わないため、cache 欠落は失敗として扱います。
+- 初回 P0 の主鎖は #52 残ゲートと #53 残を並行しつつ、#50 残ゲート → #54 → #55 → #56 → #57 → #58/#61 です。
+- 配布拡張 P1: native source build（#59）、AOT 静的 plugin 同梱（#11）、workspace（#60）。
+- 他処理系・後続: wnako（#62）、cnako Node 拡充（#63）、cross build（#64）、WASM PoC（#65）、cnako Node 完結依存管理（#70）、階層名前空間「の」（#182）。
+- npm ESM の境界: `exports` を持たない package の `name/sub` 従来解決、`package_root` の symlink canonicalization、registry 構築時の root 入口解決、exports target と wildcard 一致部分の字句検査、exports の再帰 64 段と wildcard 展開 1 MiB の上限、legacy `main`/`module` の拡張子補完、`module` の優先、exports target の URL 解釈は、現行では安全側の意図的差異または未対応として残しています。個別の差異は上の「明示的に非対応とする境界」の表を参照してください。
+
 - **低レイヤーAPI・ストリームI/O**：
   - カタログ63命令をすべて実装済み（#27–#38, #36 等）。正本は [`docs/low-level-api/catalog.json`](low-level-api/catalog.json)、現状の一覧は [`docs/low-level-api/IMPLEMENTATION_STATUS.md`](low-level-api/IMPLEMENTATION_STATUS.md)。
   - **実装済み命令（63/63）**: カタログ掲載の全命令を Interpreter / AOT で実装。位置系4命令（`ファイル位置変更` / `ファイル位置取得` / `ファイル位置指定読込` / `ファイル位置指定書込`）は [#27](https://github.com/soramikan/lnako/issues/27) で完了。
