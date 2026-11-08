@@ -89,6 +89,68 @@ try {
     "JS関数実行の最小変換結果（戻り値の配列・辞書・Promise解決値を含む）",
   );
 
+  // `JSオブジェクト取得` / `JSメソッド実行`: JS関数実行が返した配列/辞書を
+  // external binding（JS参照）として保持し、AOTとインタプリタが同じ結果を返すこと。
+  const objectFixture = join(root, "tests", "fixtures", "compat-js-object-binding.nako3");
+  const interpreterObject = spawnSync(compiler, ["run", objectFixture, "--compat-js"], { encoding: "utf8" });
+  if (interpreterObject.status !== 0) {
+    fail(`JSオブジェクト取得/JSメソッド実行fixtureのインタプリタ実行が失敗しました: ${interpreterObject.stdout}${interpreterObject.stderr}`);
+  }
+  const objectBinary = join(work, "compat-js-object-binding");
+  runCompiler(objectFixture, objectBinary, ["--compat-js", "--backend", "aot"]);
+  const objectSymbols = listSymbols(objectBinary);
+  for (const required of ["lnako_aot_compat_js_object_get", "lnako_aot_compat_js_method_call"]) {
+    if (!objectSymbols.some((symbol) => symbol.includes(required))) {
+      fail(`JSオブジェクト取得/JSメソッド実行のcompat AOT成果物に ${required} がありません`);
+    }
+  }
+  const objectOutput = runBinary(objectBinary);
+  expectEqual(objectOutput, interpreterObject.stdout.trim(), "JSオブジェクト取得/JSメソッド実行のAOT/インタプリタ一致");
+  expectEqual(
+    objectOutput,
+    "10\n1\n1-2\n1-2-3\n7\n5\n1\n9\na\n8\n2\n1-3\ntrue\n5\n1,2,9\n2\n1\n20\ntrue",
+    "JSオブジェクト取得/JSメソッド実行のexternal binding結果",
+  );
+
+  // external bindingを持たない値のうち、共有変換規則でJSへ渡せないものは
+  // AOT/interpreterが同じ文言で明示エラーになること。
+  const unsupportedObjectCases = [
+    ["JSオブジェクト取得の関数レシーバ", "F=関数(A)それはA;ここまで\nJSオブジェクト取得(F,\"x\")を表示\n", "JSオブジェクト取得 does not support"],
+    ["JSオブジェクト取得のネスト配列", "JSオブジェクト取得([[1]],\"0\")を表示\n", "JSオブジェクト取得 does not support"],
+    ["JSメソッド実行の関数レシーバ", "F=関数(A)それはA;ここまで\nJSメソッド実行(F,\"x\",[])を表示\n", "JSメソッド実行 does not support"],
+    ["JSメソッド実行の関数実引数", 'JSメソッド実行("[1,2]","join",[関数(A)それはA;ここまで])を表示\n', "JSメソッド実行 does not support"],
+    ["JSオブジェクト取得の3引数", 'JSオブジェクト取得("[1,2]","0","x")を表示\n', "JSオブジェクト取得 accepts a value and a property name only"],
+    ["JSオブジェクト取得の0引数", 'JSオブジェクト取得()を表示\n', "JSオブジェクト取得 requires a value and a property name"],
+    ["JSメソッド実行の関数戻り値", 'JSメソッド実行(『({f(){return ()=>{}}})』,"f",[])を表示\n', "JSメソッド実行 does not support"],
+    ["JSメソッド実行のPromise戻り値", 'JSメソッド実行(『({f(){return Promise.resolve(1)}})』,"f",[])を表示\n', "JSメソッド実行 does not support"],
+    ["JSメソッド実行の巨大length戻り値", 'JSメソッド実行(『({f(){const a=[];a.length=10000000;return a}})』,"f",[])を表示\n', "QuickJsCollectionTooLarge"],
+  ];
+  for (const [index, [label, source, expected]] of unsupportedObjectCases.entries()) {
+    const unsupportedSource = join(work, `compat-js-unsupported-object-${index}.nako3`);
+    writeFileSync(unsupportedSource, source);
+    const unsupportedBinary = join(work, `compat-js-unsupported-object-${index}`);
+    runCompiler(unsupportedSource, unsupportedBinary, ["--compat-js", "--backend", "aot"]);
+    const aot = spawnSync(unsupportedBinary, [], { encoding: "utf8" });
+    const interpreter = spawnSync(compiler, ["run", unsupportedSource, "--compat-js"], { encoding: "utf8" });
+    for (const [kind, result] of [["AOT", aot], ["インタプリタ", interpreter]]) {
+      const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
+      if (result.status === 0 || !output.includes(expected)) {
+        fail(`${label}が${kind}で明示エラーになりません: status=${result.status}\n${output}`);
+      }
+    }
+  }
+
+  // `JSオブジェクト取得` の1引数形（公式のグローバル名解決）はAOTに変数bridgeが
+  // 無いため、compat AOTでは明示エラーにする（interpreterは公式互換のまま）。
+  const namedObjectSource = join(work, "compat-js-named-object.nako3");
+  writeFileSync(namedObjectSource, 'JSオブジェクト取得("X")を表示\n');
+  const namedObjectBinary = join(work, "compat-js-named-object");
+  runCompiler(namedObjectSource, namedObjectBinary, ["--compat-js", "--backend", "aot"]);
+  const namedObject = spawnSync(namedObjectBinary, [], { encoding: "utf8" });
+  if (namedObject.status === 0 || !`${namedObject.stdout}${namedObject.stderr}`.includes("requires a value and a property name")) {
+    fail(`JSオブジェクト取得の1引数形がAOTで明示エラーになりません: ${namedObject.stdout}${namedObject.stderr}`);
+  }
+
   // 浅い配列・辞書だけを引数に許可する。ネストした配列/辞書・関数値・
   // バイト列は、QuickJSへ渡す前に AOT/インタプリタが同じ文言で明示エラーに
   // すること。BigIntはAOT側に値の生成経路がまだ無いためinterpreterだけで

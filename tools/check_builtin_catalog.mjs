@@ -85,14 +85,27 @@ function josiSlots(args) {
   return { slots, variable: args.includes("...") };
 }
 
+// lnako独自拡張の引数個数上書き。公式catalog.commandsは変更せず、C風呼び出しの
+// 個数検査だけを拡張する。`JSオブジェクト取得` は公式1引数（NAMEの）に加えて、
+// external bindingのプロパティ取得 `JSオブジェクト取得(OBJ, KEY)` を2引数で受理する。
+// `isVariable` は個数検査を無効化し、0引数・3引数以上をruntime側の明示エラーへ
+// 委ねる（1引数形の公式互換は維持する）。
+const arityOverrides = new Map([
+  ["JSオブジェクト取得", { count: 1, isVariable: true }],
+]);
 const arityEntries = [];
 const arityByName = new Map();
 for (const command of catalog.commands) {
   if (command.type !== "関数") continue;
-  const entry = {
+  const override = arityOverrides.get(command.name);
+  const entry = override === undefined ? {
     name: command.name,
     count: argumentNames(command.args).length,
     isVariable: command.args.includes("..."),
+  } : {
+    name: command.name,
+    count: override.count,
+    isVariable: override.isVariable,
   };
   const existing = arityByName.get(entry.name);
   if (existing) {

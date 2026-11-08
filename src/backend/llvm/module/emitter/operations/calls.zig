@@ -90,6 +90,16 @@ pub fn writeCall(emitter: *Emitter, function: ir.Function, locals: []const []con
             try writeCallResult(emitter, result, instruction.span, scope);
             return;
         }
+        if (std.mem.eql(u8, instruction.name, "JSオブジェクト取得")) {
+            try plugins_mod.writeCompatJsObjectGet(emitter, function, instruction, scope, aggregate_count);
+            try writeCallResult(emitter, result, instruction.span, scope);
+            return;
+        }
+        if (std.mem.eql(u8, instruction.name, "JSメソッド実行")) {
+            try plugins_mod.writeCompatJsMethodCall(emitter, function, instruction, scope, aggregate_count);
+            try writeCallResult(emitter, result, instruction.span, scope);
+            return;
+        }
     }
     if (instruction.direct_callee == null and instruction.is_builtin_call and isDisplayCall(instruction.name)) {
         return plugins_mod.writeDisplayCall(emitter, function, instruction, scope, aggregate_count);

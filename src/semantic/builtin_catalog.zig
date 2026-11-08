@@ -551,7 +551,7 @@ pub const arities = [_]BuiltinArity{
     .{ .name = "敬具", .count = 0, .is_variable = false },
     .{ .name = "礼節レベル取得", .count = 0, .is_variable = false },
     .{ .name = "JS実行", .count = 1, .is_variable = false },
-    .{ .name = "JSオブジェクト取得", .count = 1, .is_variable = false },
+    .{ .name = "JSオブジェクト取得", .count = 1, .is_variable = true },
     .{ .name = "JS関数実行", .count = 2, .is_variable = false },
     .{ .name = "ASYNC", .count = 0, .is_variable = false },
     .{ .name = "AWAIT実行", .count = 2, .is_variable = false },
