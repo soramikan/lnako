@@ -332,7 +332,19 @@ pub fn openGenerationDeps(io: std.Io, project_root: []const u8, generation: []co
 /// 実体 path から導出する（ACL 判定自体は path を再解決するため、判定と
 /// 読み出しの間に差し替えが起きる可能性は project 所有権の信頼に含める）。
 /// 戻り値 true=再利用可、false=検査不能のため cache 経路へ fallback。
-/// enforce/warn で unsafe と判定した場合は error.InvalidEnvironment。
+/// 実際に書込み可能と確認された unsafe は enforce で拒否し、warn では警告して
+/// 再利用する（`shouldRejectWritable`）。「検査不能」は書込み可能状態とは
+/// 区別し、warn でも reuse せず cache 経路へ fallback する。この検査不能
+/// fallback は enforce でも停止せず fallback する点が旧挙動からの変化で、
+/// 書込み可能の警告（`writable_warning`）とは別事象のため現状は追加の診断を
+/// 出さない。fallback 先の cache も unavailable の場合は name 単位の cache 系
+/// エラー（`CacheUnavailable`/`CacheMiss` 等）で停止する。祖先検査や個々の
+/// entry の owner/ACL 取得失敗（`low_level_fs.stat` 等）は `project_trust` の
+/// 既定どおり unsafe(true)（warn で警告して再利用・enforce で拒否）に
+/// 丸められる。entry の mode/kind を確定する POSIX `statFile` 失敗は検査不能
+/// として fallback する。なお d_type を返さない FS（entry.kind == .unknown）では
+/// walker が子dirへ降りないため、深部の検査不能を検出できない既存制約がある
+/// （`project_trust` 側と同じ制約・follow-up）。
 pub fn validateGenerationDepsWritable(
     allocator: Allocator,
     io: std.Io,
@@ -386,7 +398,7 @@ pub fn validateGenerationDepsWritable(
     if (project_trust.shouldRejectWritable(mode, unsafe_ancestors, writable_warning)) return error.InvalidEnvironment;
 
     // 配下の npm tree 本体を検査する。entry.kind が unknown の FS では stat で
-    // 種別を確定し、確定できない場合も unsafe 側に倒す（fail-closed）。
+    // 種別を確定し、確定できない場合は検査不能として cache 経路へ fallback する。
     var iterator = deps.iterate();
     while (true) {
         const next = iterator.next(io) catch |err| {
@@ -405,8 +417,9 @@ pub fn validateGenerationDepsWritable(
             const stat = deps.statFile(io, entry.name, .{ .follow_symlinks = false }) catch |err| {
                 if (err == error.OutOfMemory) return error.OutOfMemory;
                 if (err == error.Canceled) return error.Canceled;
-                if (project_trust.shouldRejectWritable(mode, true, writable_warning)) return error.InvalidEnvironment;
-                continue;
+                // 種別を確定できない tree は検査不能。「実際に書込み可能」と
+                // 確認できたわけではないため warn でも再利用せず fallback する。
+                return false;
             };
             is_directory = stat.kind == .directory;
         }
@@ -414,11 +427,15 @@ pub fn validateGenerationDepsWritable(
         if (!is_directory) continue;
         const tree_path = try std.fs.path.join(allocator, &.{ deps_real, entry.name });
         defer allocator.free(tree_path);
-        const unsafe = project_trust.hasUnsafeWritableDirectory(allocator, io, tree_path) catch |err| blk: {
+        // 走査不能な子dir等は「検査不能」であり、書き込み可能と確認された
+        // unsafe とは異なる。warn でも未検査 tree を再利用せず、正常な cache
+        // archive から作り直す（enforce の拒否と warn の確認済み unsafe の
+        // 扱いは `shouldRejectWritable` のまま）。
+        const unsafe = project_trust.inspectUnsafeWritableDirectory(allocator, io, tree_path) catch |err| {
             // エラー集合は platform で異なるため、case ではなく名前で判定する。
             if (std.mem.eql(u8, @errorName(err), "OutOfMemory")) return error.OutOfMemory;
             if (std.mem.eql(u8, @errorName(err), "Canceled")) return error.Canceled;
-            break :blk true;
+            return false;
         };
         if (project_trust.shouldRejectWritable(mode, unsafe, writable_warning)) return error.InvalidEnvironment;
     }
@@ -747,4 +764,70 @@ test "npm_env は sha256・url を持たない instance を invalid_source に�
         .sha256 = try arena.dupe(u8, "sha256:0000000000000000000000000000000000000000000000000000000000000000"),
     };
     try testing.expectError(error.InvalidSource, materializeInstances(params, &.{no_url}));
+}
+
+test "validateGenerationDepsWritable は検査不能な世代 tree を warn でも cache fallback にする" {
+    if (@import("builtin").os.tag == .windows or @import("builtin").os.tag == .wasi) return error.SkipZigTest;
+    // root 実行では mode 000 でも走査できるため前提が成立しない。
+    if (std.c.geteuid() == 0) return error.SkipZigTest;
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var temporary = test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    // 子dirを走査できない世代 tree（検査不能）を再現する。d_type を返す FS
+    // で walker が `locked` へ降り、open 失敗が伝播することを前提にする。
+    try temporary.dir.createDirPath(io, "project/.nako/env/gen-test/deps/npm_x/locked");
+    // d_type を返さない FS では walker が `locked` へ降りず前提が崩れるため skip。
+    var npm_x = try temporary.dir.openDir(io, "project/.nako/env/gen-test/deps/npm_x", .{ .iterate = true });
+    defer npm_x.close(io);
+    var probe = npm_x.iterate();
+    while (try probe.next(io)) |entry| {
+        if (std.mem.eql(u8, entry.name, "locked") and entry.kind == .unknown) return error.SkipZigTest;
+    }
+    var locked = try temporary.dir.openDir(io, "project/.nako/env/gen-test/deps/npm_x/locked", .{ .iterate = true });
+    defer locked.close(io);
+    try locked.setPermissions(io, .fromMode(0o000));
+    // cleanup が走査できるよう、close 前に権限を戻す。
+    defer locked.setPermissions(io, .fromMode(0o755)) catch {};
+    const project_root = try temporary.dir.realPathFileAlloc(io, "project", gpa);
+    defer gpa.free(project_root);
+    var deps = (try openGenerationDeps(io, project_root, "gen-test")) orelse return error.TestUnexpectedResult;
+    defer deps.close(io);
+
+    var warning = false;
+    const keep = try validateGenerationDepsWritable(gpa, io, project_root, deps, .warn, &warning);
+    // 検査不能は「実際に書込み可能と確認された状態」ではない。warn でも
+    // 未検査 tree を再利用せず、正常な cache archive へ fallback する。
+    try testing.expect(!keep);
+    try testing.expect(!warning);
+    // enforce でも検査不能は拒否ではなく fallback（fallback 先の cache archive は
+    // lock の sha256 で検証される）。
+    var enforce_warning = false;
+    try testing.expect(!try validateGenerationDepsWritable(gpa, io, project_root, deps, .enforce, &enforce_warning));
+    try testing.expect(!enforce_warning);
+}
+
+test "validateGenerationDepsWritable は確認済み unsafe の warn/enforce の扱いを変えない" {
+    if (@import("builtin").os.tag == .windows or @import("builtin").os.tag == .wasi) return error.SkipZigTest;
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var temporary = test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    // 共有writableな子dir（実際に書込み可能＝unsafe と確認できる状態）。
+    try temporary.dir.createDirPath(io, "project/.nako/env/gen-test/deps/npm_x/shared");
+    var shared = try temporary.dir.openDir(io, "project/.nako/env/gen-test/deps/npm_x/shared", .{ .iterate = true });
+    defer shared.close(io);
+    try shared.setPermissions(io, .fromMode(0o777));
+    const project_root = try temporary.dir.realPathFileAlloc(io, "project", gpa);
+    defer gpa.free(project_root);
+    var deps = (try openGenerationDeps(io, project_root, "gen-test")) orelse return error.TestUnexpectedResult;
+    defer deps.close(io);
+
+    // warn は警告して再利用（既存の扱いを維持）。
+    var warn_warning = false;
+    try testing.expect(try validateGenerationDepsWritable(gpa, io, project_root, deps, .warn, &warn_warning));
+    try testing.expect(warn_warning);
+    // enforce は拒否（既存の扱いを維持）。
+    var enforce_warning = false;
+    try testing.expectError(error.InvalidEnvironment, validateGenerationDepsWritable(gpa, io, project_root, deps, .enforce, &enforce_warning));
 }

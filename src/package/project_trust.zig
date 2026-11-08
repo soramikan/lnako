@@ -72,18 +72,61 @@ pub fn isUnsafeWritablePath(allocator: Allocator, io: std.Io, path: []const u8) 
 /// export対象の中身を書き換えられるため、dir・fileの両方を末端まで検査する。
 /// Windows では drive root baseline の add-only ACE 例外も package tree
 /// 内では適用しない（新規 file 追加で import 対象を後から差し込めるため）。
-/// 走査・権限取得の失敗は fail-closed で unsafe 扱いにする。
+/// 走査・権限取得の失敗は fail-closed で unsafe 扱いにする。root 自体の stat
+/// 失敗は POSIX では error として伝播する（Windows は従来どおり unsafe(true)）。
+/// また d_type を返さない FS（entry.kind == .unknown）では walker が子dirへ
+/// 降りないため、深部が未走査のままになる既存制約がある（検査経路の
+/// follow-up）。
 pub fn hasUnsafeWritableDirectory(allocator: Allocator, io: std.Io, root: []const u8) !bool {
+    return inspectWritableDirectory(allocator, io, root, .fail_closed);
+}
+
+/// 検査不能（root の open・子dirの走査・entry の種別確定等）を unsafe(true)
+/// に丸めず error として伝播する変種。「実際に書込み可能と確認された状態」と
+/// 「検査できない状態」を区別する必要がある呼出し側（世代 deps の検査）が
+/// 使う。error 伝播は open・走査・POSIX の stat 失敗などの「検査できない」
+/// 経路が対象。predicate 内部で従来どおり unsafe(true) に丸める失敗（POSIX の
+/// `low_level_fs.stat` による owner/ACL 取得、Windows の entry stat 等）は
+/// propagate でも unsafe(true) のまま。祖先検査
+/// （`hasUnsafeWritableAncestors`）のメタデータ取得失敗も unsafe(true) のまま。
+/// fail-closed 挙動が必要な呼出し側は `hasUnsafeWritableDirectory` を使い続ける。
+pub fn inspectUnsafeWritableDirectory(allocator: Allocator, io: std.Io, root: []const u8) !bool {
+    return inspectWritableDirectory(allocator, io, root, .propagate);
+}
+
+/// 走査失敗時の扱い。
+const InspectionFailurePolicy = enum {
+    /// 検査不能を unsafe とみなす（既存の fail-closed 検査）。
+    fail_closed,
+    /// 検査不能を error として呼出し側へ返す。
+    propagate,
+};
+
+fn inspectWritableDirectory(
+    allocator: Allocator,
+    io: std.Io,
+    root: []const u8,
+    policy: InspectionFailurePolicy,
+) !bool {
     if (try isUnsafeWritableTreeEntry(allocator, io, root)) return true;
-    var directory = std.Io.Dir.cwd().openDir(io, root, .{ .iterate = true }) catch return true;
+    var directory = std.Io.Dir.cwd().openDir(io, root, .{ .iterate = true }) catch |err| {
+        if (policy == .propagate) return err;
+        return true;
+    };
     defer directory.close(io);
     var walker = try directory.walk(allocator);
     defer walker.deinit();
-    while (walker.next(io) catch return true) |entry| {
+    while (true) {
+        const next = walker.next(io) catch |err| {
+            if (policy == .propagate) return err;
+            return true;
+        };
+        const entry = next orelse break;
         const full = try std.fs.path.join(allocator, &.{ root, entry.path });
         defer allocator.free(full);
         const unsafe = isUnsafeWritableTreeEntry(allocator, io, full) catch |err| {
             if (err == error.OutOfMemory) return err;
+            if (policy == .propagate) return err;
             return true;
         };
         if (unsafe) return true;
@@ -523,6 +566,41 @@ test "POSIX owner check accepts current-user-owned non-shared paths" {
     if (std.Io.Dir.cwd().statFile(io, "/etc/hosts", .{})) |_| {
         try std.testing.expect(!try isUnsafeWritablePath(allocator, io, "/etc/hosts"));
     } else |_| {}
+}
+
+test "検査不能な子dirは fail-closed 検査では unsafe、区別用の変種では error になる" {
+    if (comptime builtin.os.tag == .windows or builtin.os.tag == .wasi) return error.SkipZigTest;
+    // root 実行では mode 000 でも走査できるため前提が成立しない。
+    if (std.c.geteuid() == 0) return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "tree/locked");
+    // d_type を返さない FS では walker が `locked` へ降りず前提が崩れるため skip。
+    var tree = try temporary.dir.openDir(io, "tree", .{ .iterate = true });
+    defer tree.close(io);
+    var probe = tree.iterate();
+    while (try probe.next(io)) |entry| {
+        if (std.mem.eql(u8, entry.name, "locked") and entry.kind == .unknown) return error.SkipZigTest;
+    }
+    var locked = try temporary.dir.openDir(io, "tree/locked", .{ .iterate = true });
+    defer locked.close(io);
+    try locked.setPermissions(io, .fromMode(0o000));
+    // cleanup が走査できるよう、close 前に権限を戻す。
+    defer locked.setPermissions(io, .fromMode(0o755)) catch {};
+    const root = try temporary.dir.realPathFileAlloc(io, "tree", allocator);
+    defer allocator.free(root);
+    // 子dirを走査できない＝検査不能。既存の検査は fail-closed で unsafe。
+    try std.testing.expect(try hasUnsafeWritableDirectory(allocator, io, root));
+    // 「検査不能」と「実際に書込み可能」を区別する変種は error を返す。
+    // platform の errno 写像差を許容し、unsafe(false/true) への丸めだけを拒否する。
+    if (inspectUnsafeWritableDirectory(allocator, io, root)) |unsafe| {
+        _ = unsafe;
+        return error.TestUnexpectedResult;
+    } else |err| {
+        try std.testing.expect(err == error.AccessDenied or err == error.PermissionDenied);
+    }
 }
 
 test "Windows ACL check accepts a private temporary project directory and file" {
