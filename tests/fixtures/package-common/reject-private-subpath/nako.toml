@@ -1,0 +1,7 @@
+[package]
+name = "package-common-reject-private-subpath"
+version = "0.1.0"
+license = "MIT"
+
+[dependencies.path]
+demo = { path = "demo" }

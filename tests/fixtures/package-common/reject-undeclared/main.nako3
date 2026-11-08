@@ -1,0 +1,3 @@
+# 未宣言alias（rootの[dependencies]に無い）は両処理系で拒否する。
+!「パッケージ:missing」を取り込む
+「main」を表示。
