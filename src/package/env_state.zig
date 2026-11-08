@@ -313,6 +313,10 @@ pub const CheckInfo = struct {
     lock_state: enum { missing, invalid, fresh, stale },
     /// 現行選択で解決した target（OS 条件の照合表示に使う）。
     target: lock_model.Target = .{ .os = "", .cpu = "", .abi = "" },
+    /// 現行選択で解決した runtime（marker の runtime 条件評価に使う）。
+    runtime: []const u8 = "lnako",
+    /// 現行選択で解決した言語バージョン（marker の version 条件評価に使う）。
+    nako_version: ?[]const u8 = null,
     /// 読めた lock の鮮度（invalid/missing では未使用）。
     freshness: lock_mod.Freshness = .missing,
     /// `.nako/environment.json` の内容。無ければ null。
@@ -349,6 +353,8 @@ pub fn inspectForCheck(
     };
 
     info.target = input.target;
+    info.runtime = input.runtime orelse "lnako";
+    info.nako_version = input.nako_version;
     var existing = loadExistingLockDir(gpa, io, project_.root_dir, diagnostics) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => {

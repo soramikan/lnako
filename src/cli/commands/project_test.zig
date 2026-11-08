@@ -323,7 +323,7 @@ test "check は package 宣言命令の OS 条件と名前空間 alias 件数を
     try testing.expect(std.mem.indexOf(u8, json, "\"condition\":\"") != null);
     try testing.expect(std.mem.indexOf(u8, json, expected_condition) != null);
     try testing.expect(std.mem.indexOf(u8, json, "\"availability\":\"available\"") != null);
-    try testing.expect(std.mem.indexOf(u8, json, "\"namespaces\":{\"aliases\":1,\"issues\":[]}") != null);
+    try testing.expect(std.mem.indexOf(u8, json, "\"namespaces\":{\"aliases\":1,\"scan\":\"complete\",\"issues\":[]}") != null);
 
     try cli.run(a, "check", &.{}, app_root);
     const text = cli.out.written();
@@ -331,6 +331,55 @@ test "check は package 宣言命令の OS 条件と名前空間 alias 件数を
     try testing.expect(std.mem.indexOf(u8, text, expected_condition) != null);
     try testing.expect(std.mem.indexOf(u8, text, "利用可能") != null);
     try testing.expect(std.mem.indexOf(u8, text, "名前空間: alias 1 件（問題 0 件）") != null);
+}
+
+test "check --json は名前空間aliasのerrorでもJSONを出して失敗する" {
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const a = arena_impl.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "app/lib/src");
+    try writePathPackage(a, temporary.dir, "app/lib", "lib", "あいさつ");
+    const app_root = try temporary.dir.realPathFileAlloc(io, "app", a);
+    try appManifest(a, app_root,
+        \\[dependencies.path]
+        \\lib = { path = "lib" }
+        \\
+    );
+    const main_path = try std.fs.path.join(a, &.{ app_root, "main.nako3" });
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = main_path, .data = "「ok」を表示\n" });
+
+    var cli = Cli.init(a);
+    var flags = project_cmd.PrepFlags{};
+    try project_cmd.prepareForExecution(a, io, main_path, &flags, &cli.env, "run", &cli.err.writer);
+
+    // root scope に正規化後空になる alias を足す（env の形状は保ったまま）。
+    const env_path = try std.fs.path.join(a, &.{ app_root, ".nako/environment.json" });
+    const env_bytes = try std.Io.Dir.cwd().readFileAlloc(io, env_path, a, .limited(4 * 1024 * 1024));
+    defer a.free(env_bytes);
+    var parsed = try std.json.parseFromSlice(std.json.Value, a, env_bytes, .{ .allocate = .alloc_always });
+    defer parsed.deinit();
+    const package_key = parsed.value.object.get("dependencies").?.array.items[0].object.get("package").?.string;
+    // 既存 dependencies の先頭へ空 alias を差し込む（env shape は有効なまま）。
+    const replacement = try std.fmt.allocPrint(
+        a,
+        "\"dependencies\":[{{\"alias\":\"@\",\"package\":\"{s}\"}}, {{",
+        .{package_key},
+    );
+    defer a.free(replacement);
+    const replaced = try std.mem.replaceOwned(u8, a, env_bytes, "\"dependencies\":[{", replacement);
+    defer a.free(replaced);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = env_path, .data = replaced });
+
+    try testing.expectError(error.Failed, cli.run(a, "check", &.{"--json"}, app_root));
+    const out = cli.out.written();
+    try testing.expect(std.mem.indexOf(u8, out, "\"namespaces\":{\"aliases\":2") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "\"kind\":\"empty\"") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "\"severity\":\"error\"") != null);
+    const err = cli.err.written();
+    try testing.expect(std.mem.indexOf(u8, err, "E029") != null);
+    try testing.expect(std.mem.indexOf(u8, err, "namespace alias") != null);
 }
 
 test "prepareForExecution は lock と .nako 環境を自動準備する" {

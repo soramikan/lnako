@@ -79,6 +79,10 @@ pub const Report = struct {
     features: ?FeatureImpact = null,
     /// package 宣言命令を持つ package の OS 条件と現在の target での利用可否。
     conditions: []const command_conditions.PackageCondition = &.{},
+    /// project root の module 名走査を完了できたか。false の間は既存 module
+    /// との namespace 衝突が未検査であることを本文/JSON に明示する。
+    namespace_scan_complete: bool = true,
+    namespace_scan_reason: ?[]const u8 = null,
     /// 検査した import 依存 alias の件数（root + package scope）。
     alias_count: usize = 0,
     /// namespace alias の診断（空・重複・不正文字・予約語・既存 module 衝突）。
@@ -245,6 +249,7 @@ pub fn loadDeclaredCommands(
                     arena,
                     gpa,
                     io,
+                    root_dir,
                     root_path,
                     path_value.string,
                     key,
@@ -401,34 +406,17 @@ pub fn inspectEnvironmentDir(
             }
         }
 
-        if (commands.len == 0) {
-            if (export_flags.has_native and !export_flags.has_source and !export_flags.has_js) {
-                try uninspected_list.append(arena, .{
-                    .package_key = package_key,
-                    .reason = .native_without_metadata,
-                });
-            } else if (export_flags.has_js and !export_flags.has_source) {
-                try uninspected_list.append(arena, .{
-                    .package_key = package_key,
-                    .reason = .js_without_metadata,
-                });
-            } else if (export_flags.has_source and !source_regeneration_failed) {
-                try uninspected_list.append(arena, .{
-                    .package_key = package_key,
-                    .reason = .missing_metadata,
-                });
-            }
-            continue;
-        }
-
         // 宣言命令の実装 OS 条件。共通 source が無く、宣言した artifact が
         // 現在の OS と一致しない package は「未検査/利用不可」として扱い、
-        // 衝突・不一致の検査対象にも「宣言済み」にもしない。
+        // 衝突・不一致の検査対象にも「宣言済み」にもしない。commands
+        // metadata が無い package でも条件を評価し、利用不可を未検査として
+        // 記録する（Windows 環境を別 profile で検査した場合など）。
         if (project_root) |root| {
             const condition = try command_conditions.evaluatePackage(
                 arena,
                 gpa,
                 io,
+                root_dir,
                 root,
                 rel_path,
                 package_key,
@@ -436,15 +424,41 @@ pub fn inspectEnvironmentDir(
             );
             try conditions.append(arena, condition);
             if (condition.availability == .unavailable) {
-                // source 再生成失敗など既に未検査記録がある場合は重複させない。
                 if (!hasUninspected(uninspected_list.items, package_key)) {
                     try uninspected_list.append(arena, .{
                         .package_key = package_key,
                         .reason = .os_unavailable,
                     });
                 }
+                // 利用不可の命令は衝突・不一致の検査対象にしない。
                 continue;
             }
+        }
+
+        if (commands.len == 0) {
+            if (export_flags.has_native and !export_flags.has_source and !export_flags.has_js) {
+                if (!hasUninspected(uninspected_list.items, package_key)) {
+                    try uninspected_list.append(arena, .{
+                        .package_key = package_key,
+                        .reason = .native_without_metadata,
+                    });
+                }
+            } else if (export_flags.has_js and !export_flags.has_source) {
+                if (!hasUninspected(uninspected_list.items, package_key)) {
+                    try uninspected_list.append(arena, .{
+                        .package_key = package_key,
+                        .reason = .js_without_metadata,
+                    });
+                }
+            } else if (export_flags.has_source and !source_regeneration_failed) {
+                if (!hasUninspected(uninspected_list.items, package_key)) {
+                    try uninspected_list.append(arena, .{
+                        .package_key = package_key,
+                        .reason = .missing_metadata,
+                    });
+                }
+            }
+            continue;
         }
 
         for (commands) |command| {
@@ -506,10 +520,12 @@ pub fn inspectEnvironmentDir(
 
     // 名前空間 alias 診断。既存の alias 解決は変更せず、空・重複・不正文字・
     // 予約語・既存 module との衝突だけを報告する。
-    const module_names = try collectProjectModuleNames(arena, io, root_dir, diagnostics);
+    const module_scan = try namespace_check.scanProjectModules(arena, io, root_dir);
+    report.namespace_scan_complete = module_scan.complete;
+    report.namespace_scan_reason = module_scan.reason;
     const scopes = try collectNamespaceScopes(arena, parsed.value.object, packages_value.object);
     report.alias_count = countAliases(scopes);
-    report.namespace_issues = try namespace_check.analyze(arena, scopes, module_names);
+    report.namespace_issues = try namespace_check.analyze(arena, scopes, module_scan.names);
     for (report.namespace_issues) |issue| {
         try diagnostics.addFmt(
             if (issue.kind == .duplicate) diag.E012_ALIAS_COLLISION else diag.E029_INVALID_VALUE,
@@ -642,63 +658,6 @@ fn hasUninspected(items: []const Uninspected, package_key: []const u8) bool {
         if (std.mem.eql(u8, item.package_key, package_key)) return true;
     }
     return false;
-}
-
-/// プロジェクト直下の source module 名（basename）を集める。alias の公開
-/// namespace が既存 module と同じになると `{namespace}__{名前}` の解決が
-/// 曖昧になるため、その衝突診断にだけ使う。サブディレクトリは辿らない
-/// （project root 直下の入口 module が対象。`.nako` は除外される）。
-fn collectProjectModuleNames(
-    arena: Allocator,
-    io: std.Io,
-    root_dir: std.Io.Dir,
-    diagnostics: *diag.List,
-) error{OutOfMemory}![]const []const u8 {
-    var dir = root_dir.openDir(io, ".", .{ .iterate = true }) catch return &.{};
-    defer dir.close(io);
-    var names: std.ArrayList([]const u8) = .empty;
-    var iterator = dir.iterate();
-    var files: usize = 0;
-    while (true) {
-        const maybe_entry = iterator.next(io) catch |err| {
-            // 走査を完了できない場合、module 衝突を「0 件」と表示しない。
-            try diagnostics.addFmt(
-                diag.E029_INVALID_VALUE,
-                .warning,
-                ".nako/environment.json",
-                .{},
-                "project root の module 名を走査できませんでした（既存 module との namespace 衝突は未検査）: {s}",
-                .{@errorName(err)},
-            );
-            return names.items;
-        };
-        const entry = maybe_entry orelse break;
-        if (entry.kind != .file) continue;
-        if (!isNakoSource(entry.name)) continue;
-        // 上限は module 候補の数で数え、超えたら「0 件」と誤表示しない。
-        files += 1;
-        if (files > 512) {
-            try diagnostics.addFmt(
-                diag.E029_INVALID_VALUE,
-                .warning,
-                ".nako/environment.json",
-                .{},
-                "project root の module 候補が 512 件を超えたため既存 module 衝突は一部未検査です",
-                .{},
-            );
-            break;
-        }
-        const extension = std.fs.path.extension(entry.name);
-        const stem = entry.name[0 .. entry.name.len - extension.len];
-        if (stem.len == 0) continue;
-        try names.append(arena, try arena.dupe(u8, stem));
-    }
-    std.mem.sort([]const u8, names.items, {}, struct {
-        fn lessThan(_: void, a: []const u8, b: []const u8) bool {
-            return std.mem.order(u8, a, b) == .lt;
-        }
-    }.lessThan);
-    return names.items;
 }
 
 /// environment.json の root / package scope の import 依存表を

@@ -13,11 +13,11 @@
 //!   「不明」にする（適合を証明できないことを不適合と混同しない）。
 
 const std = @import("std");
-const builtin = @import("builtin");
 const diag = @import("diagnostics.zig");
 const lock_mod = @import("lock.zig");
 const manifest_mod = @import("manifest.zig");
 const marker_mod = @import("marker.zig");
+const semver_mod = @import("semver.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -62,7 +62,9 @@ pub fn targetFromLock(
 ) error{OutOfMemory}!?Target {
     const lock_path = std.fs.path.join(gpa, &.{ project_root, "nako.lock" }) catch return error.OutOfMemory;
     defer gpa.free(lock_path);
-    const bytes = std.Io.Dir.cwd().readFileAlloc(io, lock_path, gpa, .limited(manifest_mod.max_manifest_bytes)) catch |err| switch (err) {
+    // 他の lock 読み取り経路（env_state / import_resolver / project）と同じ
+    // 64 MiB 上限に揃える。上限超過は lock 不在と同じ unknown 扱いにする。
+    const bytes = std.Io.Dir.cwd().readFileAlloc(io, lock_path, gpa, .limited(64 * 1024 * 1024)) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => return null,
     };
@@ -77,6 +79,14 @@ pub fn targetFromLock(
     };
     if (diagnostics.errorCount() > 0) return null;
     defer lock.deinit();
+    // 意味検証に失敗した lock の target は評価に使わない（不正な os/abi で
+    // package を unavailable と誤判定しない）。resolver 版の差は許容し、
+    // stale resolver を理由に target を捨てない。
+    const prior_errors = diagnostics.errorCount();
+    lock_mod.validateWith(&lock, &diagnostics, .{ .allow_stale_resolver = true }) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+    };
+    if (diagnostics.errorCount() > prior_errors) return null;
     const resolved = try targetOfLock(arena, &lock);
     return resolved;
 }
@@ -91,6 +101,11 @@ fn targetOfLock(arena: Allocator, lock: *const lock_mod.Lock) error{OutOfMemory}
         .os_version = if (target.os_version) |version| try arena.dupe(u8, version) else null,
         .compat_js = target.compat_js,
         .optimize = try arena.dupe(u8, target.optimize),
+        // `when` の version 条件を既知の言語バージョンで評価できるようにする。
+        .version = if (lock.input.nako_version) |text|
+            semver_mod.Version.parse(text) catch null
+        else
+            null,
     };
 }
 
@@ -102,13 +117,16 @@ pub fn evaluatePackage(
     arena: Allocator,
     gpa: Allocator,
     io: std.Io,
+    /// 環境を読んだ固定 root handle。相対 path はここからの openat で辿り、
+    /// root の rename/replace で別プロジェクトの manifest を読まない。
+    root_dir: ?std.Io.Dir,
     project_root: []const u8,
     package_rel_path: []const u8,
     package_key: []const u8,
     target: ?Target,
 ) error{OutOfMemory}!PackageCondition {
     const key = try arena.dupe(u8, package_key);
-    const manifest = readPackageManifest(gpa, io, project_root, package_rel_path) catch |err| switch (err) {
+    const manifest = readPackageManifest(gpa, io, root_dir, project_root, package_rel_path) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.ManifestUnreadable => return .{
             .package_key = key,
@@ -126,10 +144,11 @@ const ManifestReadError = error{ OutOfMemory, ManifestUnreadable };
 fn readPackageManifest(
     gpa: Allocator,
     io: std.Io,
+    root_dir: ?std.Io.Dir,
     project_root: []const u8,
     package_rel_path: []const u8,
 ) ManifestReadError!manifest_mod.Manifest {
-    var package_dir = openPackageDir(gpa, io, project_root, package_rel_path) catch |err| switch (err) {
+    var package_dir = openPackageDir(gpa, io, root_dir, project_root, package_rel_path) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => return error.ManifestUnreadable,
     };
@@ -142,7 +161,11 @@ fn readPackageManifest(
     for (candidates) |candidate| {
         const bytes = package_dir.readFileAlloc(io, candidate.path, gpa, .limited(manifest_mod.max_manifest_bytes)) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
-            else => continue,
+            // 正本 `nako.toml` の欠落だけを配布メタデータへの正規の
+            // フォールバックとし、権限・サイズ上限・IsDir 等の読取失敗は
+            // 未検査に倒す（壊れた正本を METADATA で覆わない）。
+            error.FileNotFound, error.NotDir => continue,
+            else => if (candidate.npkg) continue else return error.ManifestUnreadable,
         };
         defer gpa.free(bytes);
         var diagnostics = diag.List.init(gpa);
@@ -166,9 +189,21 @@ fn readPackageManifest(
 fn openPackageDir(
     gpa: Allocator,
     io: std.Io,
+    root_dir: ?std.Io.Dir,
     project_root: []const u8,
     package_rel_path: []const u8,
 ) !std.Io.Dir {
+    // 固定 root からの相対 path は handle 相対で開く（root の rename/replace
+    // 後に別ツリーの manifest を読まない）。`..` を含む path と絶対 path は
+    // mutable path 依存として宣言された正当な形なので、従来どおり path
+    // 解決に委ねる（信頼境界は env_state/sync 側）。
+    if (root_dir != null and package_rel_path.len > 0) {
+        const relative = try normalizeSeparators(gpa, package_rel_path);
+        defer gpa.free(relative);
+        if (!std.fs.path.isAbsolute(relative) and !hasParentComponent(relative)) {
+            return root_dir.?.openDir(io, relative, .{});
+        }
+    }
     const path = resolvePackagePath(gpa, project_root, package_rel_path) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.UnsafePath => return error.UnsafePath,
@@ -180,17 +215,30 @@ fn openPackageDir(
     return std.Io.Dir.openDirAbsolute(io, path, .{});
 }
 
+/// environment.json の package path を環境検証（env_state）と同じ host 形式
+/// へ揃える。`/` と `\` の双方を区切りとして扱う。
+fn normalizeSeparators(gpa: Allocator, path: []const u8) Allocator.Error![]u8 {
+    const buffer = try gpa.alloc(u8, path.len);
+    for (path, 0..) |byte, index| {
+        buffer[index] = if (byte == '/' or byte == '\\') std.fs.path.sep else byte;
+    }
+    return buffer;
+}
+
+fn hasParentComponent(path: []const u8) bool {
+    var iterator = std.mem.splitScalar(u8, path, std.fs.path.sep);
+    while (iterator.next()) |part| {
+        if (std.mem.eql(u8, part, "..")) return true;
+    }
+    return false;
+}
+
 /// environment.json の package `path` は host 形式と `/` 形式の双方が
 /// 現れ得るため、比較・open 前に host の区切り文字へ揃える。
 fn resolvePackagePath(gpa: Allocator, project_root: []const u8, package_rel_path: []const u8) (Allocator.Error || error{UnsafePath})![]u8 {
     if (std.mem.indexOfScalar(u8, package_rel_path, 0) != null) return error.UnsafePath;
-    const buffer = try gpa.alloc(u8, package_rel_path.len);
+    const buffer = try normalizeSeparators(gpa, package_rel_path);
     defer gpa.free(buffer);
-    for (package_rel_path, 0..) |byte, index| {
-        // Windows の fixture/手書き環境は `/` と `\\` が混在し得る。
-        // POSIX では `\\` が正当なファイル名文字なので変換しない。
-        buffer[index] = if (byte == '/' or (builtin.os.tag == .windows and byte == '\\')) std.fs.path.sep else byte;
-    }
     return std.fs.path.resolve(gpa, &.{ project_root, buffer });
 }
 
@@ -205,7 +253,6 @@ fn evaluateManifest(
     const effective_target = target orelse defaultTarget();
     var has_source = false;
     var saw_unconditional = false;
-    var has_esm = false;
     var decl_count: usize = 0;
     var any_pass = false;
     var any_unknown = false;
@@ -216,20 +263,28 @@ fn evaluateManifest(
 
     for (manifest.exports) |export_decl| {
         if (export_decl.path != null) has_source = true;
-        if (export_decl.esm.len > 0) has_esm = true;
-        // ESM artifact は compat-js 前提のため OS 条件表示の対象外。
-        for (export_decl.native) |decl| {
-            decl_count += 1;
-            const evaluated = try evaluateArtifact(arena, gpa, decl, effective_target);
-            switch (evaluated.result) {
-                .pass => any_pass = true,
-                .unknown => any_unknown = true,
-                .fail => {},
-            }
-            if (evaluated.text) |text| {
-                if (!containsText(texts.items, text)) try texts.append(gpa, text);
-            } else {
-                saw_unconditional = true;
+        // native は常に評価する。ESM は対象 runtime で選択できる場合
+        // （lnako の --compat-js、または cnako）だけ評価対象に含める。
+        // 選択できない ESM を可用性の不確定要因に数えると、native の完全な
+        // 不一致を unknown に落として衝突検査を誤って省略してしまう。
+        const esm_decls: []const manifest_mod.ArtifactDecl = if (esmSelectable(effective_target))
+            export_decl.esm
+        else
+            &.{};
+        for ([_][]const manifest_mod.ArtifactDecl{ export_decl.native, esm_decls }) |decls| {
+            for (decls) |decl| {
+                decl_count += 1;
+                const evaluated = try evaluateArtifact(arena, gpa, decl, effective_target);
+                switch (evaluated.result) {
+                    .pass => any_pass = true,
+                    .unknown => any_unknown = true,
+                    .fail => {},
+                }
+                if (evaluated.text) |text| {
+                    if (!containsText(texts.items, text)) try texts.append(gpa, text);
+                } else {
+                    saw_unconditional = true;
+                }
             }
         }
     }
@@ -255,9 +310,7 @@ fn evaluateManifest(
         // 空 target で偽陽性の available にならないように unknown 固定）。
         if (target == null) break :blk .unknown;
         if (any_pass) break :blk .available;
-        // ESM が併存する package は --compat-js で利用でき得るため、
-        // native の不一致だけで「利用不可」と断定しない。
-        if (decl_count == 0 or any_unknown or has_esm) break :blk .unknown;
+        if (decl_count == 0 or any_unknown) break :blk .unknown;
         break :blk .unavailable;
     };
 
@@ -266,6 +319,13 @@ fn evaluateManifest(
         .condition = condition,
         .availability = availability,
     };
+}
+
+/// `target` の runtime 設定で ESM 実装を選択し得るか。lnako は
+/// `--compat-js` が必須で、cnako は ESM をそのまま利用できる。
+fn esmSelectable(target: Target) bool {
+    if (target.compat_js) return true;
+    return !std.mem.eql(u8, target.runtime, "lnako");
 }
 
 /// 宣言1件の評価結果。`unknown` は対象側の情報不足。
@@ -348,6 +408,15 @@ fn evaluateWhen(gpa: Allocator, text: []const u8, target: Target) error{OutOfMem
         .err => return .unknown,
         .ok => |*marker| {
             defer marker.deinit();
+            // features は OS 利用可否に影響しないため未確定。target 側の
+            // 未指定項目（空の os/cpu/abi 等）も「不明」として評価する。
+            var unknown_fields: std.EnumSet(marker_mod.Field) = .initOne(.features);
+            if (target.runtime.len == 0) unknown_fields.insert(.runtime);
+            if (target.os.len == 0) unknown_fields.insert(.os);
+            if (target.cpu.len == 0) unknown_fields.insert(.cpu);
+            if (target.abi.len == 0) unknown_fields.insert(.abi);
+            if (target.optimize.len == 0) unknown_fields.insert(.optimize);
+            if (target.version == null) unknown_fields.insert(.version);
             const outcome = marker.evaluatePartial(.{
                 .runtime = target.runtime,
                 .os = target.os,
@@ -356,8 +425,7 @@ fn evaluateWhen(gpa: Allocator, text: []const u8, target: Target) error{OutOfMem
                 .compat_js = target.compat_js,
                 .optimize = target.optimize,
                 .version = target.version,
-                // features は OS 利用可否に影響しないため未確定として評価する。
-            }, .initOne(.features)) catch return .unknown;
+            }, unknown_fields) catch return .unknown;
             return switch (outcome) {
                 .pass => .pass,
                 .fail => .fail,
@@ -389,7 +457,7 @@ fn writePackage(dir: std.Io.Dir, io: std.Io, manifest_source: []const u8) !void 
 fn evaluateFixture(arena: Allocator, dir: std.Io.Dir, io: std.Io, target: ?Target) !PackageCondition {
     const root = try dir.realPathFileAlloc(io, ".", testing.allocator);
     defer testing.allocator.free(root);
-    return evaluatePackage(arena, testing.allocator, io, root, "pkg", "pkg:test", target);
+    return evaluatePackage(arena, testing.allocator, io, dir, root, "pkg", "pkg:test", target);
 }
 
 test "OS条件: 無条件のsource exportは全OSで利用可能" {
@@ -642,7 +710,7 @@ test "OS条件: libcはtargetにabiもlibcも無ければ不明" {
     try testing.expectEqualStrings("libc musl", result.condition);
 }
 
-test "OS条件: native不適合でもESM併存なら利用不可と断定しない" {
+test "OS条件: compat-js無効では選択できないESMを可用性に数えず利用不可" {
     var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const io = std.testing.io;
@@ -659,8 +727,35 @@ test "OS条件: native不適合でもESM併存なら利用不可と断定しな�
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const result = try evaluateFixture(arena.allocator(), temporary.dir, io, .{ .runtime = "lnako", .os = "macos", .cpu = "aarch64", .abi = "gnu" });
-    try testing.expectEqual(Availability.unknown, result.availability);
+    try testing.expectEqual(Availability.unavailable, result.availability);
     try testing.expectEqualStrings("os == 'windows'", result.condition);
+}
+
+test "OS条件: compat-js有効ならESM宣言も条件評価に含める" {
+    var temporary = test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    const io = std.testing.io;
+    try writePackage(temporary.dir, io,
+        \\[package]
+        \\name = "test"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\[[exports]]
+        \\name = "main"
+        \\native = { path = "lib/win.dll", when = "os == 'windows'" }
+        \\esm = { path = "lib/index.mjs", when = "os == 'macos'" }
+    );
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const result = try evaluateFixture(arena.allocator(), temporary.dir, io, .{
+        .runtime = "lnako",
+        .os = "macos",
+        .cpu = "aarch64",
+        .abi = "gnu",
+        .compat_js = true,
+    });
+    try testing.expectEqual(Availability.available, result.availability);
+    try testing.expectEqualStrings("os == 'windows' | os == 'macos'", result.condition);
 }
 
 test "OS条件: target不明時はruntime条件の偽陽性で利用可能にしない" {
@@ -681,6 +776,137 @@ test "OS条件: target不明時はruntime条件の偽陽性で利用可能にし
     const result = try evaluateFixture(arena.allocator(), temporary.dir, io, null);
     try testing.expectEqual(Availability.unknown, result.availability);
     try testing.expectEqualStrings("runtime == 'lnako'", result.condition);
+}
+
+test "OS条件: nako.tomlが読めない場合はMETADATAにフォールバックせず不明" {
+    var temporary = test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    const io = std.testing.io;
+    // `nako.toml` をディレクトリにして IsDir の読取失敗を作る（POSIX/Windows
+    // 双方で権限に依存せず再現できる）。
+    try temporary.dir.createDirPath(io, "pkg/nako.toml");
+    try temporary.dir.createDirPath(io, "pkg/NAKO-PKG");
+    try temporary.dir.writeFile(io, .{ .sub_path = "pkg/NAKO-PKG/METADATA.toml", .data =
+        \\schemaVersion = 1
+        \\nativePluginAbi = "lnako_plugin_v1"
+        \\[package]
+        \\name = "test"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\[[exports]]
+        \\name = "main"
+        \\path = "src/test.nako3"
+    });
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const result = try evaluateFixture(arena.allocator(), temporary.dir, io, .{ .runtime = "lnako", .os = "macos" });
+    try testing.expectEqual(Availability.unknown, result.availability);
+    try testing.expectEqualStrings("不明", result.condition);
+}
+
+test "OS条件: 空のcpuは不明として評価する" {
+    var temporary = test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    const io = std.testing.io;
+    try writePackage(temporary.dir, io,
+        \\[package]
+        \\name = "test"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\[[exports]]
+        \\name = "main"
+        \\native = { path = "lib/mac.dylib", when = "cpu == 'aarch64'" }
+    );
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const result = try evaluateFixture(arena.allocator(), temporary.dir, io, .{ .runtime = "lnako", .os = "macos" });
+    try testing.expectEqual(Availability.unknown, result.availability);
+    try testing.expectEqualStrings("cpu == 'aarch64'", result.condition);
+}
+
+test "OS条件: markerのversion条件をtargetの言語バージョンで評価する" {
+    var temporary = test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    const io = std.testing.io;
+    try writePackage(temporary.dir, io,
+        \\[package]
+        \\name = "test"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\[[exports]]
+        \\name = "main"
+        \\native = { path = "lib/mac.dylib", when = "version >= '3.7.0'" }
+    );
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const with_version = try evaluateFixture(arena.allocator(), temporary.dir, io, .{
+        .runtime = "lnako",
+        .os = "macos",
+        .cpu = "aarch64",
+        .abi = "gnu",
+        .version = .{ .major = 3, .minor = 7, .patch = 24 },
+    });
+    try testing.expectEqual(Availability.available, with_version.availability);
+    var arena2 = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena2.deinit();
+    const without_version = try evaluateFixture(arena2.allocator(), temporary.dir, io, .{
+        .runtime = "lnako",
+        .os = "macos",
+        .cpu = "aarch64",
+        .abi = "gnu",
+    });
+    try testing.expectEqual(Availability.unknown, without_version.availability);
+}
+
+test "OS条件: cnako runtimeではruntime条件を一致として評価する" {
+    var temporary = test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    const io = std.testing.io;
+    try writePackage(temporary.dir, io,
+        \\[package]
+        \\name = "test"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\[[exports]]
+        \\name = "main"
+        \\native = { path = "lib/index.node", when = "runtime == 'cnako'" }
+    );
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const result = try evaluateFixture(arena.allocator(), temporary.dir, io, .{ .runtime = "cnako", .os = "macos", .cpu = "aarch64", .abi = "gnu" });
+    try testing.expectEqual(Availability.available, result.availability);
+}
+
+test "OS条件: lockのnakoVersionをmarkerのversion条件へ渡す" {
+    var temporary = test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    const io = std.testing.io;
+    try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data =
+        \\{"schemaVersion":1,"resolverVersion":1,"input":{"manifestSha256":"sha256:0000000000000000000000000000000000000000000000000000000000000000","profile":"default","features":[],"target":{"os":"macos","cpu":"aarch64","abi":"gnu"},"runtime":"lnako","nakoVersion":"3.7.24"},"packages":{},"profiles":{"default":{"os":"macos","cpu":"aarch64","abi":"gnu"}}}
+    });
+    const root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
+    defer testing.allocator.free(root);
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const target = (try targetFromLock(testing.allocator, io, root, arena.allocator())) orelse return error.TestUnexpectedResult;
+    try testing.expect(target.version != null);
+    try testing.expectEqual(@as(u64, 3), target.version.?.major);
+    try testing.expectEqual(@as(u64, 7), target.version.?.minor);
+    try testing.expectEqual(@as(u64, 24), target.version.?.patch);
+}
+
+test "OS条件: 意味検証に失敗するlockのtargetは使わない" {
+    var temporary = test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    const io = std.testing.io;
+    try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data =
+        \\{"schemaVersion":1,"resolverVersion":1,"input":{"manifestSha256":"sha256:0000000000000000000000000000000000000000000000000000000000000000","profile":"default","features":[],"target":{"os":"plan9","cpu":"mips","abi":"gnu"},"runtime":"lnako"},"packages":{},"profiles":{"default":{"os":"plan9","cpu":"mips","abi":"gnu"}}}
+    });
+    const root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
+    defer testing.allocator.free(root);
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    try testing.expect((try targetFromLock(testing.allocator, io, root, arena.allocator())) == null);
 }
 
 test "OS条件: manifestが無いpackageは不明として扱う" {
@@ -747,7 +973,7 @@ test "OS条件: nako.lockからtargetを読む" {
     defer temporary.cleanup();
     const io = std.testing.io;
     try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data =
-        \\{"schemaVersion":1,"resolverVersion":1,"input":{"manifestSha256":"sha256:0000000000000000000000000000000000000000000000000000000000000000","profile":"default","features":[],"target":{"os":"linux","cpu":"x86_64","abi":"gnu"},"runtime":"lnako"},"packages":{}}
+        \\{"schemaVersion":1,"resolverVersion":1,"input":{"manifestSha256":"sha256:0000000000000000000000000000000000000000000000000000000000000000","profile":"default","features":[],"target":{"os":"linux","cpu":"x86_64","abi":"gnu"},"runtime":"lnako"},"packages":{},"profiles":{"default":{"os":"linux","cpu":"x86_64","abi":"gnu"}}}
     });
     const root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
     defer testing.allocator.free(root);

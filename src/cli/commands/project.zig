@@ -14,6 +14,7 @@ const diag = lnako.package.diagnostics;
 const project = lnako.package.project;
 const manifest_mod = lnako.package.manifest;
 const lock_model = lnako.package.lock;
+const semver = lnako.package.semver;
 const cache = lnako.package.cache;
 
 const Allocator = std.mem.Allocator;
@@ -1055,18 +1056,18 @@ pub fn checkProject(a: Allocator, io: std.Io, args: []const []const u8, start_di
     const feature_manifest: ?*const manifest_mod.Manifest =
         if (inspect.lock_state == .fresh) &project_var.manifest else null;
 
-    // OS 条件評価の target。check は現行 profile の解決結果を使う
-    // （`--os-version` 指定時のみ osVersion を持つ）。fresh lock の
-    // `input.target` とは鮮度比較で一致するため、ここで lock を読み直す
-    // 必要はない。runtime は check の要求 runtime（lnako）と一致する。
+    // OS 条件評価の target。check は現行 profile の解決結果（runtime・
+    // os/cpu/abi・言語バージョン）を使う。fresh lock の `input.target` とは
+    // 鮮度比較で一致するため、ここで lock を読み直す必要はない。
     const check_target = lnako.package.command_conditions.Target{
-        .runtime = "lnako",
+        .runtime = inspect.runtime,
         .os = inspect.target.os,
         .cpu = inspect.target.cpu,
         .abi = inspect.target.abi,
         .os_version = inspect.target.os_version,
         .compat_js = inspect.target.compat_js,
         .optimize = inspect.target.optimize,
+        .version = if (inspect.nako_version) |text| semver.Version.parse(text) catch null else null,
     };
 
     // 命令 metadata 静的検査。環境が current のときのみ（stale/missing は
@@ -1093,7 +1094,10 @@ pub fn checkProject(a: Allocator, io: std.Io, args: []const []const u8, start_di
         lnako.package.command_inspect.Report{ .arena = std.heap.ArenaAllocator.init(a) };
     defer command_report.deinit();
 
-    if (diagnostics.errorCount() > 0) {
+    // 名前空間 alias の error 診断は --json でも機械可読な結果を失わないよう、
+    // JSON を出力した後に失敗を返す。テキストモードは従来どおり先に失敗する。
+    const has_errors = diagnostics.errorCount() > 0;
+    if (has_errors and !flags.json) {
         renderOrFail(&diagnostics, stderr, project_var.manifest_path);
         return error.Failed;
     }
@@ -1117,11 +1121,15 @@ pub fn checkProject(a: Allocator, io: std.Io, args: []const []const u8, start_di
             ));
         }
         const conditions_json = try lnako.package.command_conditions.conditionsJson(a, command_report.conditions);
+        defer a.free(conditions_json);
         const namespace_json = try lnako.package.namespace_check.summaryJson(
             a,
             command_report.alias_count,
             command_report.namespace_issues,
+            command_report.namespace_scan_complete,
+            command_report.namespace_scan_reason,
         );
+        defer a.free(namespace_json);
         // feature 定義が無い / manifest 未供給なら key 自体を出さない。
         const features_json: []const u8 = if (command_report.features) |impact|
             try std.fmt.allocPrint(a, ",\"features\":{s}", .{try lnako.package.command_inspect.featureImpactJson(a, impact)})
@@ -1144,6 +1152,10 @@ pub fn checkProject(a: Allocator, io: std.Io, args: []const []const u8, start_di
             },
         );
         try stdout.flush();
+        if (has_errors) {
+            renderOrFail(&diagnostics, stderr, project_var.manifest_path);
+            return error.Failed;
+        }
     } else {
         try stdout.print("プロジェクト: {s}（{s}）\n", .{ project_var.manifest.package.name, project_var.root });
         try stdout.print("  nako.toml: OK\n", .{});
@@ -1177,11 +1189,19 @@ pub fn checkProject(a: Allocator, io: std.Io, args: []const []const u8, start_di
             }
         }
         // namespace alias の診断（空・重複・不正文字・予約語・既存 module 衝突）。
-        if (command_report.alias_count > 0 or command_report.namespace_issues.len > 0) {
-            try stdout.print("  名前空間: alias {d} 件（問題 {d} 件）\n", .{
+        if (command_report.alias_count > 0 or command_report.namespace_issues.len > 0 or
+            !command_report.namespace_scan_complete)
+        {
+            try stdout.print("  名前空間: alias {d} 件（問題 {d} 件）", .{
                 command_report.alias_count,
                 command_report.namespace_issues.len,
             });
+            if (!command_report.namespace_scan_complete) {
+                try stdout.print("（module 衝突検査は未検査: {s}）", .{
+                    command_report.namespace_scan_reason orelse "列挙が不完全です",
+                });
+            }
+            try stdout.print("\n", .{});
             for (command_report.namespace_issues) |issue| {
                 try stdout.print("    名前空間 alias: {s} [{s}] {s}\n", .{
                     issue.scope,

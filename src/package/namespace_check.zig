@@ -20,6 +20,7 @@
 //! して扱う（呼出し側が `isError` で判定する）。
 
 const std = @import("std");
+const builtin = @import("builtin");
 const import_resolver = @import("import_resolver.zig");
 const lexer = @import("../frontend/lexer.zig");
 
@@ -89,6 +90,11 @@ fn dependencyLessThan(_: void, a: Dependency, b: Dependency) bool {
     return std.mem.order(u8, a.package, b.package) == .lt;
 }
 
+const SeenAlias = struct {
+    alias: []const u8,
+    package: []const u8,
+};
+
 /// `scopes` と `module_names`（プロジェクト既存 module の basename）から
 /// 決定的な順序の診断一覧を作る。文字列は `arena` が所有する。
 pub fn analyze(
@@ -98,16 +104,24 @@ pub fn analyze(
 ) error{OutOfMemory}![]const Issue {
     const sorted = try arena.alloc(SortableScope, scopes.len);
     for (scopes, 0..) |scope, index| {
-        const dependencies = try arena.dupe(Dependency, scope.dependencies);
+        // `Issue.scope`/`Issue.alias` は結果 arena が所有する。caller の
+        // 環境データが先に解放されても JSON 出力が読み出さないようにする。
+        const dependencies = try arena.alloc(Dependency, scope.dependencies.len);
+        for (scope.dependencies, 0..) |dependency, dep_index| {
+            dependencies[dep_index] = .{
+                .alias = try arena.dupe(u8, dependency.alias),
+                .package = try arena.dupe(u8, dependency.package),
+            };
+        }
         std.mem.sort(Dependency, dependencies, {}, dependencyLessThan);
-        sorted[index] = .{ .name = scope.name, .dependencies = dependencies };
+        sorted[index] = .{ .name = try arena.dupe(u8, scope.name), .dependencies = dependencies };
     }
     std.mem.sort(SortableScope, sorted, {}, scopeLessThan);
 
     var issues: std.ArrayList(Issue) = .empty;
     for (sorted) |scope| {
-        // 同一 scope の公開 namespace → 最初に現れた package key。
-        var seen: std.StringHashMapUnmanaged([]const u8) = .empty;
+        // 同一 scope の公開 namespace → 最初に現れた (alias, package)。
+        var seen: std.StringHashMapUnmanaged(SeenAlias) = .empty;
         defer seen.deinit(arena);
         for (scope.dependencies) |dependency| {
             const alias = dependency.alias;
@@ -168,20 +182,20 @@ pub fn analyze(
             }
             const entry = try seen.getOrPut(arena, normalized);
             if (entry.found_existing) {
-                if (!std.mem.eql(u8, entry.value_ptr.*, dependency.package)) {
+                if (!std.mem.eql(u8, entry.value_ptr.package, dependency.package)) {
                     try issues.append(arena, .{
                         .scope = scope.name,
                         .alias = alias,
                         .kind = .duplicate,
                         .detail = try std.fmt.allocPrint(
                             arena,
-                            "公開 namespace \"{s}\" が package \"{s}\" と \"{s}\" で重複します",
-                            .{ normalized, entry.value_ptr.*, dependency.package },
+                            "公開 namespace \"{s}\" が alias \"{s}\"（package \"{s}\"）と alias \"{s}\"（package \"{s}\"）で重複します",
+                            .{ normalized, entry.value_ptr.alias, entry.value_ptr.package, alias, dependency.package },
                         ),
                     });
                 }
             } else {
-                entry.value_ptr.* = dependency.package;
+                entry.value_ptr.* = .{ .alias = alias, .package = dependency.package };
             }
         }
     }
@@ -209,6 +223,25 @@ fn invalidChar(alias: []const u8) ?[]const u8 {
                 return "\"@\" は先頭だけが意味を持ちます";
             },
             else => return "英数字・\"_\"・\"-\"・\"/\"・先頭\"@\"以外の文字を含みます",
+        }
+    }
+    // 全角スペース等の Unicode 区切りは identifier を分割し、`{alias}__命令`
+    // の修飾名として参照できなくなるため警告する。
+    if (unicodeSeparator(alias) != null) {
+        return "Unicode の区切り文字（全角スペース等）を含みます";
+    }
+    return null;
+}
+
+/// 識別子を分割する Unicode 区切り（空白・行/段落区切り・BOM）を検出する。
+fn unicodeSeparator(alias: []const u8) ?u21 {
+    const view = std.unicode.Utf8View.init(alias) catch return null;
+    var iterator = view.iterator();
+    while (iterator.nextCodepoint()) |codepoint| {
+        switch (codepoint) {
+            0x00A0, 0x1680, 0x2028, 0x2029, 0x202F, 0x205F, 0x3000, 0xFEFF => return codepoint,
+            0x2000...0x200A => return codepoint,
+            else => {},
         }
     }
     return null;
@@ -300,6 +333,17 @@ test "namespace: 正規化で畳まれる文字をinvalid_charとして診断す
     try testing.expect(std.mem.indexOf(u8, issues[1].detail, "my_util") != null);
 }
 
+test "namespace: Unicodeの区切り文字を含むaliasをinvalid_charとして診断する" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    // 全角スペース (U+3000) を含む alias。字句上は識別子が分割される。
+    const issues = try analyzeFixture(arena.allocator(), &.{
+        .{ .alias = "my　util", .package = "pkg:a" },
+    }, &.{});
+    try testing.expectEqual(@as(usize, 1), countKind(issues, .invalid_char));
+    try testing.expect(std.mem.indexOf(u8, issues[0].detail, "Unicode") != null);
+}
+
 test "namespace: 予約語aliasをreservedとして診断する" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -364,17 +408,108 @@ test "namespace: package scopeも診断し順序を固定する" {
     try testing.expectEqualStrings("pkg:z", issues[1].scope);
 }
 
+pub const ModuleScan = struct {
+    names: []const []const u8 = &.{},
+    /// 512 件上限や I/O エラーで衝突検査が不完全か。
+    complete: bool = true,
+    reason: ?[]const u8 = null,
+};
+
+/// プロジェクト直下の source module 名（basename）を集める。alias の公開
+/// namespace が既存 module と同じになると `{namespace}__{名前}` の解決が
+/// 曖昧になるため、その衝突診断にだけ使う。サブディレクトリは辿らない。
+/// 上限は module 候補を列挙・ソートした後に適用するため、同一 tree では
+/// 常に同じ候補が検査対象になる。
+pub fn scanProjectModules(arena: Allocator, io: std.Io, root_dir: std.Io.Dir) error{OutOfMemory}!ModuleScan {
+    var dir = root_dir.openDir(io, ".", .{ .iterate = true }) catch {
+        return .{ .complete = false, .reason = "project root を列挙できません" };
+    };
+    defer dir.close(io);
+    var candidates: std.ArrayList([]const u8) = .empty;
+    var iterator = dir.iterate();
+    while (true) {
+        const maybe_entry = iterator.next(io) catch {
+            return .{
+                .names = try sortedModuleNames(arena, candidates.items),
+                .complete = false,
+                .reason = "project root の列挙が途中で失敗しました",
+            };
+        };
+        const entry = maybe_entry orelse break;
+        // 通常ファイルと、通常ファイルを指す symlink を対象にする。
+        const is_regular = switch (entry.kind) {
+            .file => true,
+            .sym_link => blk: {
+                const stat = dir.statFile(io, entry.name, .{}) catch break :blk false;
+                break :blk stat.kind == .file;
+            },
+            else => false,
+        };
+        if (!is_regular) continue;
+        if (!isNakoSource(entry.name)) continue;
+        try candidates.append(arena, try arena.dupe(u8, entry.name));
+    }
+    const limited = try sortedModuleNames(arena, candidates.items);
+    var names: std.ArrayList([]const u8) = .empty;
+    for (limited) |name| {
+        if (names.items.len >= max_project_modules) {
+            return .{
+                .names = names.items,
+                .complete = false,
+                .reason = "project root の module 候補が512件を超えたため一部未検査",
+            };
+        }
+        const extension = std.fs.path.extension(name);
+        if (extension.len == 0 or extension.len >= name.len) continue;
+        try names.append(arena, name[0 .. name.len - extension.len]);
+    }
+    return .{ .names = names.items };
+}
+
+const max_project_modules: usize = 512;
+
+fn sortedModuleNames(arena: Allocator, names: []const []const u8) error{OutOfMemory}![]const []const u8 {
+    const sorted = try arena.dupe([]const u8, names);
+    std.mem.sort([]const u8, sorted, {}, struct {
+        fn lessThan(_: void, a: []const u8, b: []const u8) bool {
+            return std.mem.order(u8, a, b) == .lt;
+        }
+    }.lessThan);
+    return sorted;
+}
+
+fn isNakoSource(path: []const u8) bool {
+    const extension = std.fs.path.extension(path);
+    return std.ascii.eqlIgnoreCase(extension, ".nako3") or
+        std.ascii.eqlIgnoreCase(extension, ".dncl") or
+        std.ascii.eqlIgnoreCase(extension, ".dncl2");
+}
+
 /// `check --json` の `commands.namespaces` を決定的に組み立てる。
 pub fn summaryJson(
     gpa: Allocator,
     alias_count: usize,
     issues: []const Issue,
+    scan_complete: bool,
+    scan_reason: ?[]const u8,
 ) error{OutOfMemory}![]const u8 {
     var out: std.ArrayList(u8) = .empty;
     defer out.deinit(gpa);
-    const header = try std.fmt.allocPrint(gpa, "{{\"aliases\":{d},\"issues\":[", .{alias_count});
+    const header = try std.fmt.allocPrint(
+        gpa,
+        "{{\"aliases\":{d},\"scan\":\"{s}\"",
+        .{ alias_count, if (scan_complete) "complete" else "incomplete" },
+    );
     defer gpa.free(header);
     try out.appendSlice(gpa, header);
+    if (scan_reason) |reason| {
+        const reason_json = try std.json.Stringify.valueAlloc(gpa, reason, .{});
+        defer gpa.free(reason_json);
+        const field = try std.fmt.allocPrint(gpa, ",\"scanReason\":{s}", .{reason_json});
+        defer gpa.free(field);
+        try out.appendSlice(gpa, field);
+    }
+    try out.appendSlice(gpa, ",\"issues\":[");
     for (issues, 0..) |issue, index| {
         if (index > 0) try out.appendSlice(gpa, ",");
         const scope = try std.json.Stringify.valueAlloc(gpa, issue.scope, .{});

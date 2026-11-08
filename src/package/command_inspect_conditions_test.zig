@@ -269,9 +269,16 @@ test "名前空間: aliasの空・重複・不正文字・既存module衝突を�
     }
     try testing.expect(has_alias_collision);
 
-    const json = try namespace_check.summaryJson(a, report.alias_count, report.namespace_issues);
+    const json = try namespace_check.summaryJson(
+        a,
+        report.alias_count,
+        report.namespace_issues,
+        report.namespace_scan_complete,
+        report.namespace_scan_reason,
+    );
     defer a.free(json);
     try testing.expect(std.mem.indexOf(u8, json, "\"aliases\":5") != null);
+    try testing.expect(std.mem.indexOf(u8, json, "\"scan\":\"complete\"") != null);
     try testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"duplicate\"") != null);
     try testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"module_collision\"") != null);
     try testing.expect(std.mem.indexOf(u8, json, "\"severity\":\"error\"") != null);
@@ -324,7 +331,7 @@ test "OS条件: package宣言命令の索引はOS不一致のpackageを検査済
     try tmp.dir.writeFile(io, .{
         .sub_path = "nako.lock",
         .data =
-        \\{"schemaVersion":1,"resolverVersion":1,"input":{"manifestSha256":"sha256:0000000000000000000000000000000000000000000000000000000000000000","profile":"default","features":[],"target":{"os":"macos","cpu":"aarch64","abi":"gnu"},"runtime":"lnako"},"packages":{}}
+        \\{"schemaVersion":1,"resolverVersion":1,"input":{"manifestSha256":"sha256:0000000000000000000000000000000000000000000000000000000000000000","profile":"default","features":[],"target":{"os":"macos","cpu":"aarch64","abi":"gnu"},"runtime":"lnako"},"packages":{},"profiles":{"default":{"os":"macos","cpu":"aarch64","abi":"gnu"}}}
         ,
     });
     const root = try tmp.dir.realPathFileAlloc(io, ".", a);
@@ -337,4 +344,142 @@ test "OS条件: package宣言命令の索引はOS不一致のpackageを検査済
     try testing.expect(!windows.available);
     const macos = index.find("pkg:macos-only").?;
     try testing.expect(macos.available);
+}
+
+test "OS条件: commands metadataが無いpackageでもOS条件とos_unavailableを表示する" {
+    const a = testing.allocator;
+    var tmp = test_sandbox.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeEnv(tmp.dir,
+        \\{
+        \\  "schemaVersion": 1,
+        \\  "lockSha256": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        \\  "profile": "default",
+        \\  "runtime": "lnako",
+        \\  "packages": {
+        \\    "pkg:windows-only": {
+        \\      "name": "windows-only",
+        \\      "version": "1.0.0",
+        \\      "path": "winpkg",
+        \\      "exports": [{"name": "main", "native": [{"path": "lib/win.dll", "when": "os == 'windows'"}]}]
+        \\    }
+        \\  }
+        \\}
+    );
+    try writeManifest(tmp.dir, "winpkg/nako.toml", windows_manifest);
+
+    var diagnostics = diag.List.init(a);
+    defer diagnostics.deinit();
+    var report = try command_inspect.inspectEnvironmentDir(a, io, tmp.dir, .{
+        .target = macos_target,
+    }, &diagnostics);
+    defer report.deinit();
+
+    try testing.expectEqual(@as(usize, 1), report.conditions.len);
+    try testing.expectEqual(command_conditions.Availability.unavailable, report.conditions[0].availability);
+    try testing.expectEqual(@as(usize, 1), report.uninspected.len);
+    try testing.expectEqual(command_inspect.UninspectedReason.os_unavailable, report.uninspected[0].reason);
+}
+
+test "名前空間: module候補が512件を超える場合は決定的に打ち切り未検査を表示する" {
+    const a = testing.allocator;
+    var tmp = test_sandbox.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeEnv(tmp.dir,
+        \\{
+        \\  "schemaVersion": 1,
+        \\  "lockSha256": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        \\  "profile": "default",
+        \\  "runtime": "lnako",
+        \\  "dependencies": [{"alias": "zzz", "package": "pkg:a"}],
+        \\  "packages": {
+        \\    "pkg:a": {
+        \\      "name": "lib-a",
+        \\      "version": "1.0.0",
+        \\      "path": "pkg-a",
+        \\      "exports": [{"name": "main", "path": "src/a.nako3"}],
+        \\      "commands": [{"name": "甲", "args": [], "josi": []}]
+        \\    }
+        \\  }
+        \\}
+    );
+    try writeNamespacePackages(tmp.dir);
+    // ソート後に `zzz.nako3` が 513 件目になり、決定的に検査対象から外れる。
+    var index: usize = 0;
+    while (index < 512) : (index += 1) {
+        const name = try std.fmt.allocPrint(a, "m{d:0>3}.nako3", .{index});
+        defer a.free(name);
+        try tmp.dir.writeFile(io, .{ .sub_path = name, .data = "●modとは\nここまで\n" });
+    }
+    try tmp.dir.writeFile(io, .{ .sub_path = "zzz.nako3", .data = "●zzzとは\nここまで\n" });
+
+    var diagnostics = diag.List.init(a);
+    defer diagnostics.deinit();
+    var first = try command_inspect.inspectEnvironmentDir(a, io, tmp.dir, .{}, &diagnostics);
+    defer first.deinit();
+    try testing.expect(!first.namespace_scan_complete);
+    try testing.expect(first.namespace_scan_reason != null);
+    const first_json = try command_conditions.conditionsJson(a, first.conditions);
+    defer a.free(first_json);
+    const first_ns = try namespace_check.summaryJson(
+        a,
+        first.alias_count,
+        first.namespace_issues,
+        first.namespace_scan_complete,
+        first.namespace_scan_reason,
+    );
+    defer a.free(first_ns);
+
+    var diagnostics2 = diag.List.init(a);
+    defer diagnostics2.deinit();
+    var second = try command_inspect.inspectEnvironmentDir(a, io, tmp.dir, .{}, &diagnostics2);
+    defer second.deinit();
+    const second_ns = try namespace_check.summaryJson(
+        a,
+        second.alias_count,
+        second.namespace_issues,
+        second.namespace_scan_complete,
+        second.namespace_scan_reason,
+    );
+    defer a.free(second_ns);
+    // 同一 tree では列挙順に依存せず同じ診断になる。
+    try testing.expectEqualStrings(first_ns, second_ns);
+}
+
+test "名前空間: symlinkされたsource moduleも既存module衝突に含める" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const a = testing.allocator;
+    var tmp = test_sandbox.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeEnv(tmp.dir,
+        \\{
+        \\  "schemaVersion": 1,
+        \\  "lockSha256": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        \\  "profile": "default",
+        \\  "runtime": "lnako",
+        \\  "dependencies": [{"alias": "util", "package": "pkg:a"}],
+        \\  "packages": {
+        \\    "pkg:a": {
+        \\      "name": "lib-a",
+        \\      "version": "1.0.0",
+        \\      "path": "pkg-a",
+        \\      "exports": [{"name": "main", "path": "src/a.nako3"}],
+        \\      "commands": [{"name": "甲", "args": [], "josi": []}]
+        \\    }
+        \\  }
+        \\}
+    );
+    try writeNamespacePackages(tmp.dir);
+    try tmp.dir.writeFile(io, .{ .sub_path = "real.nako3", .data = "●道具とは\nここまで\n" });
+    try tmp.dir.symLink(io, "real.nako3", "util.nako3", .{});
+
+    var diagnostics = diag.List.init(a);
+    defer diagnostics.deinit();
+    var report = try command_inspect.inspectEnvironmentDir(a, io, tmp.dir, .{}, &diagnostics);
+    defer report.deinit();
+    var collisions: usize = 0;
+    for (report.namespace_issues) |issue| {
+        if (issue.kind == .module_collision) collisions += 1;
+    }
+    try testing.expectEqual(@as(usize, 1), collisions);
 }
