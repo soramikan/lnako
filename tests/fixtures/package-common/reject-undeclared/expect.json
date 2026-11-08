@@ -1,0 +1,5 @@
+{
+  "reason": "root scopeに未宣言のalias",
+  "lnakoDiagnostic": "error[invalid_import]",
+  "cnakoDiagnostic": "E013_MISSING_PACKAGE"
+}

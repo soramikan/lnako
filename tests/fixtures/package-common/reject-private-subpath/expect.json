@@ -1,0 +1,5 @@
+{
+  "reason": "宣言されていないsubpath（非公開入口）",
+  "lnakoDiagnostic": "error[invalid_import]",
+  "cnakoDiagnostic": "E013_MISSING_PACKAGE"
+}

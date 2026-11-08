@@ -1,0 +1,3 @@
+# fixtureを直接実行したときに生成される準備物はコミットしない。
+# `.nako/` はrootの.gitignoreが任意階層で対象にするため、ここではlockのみ指定する。
+**/nako.lock
