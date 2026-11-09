@@ -15,18 +15,22 @@ const value_mod = @import("../runtime/value.zig");
 const Allocator = std.mem.Allocator;
 
 /// plugin module を評価して登録された command key 一覧を返す。
-/// `path` は module 登録名（moduleFilename 規約で `/` 正規化される）。
+/// `module_source` は plugin artifact の内容（path ではない）。`package_root`
+/// を渡すと、評価中の import 解決がその root 内に拘束される（root 外への
+/// FS fallback を拒否する）。`module_name` は診断用の登録名。
 pub fn collectEsmCommandNames(
     arena: Allocator,
     module_source: []const u8,
+    package_root: ?[]const u8,
     namespace: []const u8,
+    module_name: []const u8,
 ) (error{ LoadFailed, OutOfMemory })![]const []const u8 {
     var runtime = value_mod.Runtime.init(arena);
     defer runtime.deinit();
     var state = quickjs.State.init(true);
     defer state.deinit();
 
-    const module_path = try std.fmt.allocPrint(arena, "plugin-probe/{s}.mjs", .{namespace});
+    const module_path = try std.fmt.allocPrint(arena, "plugin-probe/{s}/{s}", .{ namespace, module_name });
     const modules = [_]@import("../ir/nako_ir.zig").JavaScriptModule{
         .{
             .path = module_path,
@@ -36,6 +40,10 @@ pub fn collectEsmCommandNames(
                 try arena.dupe([]const u8, &[_][]const u8{namespace})
             else
                 &.{},
+            // root を渡さないと bridge の module_normalize が包含検査を
+            // skip し、plugin top-level の相対 import が任意のローカル
+            // JS を読めてしまう（Effects 拒否の外側の穴）。
+            .package_root = package_root,
         },
     };
     quickjs.installModules(&runtime, &state, &modules, effects()) catch

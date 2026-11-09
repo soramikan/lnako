@@ -15,6 +15,11 @@
 //!
 //! ロードできない package は不一致にせず `uninspected`（load_failed 等）と
 //! して記録する。照合結果は check の本文/JSON へ出す。
+//!
+//! 既知の限界: 宣言 command metadata は `.nako3` 公開ソースの AST から導出
+//! されるため、ESM plugin だけを公開する package（`exports[].esm` のみ）は
+//! 宣言を持たず `no_commands`（照合対象外）になる。ESM の実登録照合は、
+//! `.nako3` 側の宣言と ESM 実装が同じ命令を公開する構成でのみ機能する。
 
 const std = @import("std");
 const diag = @import("diagnostics.zig");
@@ -120,9 +125,15 @@ pub const PackageInput = struct {
     path: []const u8,
     /// 宣言命令 metadata（null は環境に `commands` が無い＝未検査）。
     declared: ?[]const npkg_commands.Command = null,
-    /// plugin artifact の相対 path（export 解決結果）。null は plugin では
-    /// ない package（source library）。
+    /// plugin artifact の絶対 path（`path` 配下に解決済み）。null は plugin
+    /// ではない package（source library）。
     plugin_artifact: ?[]const u8 = null,
+    /// ESM plugin の module source（呼出し側が読み込んで渡す）。ESM では
+    /// `plugin_artifact` を評価せず、この source を評価する。
+    esm_source: ?[]const u8 = null,
+    /// ESM plugin の package root（絶対 path）。import 解決をこの root へ
+    /// 拘束する（root 外への FS fallback を拒否する）。
+    package_root: ?[]const u8 = null,
     /// ESM plugin か（false は native plugin）。
     esm: bool = false,
     /// package 経由の公開 namespace。空は直接 path import 相当（無修飾）。
@@ -210,10 +221,14 @@ const RegisteredCommands = struct {
 /// 呼出し側で未検査へ落とす。
 fn collectRegistered(arena: Allocator, input: PackageInput) (error{ LoadFailed, OutOfMemory })!RegisteredCommands {
     if (input.esm) {
+        // 評価するのは artifact path ではなく、呼出し側が読んだ module source。
+        const source = input.esm_source orelse return error.LoadFailed;
         const names = @import("../compat/plugin_probe.zig").collectEsmCommandNames(
             arena,
-            input.plugin_artifact.?,
+            source,
+            input.package_root,
             input.namespace,
+            input.plugin_artifact orelse "plugin.mjs",
         ) catch return error.LoadFailed;
         return diffNames(arena, input.declared.?, names);
     }
@@ -357,11 +372,13 @@ fn nativeShapeMismatch(
     defer slot_count.deinit(arena);
     const slots = try particleSlots(arena, &josi_backing, &slot_count, particles);
     const declared_arity = command.args.len;
-    // 宣言は「引数名と助詞の対応配列」であり可変長は表現できない。実登録が
-    // 可変長（min != max）なら宣言側では固定 arity で表現できていないため
-    // 不一致とする。min == max の固定 arity のみを照合対象にする。
-    if (minimum_arguments != maximum_arguments) return .arity;
-    if (declared_arity != minimum_arguments or slots.len != minimum_arguments) return .arity;
+    // 宣言は「引数名と助詞の対応配列」で可変長を表現できない。実登録が可変長
+    // （min != max）の場合は、宣言 arity がその範囲に収まっていれば一致と
+    // みなす。範囲外だけを不一致にする（範囲内を一律エラーにすると、可変長
+    // plugin を固定個数で宣言した実用的な package が全件落ちる）。
+    if (declared_arity < minimum_arguments or declared_arity > maximum_arguments) return .arity;
+    // 助詞スロット数は宣言 arity と一致している必要がある。
+    if (slots.len != 0 and slots.len != declared_arity) return .arity;
     // 助詞照合。宣言 `josi` と particles 導出助詞を順に比較する。
     // particles から導出できない（プレースホルダ無し）場合は名前照合のみ。
     var differs = false;
@@ -600,7 +617,7 @@ test "particleSlots: プレースホルダからスロット助詞を導出す�
     try testing.expectEqual(@as(usize, 0), empty.len);
 }
 
-test "nativeShapeMismatch: 可変長登録はarity不一致と判定する" {
+test "nativeShapeMismatch: 可変長登録は宣言 arity が範囲内なら一致とする" {
     var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_impl.deinit();
     const arena = arena_impl.allocator();
@@ -609,10 +626,17 @@ test "nativeShapeMismatch: 可変長登録はarity不一致と判定する" {
         .args = &.{ "A", "B" },
         .josi = &.{ "と", "を" },
     };
+    // min=2, max=5 に宣言 arity 2 は収まる → 一致（誤検知しない）。
+    try testing.expectEqual(
+        @as(?ShapeMismatch.Kind, null),
+        try nativeShapeMismatch(command, "AとBを", 2, 5, arena),
+    );
+    // 範囲外は arity 不一致。
     try testing.expectEqual(
         ShapeMismatch.Kind.arity,
-        (try nativeShapeMismatch(command, "AとBを", 2, 5, arena)).?,
+        (try nativeShapeMismatch(command, "AとBを", 3, 5, arena)).?,
     );
+    // 固定 arity の一致も従来どおり。
     try testing.expectEqual(
         @as(?ShapeMismatch.Kind, null),
         try nativeShapeMismatch(command, "AとBを", 2, 2, arena),

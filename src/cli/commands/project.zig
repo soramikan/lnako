@@ -9,6 +9,7 @@ const std = @import("std");
 const lnako = @import("lnako");
 const edit = @import("project_edit.zig");
 const init_cmd = @import("project_init.zig");
+const project_plugins = @import("project_plugins.zig");
 
 const diag = lnako.package.diagnostics;
 const project = lnako.package.project;
@@ -248,130 +249,6 @@ fn rejectInertFlags(flags: *const PrepFlags, verb: []const u8, comptime allowed:
     else
         null;
     if (bad) |flag| return failUsage(stderr, "{s}: {s} はこのコマンドでは使えません\n", .{ verb, flag });
-}
-
-/// `--load-plugins` 照合で「一致」と判定された package 数。
-fn matchedPackageCount(report: *const lnako.package.plugin_registration.Report) usize {
-    var count: usize = 0;
-    for (report.packages) |*package| {
-        if (package.inspected) count += 1;
-    }
-    return count;
-}
-
-/// plugin 実登録照合の入力を environment.json から組み立て、`--load-plugins`
-/// 照合を実行する。plugin artifact は環境記録の `exports` から解決する:
-/// native artifact（`.so`/`.dylib`/`.dll`/`.node`）は native plugin、
-/// JS artifact（`.js`/`.mjs`/`.cjs`）または `esm` 宣言は ESM plugin。
-/// 宣言命令の無い package・plugin を持たない package は照合対象外として
-/// `status` に記録し、不一致とは扱わない。
-fn runPluginRegistrationCheck(
-    a: Allocator,
-    io: std.Io,
-    project_var: *const project.Project,
-    options: lnako.package.plugin_registration.Options,
-) !lnako.package.plugin_registration.Report {
-    // environment.json を読み、package 記録ごとに照合入力を組み立てる。
-    // `path` を解決できない package は照合対象外（load_failed にしない）。
-    const env_rel = ".nako/" ++ lnako.package.environment.environment_file;
-    const bytes = project_var.root_dir.readFileAlloc(io, env_rel, a, .limited(32 * 1024 * 1024)) catch |err| switch (err) {
-        error.OutOfMemory => return err,
-        else => return error.Failed,
-    };
-    defer a.free(bytes);
-    var parsed = std.json.parseFromSlice(std.json.Value, a, bytes, .{}) catch |err| switch (err) {
-        error.OutOfMemory => return err,
-        else => return error.Failed,
-    };
-    defer parsed.deinit();
-    if (parsed.value != .object) return error.Failed;
-    const packages_value = parsed.value.object.get("packages") orelse return error.Failed;
-    if (packages_value != .object) return error.Failed;
-
-    var inputs: std.ArrayList(lnako.package.plugin_registration.PackageInput) = .empty;
-    defer inputs.deinit(a);
-    var it = packages_value.object.iterator();
-    while (it.next()) |entry| {
-        if (entry.value_ptr.* != .object) continue;
-        const record = entry.value_ptr.*.object;
-        const path_value = record.get("path") orelse continue;
-        if (path_value != .string) continue;
-
-        // plugin artifact の解決。exports 配下から native/JS artifact を探す。
-        var plugin_artifact: ?[]const u8 = null;
-        var esm = false;
-        if (record.get("exports")) |exports_value| {
-            if (exports_value == .array) {
-                for (exports_value.array.items) |item| {
-                    if (item != .object) continue;
-                    if (item.object.get("native")) |native_value| {
-                        if (artifactPathFromDecl(native_value)) |path| {
-                            plugin_artifact = path;
-                            esm = false;
-                        }
-                    }
-                    if (item.object.get("esm")) |esm_value| {
-                        if (artifactPathFromDecl(esm_value)) |path| {
-                            plugin_artifact = path;
-                            esm = true;
-                        }
-                    }
-                    if (item.object.get("path")) |path_value_inner| {
-                        if (path_value_inner != .string) continue;
-                        const path = path_value_inner.string;
-                        if (lnako.package.npkg_commands_gen.isNativePluginArtifact(path)) {
-                            plugin_artifact = path;
-                            esm = false;
-                        } else if (isJsArtifactPath(path)) {
-                            plugin_artifact = path;
-                            esm = true;
-                        }
-                    }
-                }
-            }
-        }
-
-        // 宣言命令 metadata。環境の索引に無い package は未検査として渡す。
-        const parsed_list = try lnako.package.npkg_commands.parseList(a, record.get("commands"));
-        const declared: ?[]const lnako.package.npkg_commands.Command =
-            if (parsed_list.complete and parsed_list.commands.len > 0) parsed_list.commands else null;
-
-        // plugin を持たない・宣言命令の無い package は `status` で区分する
-        // ため、そのまま渡す（inspect 側で分類する）。
-        try inputs.append(a, .{
-            .package_key = entry.key_ptr.*,
-            .path = path_value.string,
-            .declared = declared,
-            .plugin_artifact = plugin_artifact,
-            .esm = esm,
-        });
-    }
-
-    return lnako.package.plugin_registration.inspect(a, inputs.items, options);
-}
-
-/// export 記録の `native`/`esm` artifact 宣言から相対 path を取り出す。
-/// 文字列形式（`native = { path = "..." }` の TOML は環境 JSON では
-/// object）と path key の双方を受理する。解決できない宣言は null。
-fn artifactPathFromDecl(value: std.json.Value) ?[]const u8 {
-    if (value == .string) return value.string;
-    if (value != .object) return null;
-    // OS 条件付き配列の最初の path も artifact path として受理する
-    // （照合時点で target 適合の絞込みは静的検査側の conditions 表示に委ね、
-    // ここでは「どの artifact が plugin 実体か」の判定だけを行う）。
-    if (value.object.get("path")) |path| {
-        if (path == .string) return path.string;
-    }
-    return null;
-}
-
-/// export `path` が JS/ESM artifact か（`command_inspect.isJsArtifact` と
-/// 同一規則）。
-fn isJsArtifactPath(path: []const u8) bool {
-    const extension = std.fs.path.extension(path);
-    return std.ascii.eqlIgnoreCase(extension, ".js") or
-        std.ascii.eqlIgnoreCase(extension, ".mjs") or
-        std.ascii.eqlIgnoreCase(extension, ".cjs");
 }
 
 /// prep 系フラグを `args` から `flags` へ移し、残りの引数配列を返す。
@@ -1243,7 +1120,7 @@ pub fn checkProject(a: Allocator, io: std.Io, args: []const []const u8, start_di
     var registration_report: ?lnako.package.plugin_registration.Report = null;
     defer if (registration_report) |*report| report.deinit();
     if (flags.load_plugins and inspect.environment_current) {
-        registration_report = try runPluginRegistrationCheck(
+        registration_report = try project_plugins.runPluginRegistrationCheck(
             a,
             io,
             &project_var,
@@ -1385,7 +1262,7 @@ pub fn checkProject(a: Allocator, io: std.Io, args: []const []const u8, start_di
         if (registration_report) |*report| {
             try stdout.print("  plugin 実登録照合: {d} 件（照合済み {d} / 不一致 {d}）\n", .{
                 report.packages.len,
-                matchedPackageCount(report),
+                project_plugins.matchedPackageCount(report),
                 report.mismatchCount(),
             });
             for (report.packages) |*package| {
