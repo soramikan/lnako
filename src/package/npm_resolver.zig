@@ -69,7 +69,7 @@ const scratch_random_bytes = 8;
 /// 世代 tree の identity 検査で読む `package.json` の上限。
 const max_package_json_bytes: usize = 1024 * 1024;
 
-pub const Error = error{ CacheMiss, InvalidArchive, AmbiguousInstances, BareNotFound, InvalidEnvironment, Canceled, CacheUnavailable, ScratchUnavailable, OutOfMemory };
+pub const Error = error{ CacheMiss, InvalidArchive, AmbiguousInstances, BareNotFound, InvalidEnvironment, InvalidSpecifier, PackageJsonInvalid, PackageJsonMissing, EntryNotFound, Canceled, CacheUnavailable, ScratchUnavailable, OutOfMemory };
 
 /// bare 解決の依存 scope。`NpmModuleResolver` の importer 情報から作る。
 /// 解決順（docs の規則）: importer の依存宣言 → root（hoisting 相当の lock
@@ -187,18 +187,22 @@ pub const Prepared = struct {
             package.deinit(self.gpa);
             return err;
         };
-        errdefer self.gpa.free(key_copy);
+        errdefer {
+            self.gpa.free(key_copy);
+            package.deinit(self.gpa);
+        }
         try self.entries.put(self.gpa, key_copy, package);
         // scope 復元用に tree root を index へ写す。scratch は instance key
         // 単位で切るため通常は一意だが、世代 tree を複数 instance が共有する
-        // 構成では先着優先になる。登録に失敗しても解決自体は可能（scope 復元
-        // だけが弱る）。共有が起きた場合は root scope で解決されるため、版の
-        // 取り違えではなく `AmbiguousInstances` 側へ倒れる。
-        if (self.tree_roots.getOrPut(self.gpa, package.package_root)) |root_entry| {
-            if (!root_entry.found_existing) {
-                root_entry.value_ptr.* = index;
-            }
-        } else |_| {}
+        // 構成では先着優先になる。共有が起きた場合は root scope で解決される
+        // ため、版の取り違えではなく `AmbiguousInstances` 側へ倒れる。
+        const root_entry = self.tree_roots.getOrPut(self.gpa, package.package_root) catch |err| {
+            // 登録できなくても解決は可能だが、OOM を握りつぶすと診断が
+            // 「曖昧」に化けるため伝播する（entries 側は登録済みなので
+            // 再要求時は entries.contains で早期 return する）。
+            return err;
+        };
+        if (!root_entry.found_existing) root_entry.value_ptr.* = index;
     }
 
     fn rememberFailure(self: *Prepared, key: []const u8, err: Error) !void {
@@ -477,14 +481,10 @@ pub const Prepared = struct {
                 .package_root = try self.gpa.dupe(u8, package.package_root),
             };
         }
-        // サブパスの分類（PackageJsonInvalid/EntryNotFound 等）は npm_esm の
-        // taxonomy をそのまま呼出し側へ渡す（fail-closed の粒度を統一）。
-        const entry = npm_esm.resolveSubpathInRoot(self.gpa, self.io, package.package_root, parsed.subpath) catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
-            error.Canceled => return error.Canceled,
-            else => return error.BareNotFound,
-        };
-        return entry;
+        // サブパスの分類（PackageJsonInvalid/EntryNotFound/InvalidSpecifier 等）
+        // は npm_esm の taxonomy をそのまま呼出し側へ渡す（fail-closed の
+        // 粒度を統一し、診断で原因を区別できるようにする）。
+        return try npm_esm.resolveSubpathInRoot(self.gpa, self.io, package.package_root, parsed.subpath);
     }
 };
 
@@ -802,10 +802,9 @@ pub fn prepare(
         const owned_key = try gpa.dupe(u8, instance.key);
         errdefer gpa.free(owned_key);
         const key_entry = try by_key.getOrPut(gpa, owned_key);
-        if (key_entry.found_existing) {
-            gpa.free(owned_key);
-            return error.InvalidEnvironment;
-        }
+        // 重複 key の解放は errdefer に一本化する（ここで free すると
+        // error return 時に二重解放になる）。
+        if (key_entry.found_existing) return error.InvalidEnvironment;
         key_entry.value_ptr.* = index;
     }
     return .{

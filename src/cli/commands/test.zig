@@ -87,6 +87,9 @@ pub fn runTestTarget(allocator: std.mem.Allocator, io: std.Io, path: []const u8,
 pub fn runTestFile(allocator: std.mem.Allocator, io: std.Io, path: []const u8, forced_mode: lnako.frontend.token.Mode, writable_mode: lnako.package.project_trust.WritableMode, package_cache_root: ?[]const u8, stdout: *std.Io.Writer, stderr: *std.Io.Writer) !bool {
     // `--package-cache-dir` は `run`/`build` と同じ compile 経路へ伝播する
     // （package 所有 ESM の bare npm import が cache から復元できるように）。
+    // ただし `test` は ESM plugin の実行そのものを担わない（`--compat-js` を
+    // 受けない）。ここで揃うのは解決時の cache 参照だけで、ESM の実行時初期化は
+    // `run --compat-js` 側の責務。
     var ir_program = (try compiler_pipeline.compileInput(allocator, io, path, .{ .forced_mode = forced_mode, .writable_mode = writable_mode, .package_cache_root = package_cache_root }, stderr)) orelse return false;
     defer ir_program.deinit();
     var runtime = lnako.runtime.value.Runtime.init(allocator);
