@@ -1,0 +1,17 @@
+# 参照 plugin package。ESM 実装のみを公開し、`整形` 命令を登録する。
+# 公開検証を通すため `compat-js = true` の profile を宣言する（E006 回避）。
+[package]
+name = "leftpad"
+version = "1.0.0"
+license = "MIT"
+
+[profiles.compat]
+runtime = "lnako"
+os = "linux"
+cpu = "x86_64"
+abi = "gnu"
+compat-js = true
+
+[[exports]]
+name = "main"
+esm = "plugin.mjs"

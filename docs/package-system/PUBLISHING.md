@@ -108,6 +108,7 @@ zig build package-schema-check
 node tools/check_package_schema.mjs
 node tools/check_package_isolation.mjs
 node tools/check_package_plugin_npm_e2e.mjs   # CI の compat job（-Dcompat-js=true のビルドが必要。SBOM も検査）
+node tools/check_package_publish_e2e.mjs      # publish→取得 E2E（CI の 3 OS compat job。-Dcompat-js=true のビルドが必要）
 ```
 
 `check_package_schema.mjs` は manifest・lock・registry・environment・`.npkg` メタデータの適合例と不適合例を検査します。`check_package_isolation.mjs` は `build.zig.zon` の収録対象だけで通常ビルドと最小 consumer が成立することを検査します。

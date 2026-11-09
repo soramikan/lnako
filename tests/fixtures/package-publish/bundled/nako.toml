@@ -1,0 +1,14 @@
+# path 依存を payload へ同梱する参照 package。publish 側の検証
+# （npkg_build の payload 収録・依存 manifest 検査）だけに使い、consumer
+# sync はしない（同梱 path 依存の registry 取得は現行未対応）。
+[package]
+name = "bundled"
+version = "1.0.0"
+license = "MIT"
+
+[dependencies.path]
+helper = { path = "packages/helper" }
+
+[[exports]]
+name = "main"
+path = "src/main.nako3"
