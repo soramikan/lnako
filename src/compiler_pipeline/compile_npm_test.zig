@@ -582,10 +582,13 @@ test "compile は世代 npm tree も cache も無ければ fail-closed にする
 
     // lock と environment は有効なまま、世代 npm tree と cache の両方が無い。
     // bare import は module_graph の fail-closed 診断になり、compile は成功しない。
+    // 診断は instance 単位（name/version/cache key を 1 行で示す）に更新
+    // 済み（#54）。
     var stderr: std.Io.Writer.Allocating = .init(gpa);
     defer stderr.deinit();
     try testing.expect((try compileMain(gpa, io, app_root, empty_cache_root, &stderr)) == null);
-    try testing.expect(std.mem.indexOf(u8, stderr.written(), "静的に解決できない取り込み指定") != null);
+    try testing.expect(std.mem.indexOf(u8, stderr.written(), "npm instance left-pad@1.0.0") != null);
+    try testing.expect(std.mem.indexOf(u8, stderr.written(), "cache key:") != null);
 }
 
 test "compile は世代 dir が symlink なら世代 tree を使わず cache から解決する" {
@@ -798,6 +801,9 @@ test "package.json 不正は interpreter compile と AOT 埋め込みの両経�
         var stderr: std.Io.Writer.Allocating = .init(gpa);
         defer stderr.deinit();
         try testing.expect((try compileMain(gpa, io, app_root, cache_root, &stderr)) == null);
+        // subpath 解決の失敗は instance 展開の成功後なので、instance 単位の
+        // cache miss 診断ではなく汎用文言のまま（#54 は instance 展開の
+        // 失敗だけを instance 単位で示す）。
         try testing.expect(std.mem.indexOf(u8, stderr.written(), "静的に解決できない取り込み指定") != null);
     }
 

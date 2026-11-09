@@ -85,8 +85,12 @@
         "limitKb": 100
       },
       "src/semantic/module_graph.zig": {
-        "reason": "canonical export identity・import edge・bare npm ESM 解決（#54）・宣言命令providerの伝播を Loader state 内で統合（監視対象・分割継続）",
-        "limitKb": 100
+        "reason": "canonical export identity・import edge・bare npm ESM 解決（#54）・宣言命令providerの伝播・npm解決失敗detailの診断接続を Loader state 内で統合（監視対象・分割継続）",
+        "limitKb": 102
+      },
+      "src/package/npm_resolver.zig": {
+        "reason": "lock instance の遅延展開・cache/世代tree再利用・context別bare解決・importer scope・instance単位診断を同一 Prepared/State 境界で維持（#54。監視対象・分割継続）",
+        "limitKb": 86
       }
     }
   },

@@ -724,12 +724,13 @@ pub const BareRegistry = struct {
     }
 };
 
-/// instance の tree から registry 登録用の package を作る。root 入口を
+/// instance の tree root から registry 登録用の package を作る。root 入口を
 /// 解決できない package（サブパス専用・root target 欠落・package.json 破損）は
 /// `root_path = null` として登録し、registry 全体を落とさない。root の
 /// エラー分類（`EntryNotFound` / `PackageJsonInvalid` の保持）は
-/// docs/TODO.md の follow-up（遅延解決）で扱う。
-fn resolvePackageForRegistry(gpa: Allocator, io: std.Io, tree: []const u8) Error!BarePackage {
+/// docs/TODO.md の follow-up（遅延解決）で扱う。`npm_resolver` が instance
+/// 単位の entry 構築（#54 の context 別解決）で再利用するため公開する。
+pub fn resolvePackageForRegistry(gpa: Allocator, io: std.Io, tree: []const u8) Error!BarePackage {
     const resolved = resolveEntryInRoot(gpa, io, tree) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.EntryNotFound, error.PackageJsonMissing, error.PackageJsonInvalid => return .{
@@ -781,6 +782,22 @@ pub fn cacheKeyForInstance(gpa: Allocator, instance: lock_model.NpmInstance) All
     const integrity = instance.sha256 orelse return null;
     const url = instance.url orelse return null;
     return try cache_key.artifactKey(gpa, "npm", integrity, url);
+}
+
+/// instance を 1 行の診断にしたもの。cache miss 等の fail-closed 診断で
+/// 「どの instance が欠けたか」を一意に示す（#54 の instance 単位診断）。
+/// `key`（`name@version[#context]`）が主表記で、cache key は content key。
+pub fn formatInstanceDiagnostic(
+    gpa: Allocator,
+    instance: lock_model.NpmInstance,
+) Allocator.Error![]u8 {
+    const key = try cacheKeyForInstance(gpa, instance);
+    defer if (key) |owned| gpa.free(owned);
+    return std.fmt.allocPrint(
+        gpa,
+        "npm instance {s}（cache key: {s}）",
+        .{ instance.key, key orelse "unavailable" },
+    );
 }
 
 /// npm-tarball bytes を cache object の tree へ展開する（strip `package/`）。

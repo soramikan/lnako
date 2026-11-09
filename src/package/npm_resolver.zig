@@ -69,7 +69,20 @@ const scratch_random_bytes = 8;
 /// 世代 tree の identity 検査で読む `package.json` の上限。
 const max_package_json_bytes: usize = 1024 * 1024;
 
-pub const Error = error{ CacheMiss, InvalidArchive, AmbiguousInstances, BareNotFound, Canceled, CacheUnavailable, ScratchUnavailable, OutOfMemory };
+pub const Error = error{ CacheMiss, InvalidArchive, AmbiguousInstances, BareNotFound, InvalidEnvironment, InvalidSpecifier, PackageJsonInvalid, PackageJsonMissing, EntryNotFound, Canceled, CacheUnavailable, ScratchUnavailable, OutOfMemory };
+
+/// bare 解決の依存 scope。`NpmModuleResolver` の importer 情報から作る。
+/// 解決順（docs の規則）: importer の依存宣言 → root（hoisting 相当の lock
+/// 全体）→ いずれでも一意に定まらない場合だけ `AmbiguousInstances`
+/// （fail-closed）。npm tree 内 module は自 instance の context 群に候補を
+/// 狭める。nako package importer の宣言 scope は未対応で root scope を使う。
+pub const Scope = struct {
+    /// npm tree 内 module の場合: その module を所有する instance の index。
+    /// 同一 context の instance 群（宣言元 root 要求の依存閉包）へ絞る。
+    /// nako package importer の宣言 scope は未対応（lock の package record と
+    /// instance の対応を prepare が持たないため）。root scope で解決する。
+    instance_index: ?usize = null,
+};
 
 /// 遅延構築する npm registry。bare name が要求された instance だけを展開・
 /// 登録し、cache store と scratch は cache 経路へ fallback した時だけ遅延生成
@@ -88,61 +101,124 @@ pub const Prepared = struct {
     /// cache 展開へ fallback した時だけ開く root（呼出し側所有）。null は
     /// OS 標準 cache dir。
     cache_root: ?[]const u8 = null,
-    by_name: std.StringHashMapUnmanaged(usize) = .empty,
+    /// name → instance index 群（昇順）。同一 name の複数 context を保持する
+    /// （#54）。解決は scope（importer tree root）→ root の順に絞り込む。
+    by_name: std.StringHashMapUnmanaged(std.ArrayListUnmanaged(usize)) = .empty,
+    /// instance key（`name@version[#context]`）→ index。
+    by_key: std.StringHashMapUnmanaged(usize) = .empty,
+    /// scope で解決した instance の tree root → その instance の index。
+    /// npm tree 内 module が属する context を復元するのに使う。
+    tree_roots: std.StringHashMapUnmanaged(usize) = .empty,
+    /// instance key 単位の展開結果を保持する map。名前衝突は key 一意性で
+    /// 避ける（同一 key は lock 抽出時に dedupe 済み）。
+    entries: std.StringHashMapUnmanaged(npm_esm.BarePackage) = .empty,
+    /// scratch へ展開済みの cache key（同 key の再展開を避ける）。
+    extracted: std.StringHashMapUnmanaged(void) = .empty,
     /// 世代 tree で解決できない instance を cache から展開する時だけ作る。
     scratch: ?Scratch = null,
     store: ?cache_mod.Store = null,
-    registry: npm_esm.BareRegistry,
-    extracted: std.StringHashMapUnmanaged(void) = .empty,
-    /// name 単位の展開失敗（同一 name の再展開 I/O を避ける）。
+    /// instance key 単位の展開失敗（同一 instance の再展開 I/O を避ける）。
     failed: std.StringHashMapUnmanaged(Error) = .empty,
+    /// 最後に発生した instance 単位の失敗診断（1 行）。resolveBare の先頭で
+    /// 解放し、失敗時に作り直す（直近の失敗文面だけを公開する）。`failed`
+    /// のメモ化は失敗 instance を key にするため、直近以外の失敗も失敗分類
+    /// としては有効だが、診断文面は最後の 1 件だけを公開する。
+    last_failure_detail: ?[]u8 = null,
 
     pub fn deinit(self: *Prepared) void {
         // generation_deps は State 所有。ここでは閉じない（二重 close 防止）。
         var failed_it = self.failed.iterator();
         while (failed_it.next()) |entry| self.gpa.free(entry.key_ptr.*);
         self.failed.deinit(self.gpa);
+        if (self.last_failure_detail) |detail| self.gpa.free(detail);
+        var by_name_it = self.by_name.iterator();
+        while (by_name_it.next()) |entry| entry.value_ptr.deinit(self.gpa);
+        self.by_name.deinit(self.gpa);
+        var by_key_it = self.by_key.iterator();
+        while (by_key_it.next()) |entry| self.gpa.free(entry.key_ptr.*);
+        self.by_key.deinit(self.gpa);
+        self.tree_roots.deinit(self.gpa);
+        var entries_it = self.entries.iterator();
+        while (entries_it.next()) |entry| {
+            self.gpa.free(entry.key_ptr.*);
+            entry.value_ptr.deinit(self.gpa);
+        }
+        self.entries.deinit(self.gpa);
         var extracted_it = self.extracted.iterator();
         while (extracted_it.next()) |entry| self.gpa.free(entry.key_ptr.*);
         self.extracted.deinit(self.gpa);
-        self.by_name.deinit(self.gpa);
-        self.registry.deinit();
         if (self.store) |*store| store.deinit();
         if (self.scratch) |*scratch| scratch.deinit();
         self.* = undefined;
     }
 
-    /// 要求された bare name の instance だけを cache から展開して登録する。
-    /// 失敗した name は記憶し、同じ欠落を毎回 I/O し直さない（他の name の
+    /// 要求された instance を cache/世代 tree から展開して登録する。失敗した
+    /// instance は記憶し、同じ欠落を毎回 I/O し直さない（他の instance の
     /// 解決は妨げない）。
-    fn ensureInstance(self: *Prepared, name: []const u8) Error!void {
-        if (self.registry.by_name.contains(name)) return;
-        if (self.failed.get(name)) |err| return err;
-        const index = self.by_name.get(name) orelse return error.BareNotFound;
+    fn ensureInstance(self: *Prepared, index: usize) Error!void {
         const instance = self.instances[index];
+        if (self.entries.contains(instance.key)) return;
+        if (self.failed.get(instance.key)) |err| {
+            // 再失敗時も診断文面を最新化する（直近の失敗 name/version/
+            // cache key を 1 行で示す。best-effort）。
+            if (self.last_failure_detail == null) {
+                self.last_failure_detail = npm_esm.formatInstanceDiagnostic(self.gpa, instance) catch null;
+            }
+            return err;
+        }
         const tree = self.extractInstance(instance) catch |err| {
             const classified = classifyExtraction(err);
             if (classified != error.OutOfMemory and classified != error.Canceled) {
                 // メモ化の失敗で元の分類をマスクしない（best-effort）。
-                self.rememberFailure(name, classified) catch {};
+                self.rememberFailure(instance.key, classified) catch {};
             }
             return classified;
         };
         defer self.gpa.free(tree);
-        self.registry.registerInstance(instance, tree) catch |err| {
+        var package = npm_esm.resolvePackageForRegistry(self.gpa, self.io, tree) catch |err| {
             const classified = classifyExtraction(err);
             if (classified != error.OutOfMemory and classified != error.Canceled) {
-                self.rememberFailure(name, classified) catch {};
+                self.rememberFailure(instance.key, classified) catch {};
             }
             return classified;
         };
+        // put 成功後は map が所有するため、fallible な処理を残さない。
+        const key_copy = self.gpa.dupe(u8, instance.key) catch |err| {
+            package.deinit(self.gpa);
+            return err;
+        };
+        errdefer {
+            self.gpa.free(key_copy);
+            package.deinit(self.gpa);
+        }
+        try self.entries.put(self.gpa, key_copy, package);
+        // scope 復元用に tree root を index へ写す。scratch は instance key
+        // 単位で切るため通常は一意だが、世代 tree を複数 instance が共有する
+        // 構成では先着優先になる。共有が起きた場合は root scope で解決される
+        // ため、版の取り違えではなく `AmbiguousInstances` 側へ倒れる。
+        const root_entry = self.tree_roots.getOrPut(self.gpa, package.package_root) catch |err| {
+            // 登録できなくても解決は可能だが、OOM を握りつぶすと診断が
+            // 「曖昧」に化けるため伝播する（entries 側は登録済みなので
+            // 再要求時は entries.contains で早期 return する）。
+            return err;
+        };
+        if (!root_entry.found_existing) root_entry.value_ptr.* = index;
     }
 
-    fn rememberFailure(self: *Prepared, name: []const u8, err: Error) !void {
-        if (self.failed.contains(name)) return;
-        const key = try self.gpa.dupe(u8, name);
-        errdefer self.gpa.free(key);
-        try self.failed.put(self.gpa, key, err);
+    fn rememberFailure(self: *Prepared, key: []const u8, err: Error) !void {
+        if (self.failed.contains(key)) return;
+        // instance 単位の診断を先に作る（失敗 name の記憶は best-effort）。
+        const instance = blk: {
+            const index = self.by_key.get(key) orelse break :blk null;
+            break :blk self.instances[index];
+        };
+        if (instance) |item| {
+            if (self.last_failure_detail) |previous| self.gpa.free(previous);
+            self.last_failure_detail = npm_esm.formatInstanceDiagnostic(self.gpa, item) catch null;
+        }
+        const owned = try self.gpa.dupe(u8, key);
+        errdefer self.gpa.free(owned);
+        try self.failed.put(self.gpa, owned, err);
     }
 
     /// lock の sha256 で検証した archive を scratch の `<scratch>/<cache key>`
@@ -153,14 +229,20 @@ pub const Prepared = struct {
         if (try self.reusedGenerationTree(instance)) |tree| return tree;
         const key = (try npm_esm.cacheKeyForInstance(self.gpa, instance)) orelse return error.CacheMiss;
         defer self.gpa.free(key);
-        // scratch の dir 名に使うため、単一の規範 path 成分であることを検証する
-        // （cache key は hash 由来だが、lock 材料が変わっても書き込み面を守る）。
-        if (!isSafeCacheKey(key)) return error.CacheMiss;
+        // archive の content address は context を含まないため、同一 tarball を
+        // 参照する別 context の instance が同じ cache key になる。scratch の
+        // dir を cache key で切ると package_root が共有され、module の importer
+        // から context を復元できなくなる（誤 context の依存閉包で解決が通る）。
+        // そのため scratch は instance key 単位（世代 tree と同じ dir 名規則）で
+        // 切り、`extracted` も instance key で持つ。
+        const dir_name = try npm_env.instanceDirName(self.gpa, instance);
+        defer self.gpa.free(dir_name);
+        if (!isSafeCacheKey(dir_name)) return error.CacheMiss;
         const sha256 = instance.sha256 orelse return error.CacheMiss;
-        // 既に scratch へ展開済みの key は archive を読み直さない。
-        if (self.extracted.contains(key)) {
+        // 既に scratch へ展開済みの instance は archive を読み直さない。
+        if (self.extracted.contains(instance.key)) {
             const scratch = self.scratch orelse return error.CacheMiss;
-            return try std.fs.path.join(self.gpa, &.{ scratch.path, key });
+            return try std.fs.path.join(self.gpa, &.{ scratch.path, dir_name });
         }
         // ここから先だけが cache/scratch を必要とする（世代 tree だけで解決
         // できた場合は TMPDIR も cache dir も触らない）。
@@ -175,16 +257,16 @@ pub const Prepared = struct {
         // 同一 key は `extracted` で早期 return するため、ここで既存 dir が
         // あるのは想定外（同一ユーザーの競合・残骸）。内容を検証できない dir を
         // package root として使わないよう fail-closed。
-        scratch.dir.createDir(self.io, key, scratch_permissions) catch |err| switch (err) {
+        scratch.dir.createDir(self.io, dir_name, scratch_permissions) catch |err| switch (err) {
             error.PathAlreadyExists => return error.CacheMiss,
             else => return err,
         };
         // 展開・書き込み・map 登録の途中で OOM/Canceled 等が起きても、
         // 空の `<key>` dir を残さない。残すと再要求時に createDir が
         // PathAlreadyExists となり、元の失敗が CacheMiss に化ける。
-        errdefer scratch.dir.deleteTree(self.io, key) catch {};
+        errdefer scratch.dir.deleteTree(self.io, dir_name) catch {};
         {
-            var tree = scratch.dir.openDir(self.io, key, .{ .iterate = true, .follow_symlinks = false }) catch |err| return err;
+            var tree = scratch.dir.openDir(self.io, dir_name, .{ .iterate = true, .follow_symlinks = false }) catch |err| return err;
             defer tree.close(self.io);
             if (npm_esm.looksLikeGzip(bytes)) {
                 // npm tarball は `package/` 前置を持つ（cache 公開時と同じ strip）。
@@ -204,9 +286,9 @@ pub const Prepared = struct {
         }
         // put 成功後は map が key を所有するため、その後に fallible な処理を
         // 残さない（errdefer と deinit の二重解放を避ける）。
-        const key_copy = try self.gpa.dupe(u8, key);
+        const key_copy = try self.gpa.dupe(u8, instance.key);
         errdefer self.gpa.free(key_copy);
-        const tree_path = try std.fs.path.join(self.gpa, &.{ scratch.path, key });
+        const tree_path = try std.fs.path.join(self.gpa, &.{ scratch.path, dir_name });
         errdefer self.gpa.free(tree_path);
         try self.extracted.put(self.gpa, key_copy, {});
         return tree_path;
@@ -333,11 +415,76 @@ pub const Prepared = struct {
         return std.mem.eql(u8, name, instance.name) and std.mem.eql(u8, version, instance.version);
     }
 
-    /// bare specifier を解決する。要求された name の instance だけを準備する。
-    pub fn resolveBare(self: *Prepared, specifier: []const u8) anyerror!npm_esm.ResolvedEntry {
+    /// bare specifier を解決する。`scope` の優先順位:
+    /// (1) importer の依存宣言 scope（npm tree 内 module は自 context、nako
+    ///     package は自 package record が宣言した instance 群）→
+    /// (2) root（hoisting 相当の lock 全 instance）。
+    /// scope 内で一意に定まらない場合は root へフォールバックせず fail-closed
+    /// で `AmbiguousInstances`（別 context の版を黙って選ばないため）。
+    pub fn resolveBare(self: *Prepared, specifier: []const u8, scope: Scope) anyerror!npm_esm.ResolvedEntry {
+        if (self.last_failure_detail) |previous| self.gpa.free(previous);
+        self.last_failure_detail = null;
         const parsed = npm_esm.parseBareSpecifier(specifier) orelse return error.BareNotFound;
-        try self.ensureInstance(parsed.name);
-        return self.registry.resolveBare(specifier);
+        // (1) importer の依存宣言 scope。
+        if (scope.instance_index) |importer_index| {
+            const importer = self.instances[importer_index];
+            if (try self.resolveWithin(parsed, importer.context orelse importer.name)) |entry| return entry;
+            // importer scope に name が無い場合は (2) root scope へフォール
+            // バックする（hoisting 相当。挙動は docs とテストで固定する）。
+        }
+        // (2) root scope。specifier 側で context を決定できない場合は曖昧
+        // として拒否する（fail-closed）。
+        const indexes = self.by_name.get(parsed.name) orelse return error.BareNotFound;
+        if (indexes.items.len == 1) {
+            try self.ensureInstance(indexes.items[0]);
+            return self.resolveInEntry(parsed, indexes.items[0]);
+        }
+        if (indexes.items.len > 1) return error.AmbiguousInstances;
+        return error.BareNotFound;
+    }
+
+    /// `context` に属する instance だけを候補に解決する。候補 1 件なら解決
+    /// し、0 件なら null（root へフォールバック）、2 件以上は曖昧として
+    /// `AmbiguousInstances` を返す。
+    fn resolveWithin(self: *Prepared, parsed: npm_esm.BareSpecifier, context: []const u8) !?npm_esm.ResolvedEntry {
+        const indexes = self.by_name.get(parsed.name) orelse return null;
+        var candidates: std.ArrayListUnmanaged(usize) = .empty;
+        defer candidates.deinit(self.gpa);
+        for (indexes.items) |index| {
+            const candidate = self.instances[index];
+            const candidate_context = candidate.context orelse candidate.name;
+            if (std.mem.eql(u8, candidate_context, context)) {
+                try candidates.append(self.gpa, index);
+            }
+        }
+        if (candidates.items.len == 1) {
+            try self.ensureInstance(candidates.items[0]);
+            return try self.resolveInEntry(parsed, candidates.items[0]);
+        }
+        if (candidates.items.len > 1) return error.AmbiguousInstances;
+        return null;
+    }
+
+    fn resolveInEntry(
+        self: *Prepared,
+        parsed: npm_esm.BareSpecifier,
+        index: usize,
+    ) Error!npm_esm.ResolvedEntry {
+        const instance = self.instances[index];
+        const package = self.entries.get(instance.key) orelse return error.BareNotFound;
+        if (parsed.subpath.len == 0) {
+            const root_path = package.root_path orelse return error.BareNotFound;
+            const path = try self.gpa.dupe(u8, root_path);
+            errdefer self.gpa.free(path);
+            return .{
+                .path = path,
+                .package_root = try self.gpa.dupe(u8, package.package_root),
+            };
+        }
+        // サブパスの分類（PackageJsonInvalid/EntryNotFound/InvalidSpecifier 等）
+        // は npm_esm の taxonomy をそのまま呼出し側へ渡す（fail-closed の
+        // 粒度を統一し、診断で原因を区別できるようにする）。
+        return try npm_esm.resolveSubpathInRoot(self.gpa, self.io, package.package_root, parsed.subpath);
     }
 };
 
@@ -414,7 +561,7 @@ pub const State = struct {
 
     /// package 所有 JS の bare specifier を解決する callback を返す。
     pub fn moduleResolver(self: *State) module_graph.NpmModuleResolver {
-        return .{ .context = self, .resolveFn = resolveCallback };
+        return .{ .context = self, .resolveFn = resolveCallback, .failureDetailFn = failureDetailCallback };
     }
 
     fn resolveCallback(
@@ -424,20 +571,46 @@ pub const State = struct {
         importer_package_root: ?[]const u8,
         specifier: []const u8,
     ) anyerror!module_graph.ResolvedNpmModule {
-        // flat な node_modules（hoisting）相当の name 単位解決。importer の
-        // 宣言 scope 別解決は lock 側に情報が無く未対応（docs/TODO.md）。
-        _ = importer_owner;
-        _ = importer_package_root;
         const self: *State = @ptrCast(@alignCast(context));
-        const entry = try self.resolveBare(allocator, specifier);
+        // 解決順（docs の規則）: (1) importer の依存宣言 scope — npm tree 内
+        // module は自 instance の context に閉じて解決する → (2) root
+        // （hoisting 相当の lock 全 instance）。importer 情報が無い呼出しは
+        // (2) のみ。scope 内で一意に定まらない場合は曖昧のまま fail-closed。
+        const scope = self.instanceScope(importer_owner, importer_package_root);
+        const entry = try self.resolveScoped(allocator, specifier, scope);
         return .{ .path = entry.path, .package_root = entry.package_root };
     }
 
-    /// bare specifier を registry へ写す。network は使わず、cache に lock の
-    /// sha256 と一致する tarball が無ければ fail-closed で error を返す。
-    /// 返却した `path`/`package_root` は本関数に渡した `allocator` の所有で、
-    /// 呼出し側へ移管する。`ResolvedEntry.deinit(同じ allocator)` でも等価。
-    pub fn resolveBare(self: *State, allocator: Allocator, specifier: []const u8) !npm_esm.ResolvedEntry {
+    /// importer 情報から解決 scope を決める。npm tree 内 module は その
+    /// tree root が属する instance（= 同一 context の依存閉包）へ絞る。
+    /// owner/package_root が npm tree の外（nako package / root scope）なら
+    /// root scope を返す。scope は registry 構築後にしか復元できないため、
+    /// 未構築なら root scope（遅延構築後に再解決される）。
+    fn instanceScope(self: *State, importer_owner: ?[]const u8, importer_package_root: ?[]const u8) Scope {
+        const prepared = self.prepared orelse return .{};
+        const root = importer_package_root orelse importer_owner orelse return .{};
+        const index = prepared.tree_roots.get(root) orelse return .{};
+        return .{ .instance_index = index };
+    }
+
+    /// 失敗診断（1 行）。直近の instance 単位失敗があれば その文面を返す
+    /// （呼出し側 allocator 所有）。無ければ null。
+    pub fn failureDetail(self: *State, allocator: Allocator) !?[]u8 {
+        const prepared = self.prepared orelse return null;
+        const detail = prepared.last_failure_detail orelse return null;
+        return try allocator.dupe(u8, detail);
+    }
+
+    fn failureDetailCallback(context: *anyopaque, allocator: Allocator) anyerror!?[]u8 {
+        const self: *State = @ptrCast(@alignCast(context));
+        return self.failureDetail(allocator);
+    }
+
+    /// bare specifier を依存 scope 指定で解決する。`scope` は `instanceScope`
+    /// が作る（importer の依存宣言 scope）。返却した `path`/`package_root` は
+    /// 本関数に渡した `allocator` の所有で、呼出し側へ移管する。
+    /// `ResolvedEntry.deinit(同じ allocator)` でも等価。
+    pub fn resolveScoped(self: *State, allocator: Allocator, specifier: []const u8, scope: Scope) !npm_esm.ResolvedEntry {
         if (self.instances.len == 0) return error.BareNotFound;
         if (self.failure) |err| return err;
         if (self.prepared == null) {
@@ -447,19 +620,24 @@ pub const State = struct {
                 return err;
             };
         }
-        // 解決不能のうち name 単位の展開失敗（CacheMiss/InvalidArchive/
-        // CacheUnavailable/ScratchUnavailable）は、要求された name に閉じた
-        // 失敗として `Prepared.failed` が保持する（BareNotFound は決定的で
-        // 安価なため保持しない）。State 全体へ集約すると、別 name が有効な
-        // generation tree を持っていても解決できなくなるため、ここでは伝播
-        // だけ行う。
-        const entry = try self.prepared.?.resolveBare(specifier);
+        // 解決不能のうち instance 単位の展開失敗（CacheMiss/InvalidArchive/
+        // CacheUnavailable/ScratchUnavailable）は、要求された instance に
+        // 閉じた失敗として `Prepared.failed` が保持する（BareNotFound は
+        // 決定的で安価なため保持しない）。State 全体へ集約すると、別
+        // instance が有効な generation tree を持っていても解決できなくなる
+        // ため、ここでは伝播だけ行う。
+        const entry = try self.prepared.?.resolveBare(specifier, scope);
         defer entry.deinit(self.backing_allocator);
         // 呼出し側（module_graph）は自身の allocator で path/root を free する。
         const path = try allocator.dupe(u8, entry.path);
         errdefer allocator.free(path);
         const package_root = try allocator.dupe(u8, entry.package_root);
         return .{ .path = path, .package_root = package_root };
+    }
+
+    /// bare specifier を root scope で解決する（後方互換の薄い wrapper）。
+    pub fn resolveBare(self: *State, allocator: Allocator, specifier: []const u8) !npm_esm.ResolvedEntry {
+        return self.resolveScoped(allocator, specifier, .{});
     }
 };
 
@@ -597,17 +775,38 @@ pub fn prepare(
     generation_deps: ?std.Io.Dir,
 ) Error!Prepared {
     if (instances.len == 0) return error.BareNotFound;
-    // registry は name 単位でしか解決できない。同一 name の複数 instance を
-    // 先着順に黙って選ぶと別 context の版を混同し得るため fail-closed。
-    var by_name: std.StringHashMapUnmanaged(usize) = .empty;
-    errdefer by_name.deinit(gpa);
-    for (instances, 0..) |instance, index| {
-        const entry = try by_name.getOrPut(gpa, instance.name);
-        if (entry.found_existing) return error.AmbiguousInstances;
-        entry.value_ptr.* = index;
+    // 同一 name の複数 instance（lock context 別）も保持する（#54）。解決は
+    // scope（importer tree root / 同一 context）→ root の順に絞り込み、
+    // それでも一意に定まらない場合だけ `AmbiguousInstances` で fail-closed。
+    // 異なる instance が同一 key を持つことは lock 抽出（collectInstances）
+    // が dedupe するため無い。
+    var by_name: std.StringHashMapUnmanaged(std.ArrayListUnmanaged(usize)) = .empty;
+    errdefer {
+        var it = by_name.iterator();
+        while (it.next()) |entry| entry.value_ptr.deinit(gpa);
+        by_name.deinit(gpa);
     }
-    var registry = npm_esm.BareRegistry{ .gpa = gpa, .io = io };
-    errdefer registry.deinit();
+    var by_key: std.StringHashMapUnmanaged(usize) = .empty;
+    errdefer {
+        var kit = by_key.iterator();
+        while (kit.next()) |entry| gpa.free(entry.key_ptr.*);
+        by_key.deinit(gpa);
+    }
+    for (instances, 0..) |instance, index| {
+        const name_entry = try by_name.getOrPut(gpa, instance.name);
+        if (!name_entry.found_existing) name_entry.value_ptr.* = .empty;
+        try name_entry.value_ptr.append(gpa, index);
+        // 先に複製してから getOrPut する。getOrPut が参照 key を保持した状態で
+        // dupe が OOM になると、errdefer が `instances` 所有のメモリを free
+        // してしまう（二重解放）。
+        const owned_key = try gpa.dupe(u8, instance.key);
+        errdefer gpa.free(owned_key);
+        const key_entry = try by_key.getOrPut(gpa, owned_key);
+        // 重複 key の解放は errdefer に一本化する（ここで free すると
+        // error return 時に二重解放になる）。
+        if (key_entry.found_existing) return error.InvalidEnvironment;
+        key_entry.value_ptr.* = index;
+    }
     return .{
         .gpa = gpa,
         .io = io,
@@ -615,7 +814,7 @@ pub fn prepare(
         .generation_deps = generation_deps,
         .cache_root = cache_root,
         .by_name = by_name,
-        .registry = registry,
+        .by_key = by_key,
     };
 }
 
@@ -804,10 +1003,10 @@ test "Prepared は要求された instance を cache から展開しサブパス
     var prepared = try prepare(gpa, io, &.{instance}, cache_root, null);
     var alive = true;
     defer if (alive) prepared.deinit();
-    const root = try prepared.resolveBare("left-pad");
+    const root = try prepared.resolveBare("left-pad", .{});
     defer root.deinit(gpa);
     try testing.expect(std.mem.endsWith(u8, root.path, "index.js"));
-    const sub = try prepared.resolveBare("left-pad/sub");
+    const sub = try prepared.resolveBare("left-pad/sub", .{});
     defer sub.deinit(gpa);
     try testing.expect(std.mem.endsWith(u8, sub.path, "sub.js"));
     // cache 展開時だけ scratch が作られる。
@@ -844,7 +1043,7 @@ test "Prepared は要求された instance の cache 欠落を fail-closed に�
     };
     var prepared = try prepare(gpa, io, &.{instance}, cache_root, null);
     defer prepared.deinit();
-    try testing.expectError(error.CacheMiss, prepared.resolveBare("left-pad"));
+    try testing.expectError(error.CacheMiss, prepared.resolveBare("left-pad", .{}));
 }
 
 test "Prepared は lock の sha256 と一致しない cache archive を拒否する" {
@@ -882,10 +1081,10 @@ test "Prepared は lock の sha256 と一致しない cache archive を拒否す
 
     var prepared = try prepare(gpa, io, &.{instance}, cache_root, null);
     defer prepared.deinit();
-    try testing.expectError(error.CacheMiss, prepared.resolveBare("left-pad"));
+    try testing.expectError(error.CacheMiss, prepared.resolveBare("left-pad", .{}));
 }
 
-test "prepare は同一 name の複数 instance を AmbiguousInstances で拒否する" {
+test "prepare は同一 name の複数 instance を保持し、root scope の解決は AmbiguousInstances にする" {
     const a = lock_model.NpmInstance{
         .key = "left-pad@1.0.0",
         .name = "left-pad",
@@ -900,7 +1099,80 @@ test "prepare は同一 name の複数 instance を AmbiguousInstances で拒否
         .sha256 = "sha256:1111111111111111111111111111111111111111111111111111111111111111",
         .url = "fixture://left-pad-2.0.0.tgz",
     };
-    try testing.expectError(error.AmbiguousInstances, prepare(testing.allocator, testing.io, &.{ a, b }, "/nonexistent", null));
+    // prepare 自体は複数 context を保持できる（曖昧さは解決時に決める）。
+    var prepared = try prepare(testing.allocator, testing.io, &.{ a, b }, "/nonexistent", null);
+    defer prepared.deinit();
+    // root scope では context を決める材料が無いため fail-closed。
+    try testing.expectError(error.AmbiguousInstances, prepared.resolveBare("left-pad", .{}));
+}
+
+test "同一 tarball を参照する別 context の instance は別 package root を持ち scope で解決される" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var temporary = test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "cache");
+
+    // 同一 archive を 2 つの context が参照する（peer 解決で依存版だけが
+    // 異なる典型）。cache key は context 非依存で一致するため、scratch を
+    // cache key で切ると package_root が共有され、importer から context を
+    // 復元できなくなる。
+    const tarball = try buildTarGz(gpa, &.{
+        .{ .path = "package/package.json", .content = "{\"exports\":{\".\":\"./index.js\"}}" },
+        .{ .path = "package/index.js", .content = "export default 1;\n" },
+    });
+    defer gpa.free(tarball);
+    var digest: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(tarball, &digest, .{});
+    const sha256 = try std.fmt.allocPrint(gpa, "sha256:{s}", .{std.fmt.bytesToHex(digest, .lower)});
+    defer gpa.free(sha256);
+
+    const a = lock_model.NpmInstance{
+        .key = "left-pad@1.0.0",
+        .name = "left-pad",
+        .version = "1.0.0",
+        .context = "caller-a",
+        .sha256 = try gpa.dupe(u8, sha256),
+        .url = try gpa.dupe(u8, "fixture://left-pad-1.0.0.tgz"),
+    };
+    defer {
+        gpa.free(a.sha256.?);
+        gpa.free(a.url.?);
+    }
+    const b = lock_model.NpmInstance{
+        .key = "left-pad@1.0.0#caller-b",
+        .name = "left-pad",
+        .version = "1.0.0",
+        .context = "caller-b",
+        .sha256 = try gpa.dupe(u8, sha256),
+        .url = try gpa.dupe(u8, "fixture://left-pad-1.0.0.tgz"),
+    };
+    defer {
+        gpa.free(b.sha256.?);
+        gpa.free(b.url.?);
+    }
+
+    const cache_root = try temporary.dir.realPathFileAlloc(io, "cache", gpa);
+    defer gpa.free(cache_root);
+    var store = try cache_mod.Store.open(gpa, io, cache_root);
+    defer store.deinit();
+    const key = (try npm_esm.cacheKeyForInstance(gpa, a)).?;
+    defer gpa.free(key);
+    try npm_esm.publishNpmTree(gpa, io, &store, key, tarball);
+
+    // caller-a のみを対象にした scope で解決する（by_name には両方が載るが、
+    // context で一意に定まる）。
+    var prepared = try prepare(gpa, io, &.{ a, b }, cache_root, null);
+    defer prepared.deinit();
+    const scoped = try prepared.resolveBare("left-pad", .{ .instance_index = 0 });
+    defer scoped.deinit(gpa);
+    try testing.expect(std.mem.endsWith(u8, scoped.path, "index.js"));
+    // 別 context の instance は別の package root（scratch dir）を持つ。
+    const other = try prepared.resolveBare("left-pad", .{ .instance_index = 1 });
+    defer other.deinit(gpa);
+    try testing.expect(!std.mem.eql(u8, scoped.package_root, other.package_root));
+    // scope 外（root）は context を決められないため fail-closed。
+    try testing.expectError(error.AmbiguousInstances, prepared.resolveBare("left-pad", .{}));
 }
 
 test "無関係な instance の cache 欠落は要求された package の解決を止めない" {
@@ -945,10 +1217,10 @@ test "無関係な instance の cache 欠落は要求された package の解決
     var prepared = try prepare(gpa, io, &.{ cached, missing }, cache_root, null);
     defer prepared.deinit();
     // cache 済みの left-pad は、無関係な missing の欠落に影響されない。
-    const entry = try prepared.resolveBare("left-pad");
+    const entry = try prepared.resolveBare("left-pad", .{});
     defer entry.deinit(gpa);
     try testing.expect(std.mem.endsWith(u8, entry.path, "index.js"));
-    try testing.expectError(error.CacheMiss, prepared.resolveBare("missing"));
+    try testing.expectError(error.CacheMiss, prepared.resolveBare("missing", .{}));
 }
 
 test "State は name 単位の失敗を Prepared.failed で保持し、再試行しない" {
@@ -1188,13 +1460,13 @@ test "Prepared は世代 materialize 済み tree を cache/scratch の再展開�
     defer deps_dir.close(io);
     var prepared = try prepare(gpa, io, &.{instance}, cache_root, deps_dir);
     defer prepared.deinit();
-    const root = try prepared.resolveBare("left-pad");
+    const root = try prepared.resolveBare("left-pad", .{});
     defer root.deinit(gpa);
     try testing.expect(std.mem.endsWith(u8, root.path, "index.js"));
     // cache から scratch へ展開していれば path は scratch 配下になる。
     try testing.expect(std.mem.startsWith(u8, root.path, generation_root));
     try testing.expect(std.mem.startsWith(u8, root.package_root, generation_root));
-    const sub = try prepared.resolveBare("left-pad/sub");
+    const sub = try prepared.resolveBare("left-pad/sub", .{});
     defer sub.deinit(gpa);
     try testing.expect(std.mem.endsWith(u8, sub.path, "sub.js"));
     // 世代 tree だけで解決したため cache store/scratch は作られない。
@@ -1239,7 +1511,7 @@ test "Prepared は世代 tree の provenance が lock と食い違えば cache �
     var prepared = try prepare(gpa, io, &.{instance}, cache_root, deps_dir);
     defer prepared.deinit();
     // 世代 tree は使わず、空 cache からの構築に失敗する（fail-closed）。
-    try testing.expectError(error.CacheMiss, prepared.resolveBare("left-pad"));
+    try testing.expectError(error.CacheMiss, prepared.resolveBare("left-pad", .{}));
 }
 
 test "Prepared は marker 欠落・壊れた marker の世代 tree を古いものとして扱う" {
@@ -1271,7 +1543,7 @@ test "Prepared は marker 欠落・壊れた marker の世代 tree を古いも�
         defer deps_dir.close(io);
         var prepared = try prepare(gpa, io, &.{instance}, cache_root, deps_dir);
         defer prepared.deinit();
-        try testing.expectError(error.CacheMiss, prepared.resolveBare("left-pad"));
+        try testing.expectError(error.CacheMiss, prepared.resolveBare("left-pad", .{}));
     }
 }
 
@@ -1306,7 +1578,7 @@ test "Prepared は package.json identity が lock と違う世代 tree を再利
     defer deps_dir.close(io);
     var prepared = try prepare(gpa, io, &.{instance}, cache_root, deps_dir);
     defer prepared.deinit();
-    try testing.expectError(error.CacheMiss, prepared.resolveBare("left-pad"));
+    try testing.expectError(error.CacheMiss, prepared.resolveBare("left-pad", .{}));
 }
 
 test "Prepared は世代 tree が symlink なら cache 経路へ fallback する" {
@@ -1347,7 +1619,7 @@ test "Prepared は世代 tree が symlink なら cache 経路へ fallback する
     var prepared = try prepare(gpa, io, &.{instance}, cache_root, deps_dir);
     defer prepared.deinit();
     // symlink を tree root として追従せず、空 cache からの構築失敗へ倒す。
-    try testing.expectError(error.CacheMiss, prepared.resolveBare("left-pad"));
+    try testing.expectError(error.CacheMiss, prepared.resolveBare("left-pad", .{}));
 }
 
 /// tar entry を gzip 圧縮した byte 列を作る（`provider_test.zig` と同じ手法）。
