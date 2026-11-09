@@ -80,6 +80,17 @@ pub const RootFrame = extern struct {
 
 pub const DictionaryEntry = struct { key: Value, value: Value };
 
+/// runtimeが所有しない外部リソース（`--compat-js` のQuickJS参照など）を
+/// Objectへ結び付ける汎用ハンドル。runtime_coreはQuickJSへ依存せず、
+/// compat runtimeがreleaseコールバックを設定する。GCのsweepで1回だけreleaseし、
+/// 通常AOT（compat runtime非同梱）では常にnullのまま。
+pub const ExternalRelease = *const fn (context: ?*anyopaque, handle: ?*anyopaque) callconv(.c) void;
+pub const ExternalHandle = extern struct {
+    context: ?*anyopaque = null,
+    handle: ?*anyopaque = null,
+    release: ?ExternalRelease = null,
+};
+
 /// Number of entries at which a dictionary builds its lookup index.  Below
 /// the threshold a linear scan over the ordered list is cheaper than
 /// hashing; at and above it an open-addressed slot table maps each key's
@@ -300,6 +311,9 @@ pub const Object = struct {
     array_presence: std.ArrayList(bool) = .empty,
     toml_temporal: ?AotTomlTemporal = null,
     structured_error: bool = false,
+    /// JS由来のexternal binding。配列・辞書のObjectは、`--compat-js` で
+    /// QuickJS参照を保持する場合にここへハンドルを持つ。GCのsweepでreleaseする。
+    external: ?ExternalHandle = null,
     payload: Payload,
 };
 
@@ -1237,6 +1251,9 @@ pub const Runtime = struct {
     }
 
     pub fn destroyObject(self: *Runtime, object: *Object) void {
+        // external binding（`--compat-js` のQuickJS参照）は、Objectの破棄時に
+        // ちょうど1回解放する。releaseコールバックが無い通常AOTでは何もしない。
+        if (object.external) |external| if (external.release) |release| release(external.context, external.handle);
         if (object.toml_temporal) |*temporal| temporal.deinit(self.allocator);
         const inline_utf16 = object.inline_utf16;
         switch (object.payload) {

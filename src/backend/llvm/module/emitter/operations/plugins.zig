@@ -536,19 +536,38 @@ pub fn writeCompatJsEval(emitter: *Emitter, function: ir.Function, instruction: 
 /// operandsは呼出し前にroot slotへ実体化済みで、`%aggregate.values` の共有は
 /// この命令の書き込みに閉じる（他のwriterと同じ不変条件）。
 pub fn writeCompatJsCall(emitter: *Emitter, function: ir.Function, instruction: ir.Instruction, scope: usize, aggregate_count: usize) !void {
+    return writeCompatJsDispatch(emitter, function, instruction, scope, aggregate_count, "lnako_aot_compat_js_call", "compat.call");
+}
+
+/// `--compat-js` AOTの `JSオブジェクト取得`。lnako拡張の2引数形
+/// （値, プロパティ名）をcompat専用ABIへ渡す。
+pub fn writeCompatJsObjectGet(emitter: *Emitter, function: ir.Function, instruction: ir.Instruction, scope: usize, aggregate_count: usize) !void {
+    return writeCompatJsDispatch(emitter, function, instruction, scope, aggregate_count, "lnako_aot_compat_js_object_get", "compat.object");
+}
+
+/// `--compat-js` AOTの `JSメソッド実行`。obj/method/argsをcompat専用ABIへ渡し、
+/// QuickJS側でメソッドを解決・呼び出す最小dispatch。
+pub fn writeCompatJsMethodCall(emitter: *Emitter, function: ir.Function, instruction: ir.Instruction, scope: usize, aggregate_count: usize) !void {
+    return writeCompatJsDispatch(emitter, function, instruction, scope, aggregate_count, "lnako_aot_compat_js_method_call", "compat.method");
+}
+
+/// compat専用ABI（`JS実行` 以外のQuickJS境界）への共通dispatch。operandsは
+/// 呼出し前にroot slotへ実体化済みで、`%aggregate.values` の共有はこの命令の
+/// 書き込みに閉じる（他のwriterと同じ不変条件）。
+fn writeCompatJsDispatch(emitter: *Emitter, function: ir.Function, instruction: ir.Instruction, scope: usize, aggregate_count: usize, callee: []const u8, prefix: []const u8) !void {
     const result = instruction.result orelse return error.MissingInstructionResult;
     if (instruction.operands.len > aggregate_count) return error.InvalidCallScratch;
     for (instruction.operands, 0..) |argument, index| {
-        try emitter.output.writer.print("  %compat.call.{d}.slot.{d} = getelementptr [{d} x %lnako.Value], ptr %aggregate.values, i64 0, i64 {d}", .{ result, index, aggregate_count, index });
+        try emitter.output.writer.print("  %{s}.{d}.slot.{d} = getelementptr [{d} x %lnako.Value], ptr %aggregate.values, i64 0, i64 {d}", .{ prefix, result, index, aggregate_count, index });
         try emitter.debugSuffix(instruction.span, scope);
         try emitter.output.writer.writeAll("  store %lnako.Value ");
         try constants_mod.writeValueRef(emitter, function, argument);
-        try emitter.output.writer.print(", ptr %compat.call.{d}.slot.{d}", .{ result, index });
+        try emitter.output.writer.print(", ptr %{s}.{d}.slot.{d}", .{ prefix, result, index });
         try emitter.debugSuffix(instruction.span, scope);
     }
-    try emitter.output.writer.print("  call void @lnako_aot_compat_js_call(ptr %root.slot.{d}, ptr ", .{result});
+    try emitter.output.writer.print("  call void @{s}(ptr %root.slot.{d}, ptr ", .{ callee, result });
     if (instruction.operands.len > 0) {
-        try emitter.output.writer.print("%compat.call.{d}.slot.0", .{result});
+        try emitter.output.writer.print("%{s}.{d}.slot.0", .{ prefix, result });
     } else try emitter.output.writer.writeAll("null");
     try emitter.output.writer.print(", i64 {d})", .{instruction.operands.len});
     try emitter.debugSuffix(instruction.span, scope);

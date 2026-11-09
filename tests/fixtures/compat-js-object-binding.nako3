@@ -1,0 +1,78 @@
+# JSオブジェクト取得 / JSメソッド実行 の external binding 最小スライス。
+# AOT（--compat-js --backend aot）とインタプリタで同じ出力になることを
+# tools/check_aot_quickjs_separation.mjs が確認する。
+O=JS関数実行(『()=>({x:10})』,[])
+JSオブジェクト取得(O,"x")を表示
+A=JS関数実行("()=>[1,2]",[])
+JSオブジェクト取得(A,"0")を表示
+JSメソッド実行(A,"join",["-"])を表示
+JSメソッド実行("[1,2,3]","join",["-"])を表示
+D=JS関数実行(『()=>({y:7})』,[])
+JS関数実行("o=>o.y",[D])を表示
+N=JSメソッド実行(『({get(){return {a:{b:5}}}})』,"get",[])
+JSオブジェクト取得(JSオブジェクト取得(N,"a"),"b")を表示
+# external bindingを持たないNako配列/辞書は安全なフォールバック（JSコピー）。
+JSオブジェクト取得([1,2],"0")を表示
+JSオブジェクト取得({z:9},"z")を表示
+JSオブジェクト取得("abc","0")を表示
+# 呼出し前のNako側変更をJS参照へ書き戻してからメソッド実行する。
+B=JS関数実行("()=>[1]",[])
+B[0]=8
+JSメソッド実行(B,"join",["-"])を表示
+# JS側で変更した内容を次の呼出し前に再同期する（interpreterのrefreshExternal相当）。
+P=JS関数実行("()=>[1]",[])
+JSメソッド実行(P,"push",[3])を表示
+JSメソッド実行(P,"join",["-"])を表示
+# 循環するJSオブジェクトは再帰変換と再同期で停止する。
+C=JSメソッド実行(『({mk(){const o={};o.self=o;return o}})』,"mk",[])
+JSメソッド実行(C,"hasOwnProperty",["self"])を表示
+# externalコンテナのネスト要素もJS関数実行の引数として渡せる（深い同期）。
+N=JSメソッド実行(『({mk(){return [[5]]}})』,"mk",[])
+JS関数実行("(a)=>a[0][0]",[N])を表示
+# externalでないNako配列へのJS側変更も書き戻す（interpreterのrefreshExternal相当）。
+E=[1,2]
+JSメソッド実行(『({m(a){a.push(9);return 0}})』,"m",[E])
+Eを表示
+# 文字列以外のキーと配列のlength。
+A2=JS関数実行("()=>[1,2]",[])
+JSオブジェクト取得(A2,"length")を表示
+JSオブジェクト取得(A2,0)を表示
+# external値のNako側変更は取得前にJSへ書き戻す（sync-before-read）。
+O2=JS関数実行(『()=>({x:1})』,[])
+O2["x"]=20
+JSオブジェクト取得(O2,"x")を表示
+# Nako側で作った循環plain配列をexternalコンテナへ入れても停止する。
+CB=[]
+CB[0]=CB
+CA=JS関数実行("()=>[1]",[])
+CA[0]=CB
+JSメソッド実行(CA,"hasOwnProperty",[0])を表示
+# 循環参照はNako側でも同一オブジェクトとして保持される。
+(C["self"]===C)を表示
+# 疎配列は穴を保持する。
+SP=JSメソッド実行(『({mk(){const a=[1];a[2]=3;return a}})』,"mk",[])
+SPを表示
+# frozenオブジェクトの未変更プロパティは再同期で再代入しない。
+FZ=JS関数実行(『()=>Object.freeze({x:1})』,[])
+JSメソッド実行(FZ,"hasOwnProperty",["x"])を表示
+# __proto__もown data propertyとして復元する。
+PR=JS関数実行(『()=>Object.defineProperty({},"__proto__",{value:1,enumerable:true,writable:true,configurable:true})』,[])
+JSオブジェクト取得(PR,"__proto__")を表示
+# 疎配列の穴はhasOwnPropertyでも保持される。
+SP2=JSメソッド実行(『({mk(){const a=[1];a[2]=3;return a}})』,"mk",[])
+JSメソッド実行(SP2,"hasOwnProperty",[1])を表示
+# __proto__のNako→JS書き戻しもown data propertyとして定義する。
+PR2=JS関数実行(『()=>Object.defineProperty({},"__proto__",{value:1,enumerable:true,writable:true,configurable:true})』,[])
+PR2["__proto__"]=7
+JSオブジェクト取得(PR2,"__proto__")を表示
+# accessorは取得前の同期でNako値のown data propertyへ置き換わる
+# （getterの副作用は観測しない。COMPAT_JS.mdに明記）。
+G=JS関数実行(『()=>({get x(){this.y=5;return 1}})』,[])
+JSオブジェクト取得(G,"x")を表示
+JSオブジェクト取得(G,"y")を表示
+# 同一Nakoオブジェクトを複数要素に持つ場合、同じJS参照へ変換する。
+D={x:1}
+A3=JS関数実行("()=>[1,2]",[])
+A3[0]=D
+A3[1]=D
+JSメソッド実行(『({same(a){return a[0]===a[1]}})』,"same",[A3])を表示
