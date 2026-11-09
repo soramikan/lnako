@@ -646,3 +646,88 @@ test "package publish は id 宣言ありで index 未収録のとき name 一�
     try testing.expectError(error.OwnerRequired, publish.run(a, io, options, &diagnostics));
     try testing.expectEqual(@as(usize, 0), server.countCaptures("PUT"));
 }
+
+/// `plugin.mjs` を公開する ESM-only package root を作る。`compat_js_profile`
+/// が真なら `compat-js = true` の profile を宣言する。
+fn writeEsmPackage(a: std.mem.Allocator, temporary: *std.testing.TmpDir, dir_name: []const u8, pkg_name: []const u8, compat_js_profile: bool) ![]const u8 {
+    const profile_section =
+        \\
+        \\[profiles.compat]
+        \\runtime = "lnako"
+        \\os = "linux"
+        \\cpu = "x86_64"
+        \\abi = "gnu"
+        \\compat-js = true
+        \\
+    ;
+    const manifest = if (compat_js_profile)
+        try std.fmt.allocPrint(a,
+            \\[package]
+            \\name = "{s}"
+            \\version = "1.0.0"
+            \\license = "MIT"
+            \\
+        ++
+            profile_section ++
+            \\
+            \\[[exports]]
+            \\name = "main"
+            \\esm = "plugin.mjs"
+            \\
+        , .{pkg_name})
+    else
+        try std.fmt.allocPrint(a,
+            \\[package]
+            \\name = "{s}"
+            \\version = "1.0.0"
+            \\license = "MIT"
+            \\
+            \\[[exports]]
+            \\name = "main"
+            \\esm = "plugin.mjs"
+            \\
+        , .{pkg_name});
+    try temporary.dir.createDirPath(io, dir_name);
+    const manifest_path = try std.fmt.allocPrint(a, "{s}/nako.toml", .{dir_name});
+    try temporary.dir.writeFile(io, .{ .sub_path = manifest_path, .data = manifest });
+    const plugin_path = try std.fmt.allocPrint(a, "{s}/plugin.mjs", .{dir_name});
+    try temporary.dir.writeFile(io, .{ .sub_path = plugin_path, .data = "export default {};\n" });
+    return temporary.dir.realPathFileAlloc(io, dir_name, a);
+}
+
+test "package publish は compat-js profile の ESM package を受理し、無宣言は E006 で拒否する" {
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const a = arena_impl.allocator();
+    var server = RegistryServer{ .io = io, .allocator = a };
+    try server.listen();
+    defer server.stop();
+    try server.serve(&.{});
+
+    // compat-js = true の profile を持つ ESM-only package は公開検証を通す。
+    {
+        var temporary = std.testing.tmpDir(.{});
+        defer temporary.cleanup();
+        const root = try writeEsmPackage(a, &temporary, "esm-pkg", "esm-pkg", true);
+        try writeLock(a, root);
+        var diagnostics = diag.List.init(a);
+        defer diagnostics.deinit();
+        var report = try publish.run(a, io, validOptions(root, server.base_url.?), &diagnostics);
+        defer report.deinit();
+        try testing.expectEqual(publish.Status.unpublished, report.status);
+        try testing.expectEqual(@as(usize, 0), server.countCaptures("PUT"));
+    }
+
+    // profile 無し（compat-js 無宣言）の ESM-only package は E006 で拒否する。
+    {
+        var temporary = std.testing.tmpDir(.{});
+        defer temporary.cleanup();
+        const root = try writeEsmPackage(a, &temporary, "esm-pkg-plain", "esm-pkg-plain", false);
+        try writeLock(a, root);
+        var diagnostics = diag.List.init(a);
+        defer diagnostics.deinit();
+        try testing.expectError(error.InvalidPackage, publish.run(a, io, validOptions(root, server.base_url.?), &diagnostics));
+        try testing.expect(diagnostics.find(diag.E006_JS_IN_NORMAL_MODE) != null);
+        try testing.expectEqual(@as(usize, 0), server.countCaptures("PUT"));
+    }
+}

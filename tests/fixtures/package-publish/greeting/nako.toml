@@ -1,0 +1,21 @@
+# 参照 source package。registry の pkg 依存（public-id 指定）を持ち、
+# consumer 側の推移解決を検証する。package 内 source は静的索引の対象のため
+# pkg import を含めず（plugin 命令の利用は consumer 側 entry で行う）。
+[package]
+name = "greeting"
+version = "1.0.0"
+license = "MIT"
+
+[profiles.compat]
+runtime = "lnako"
+os = "linux"
+cpu = "x86_64"
+abi = "gnu"
+compat-js = true
+
+[dependencies.pkg]
+leftpad = { version = ">=1.0.0 <2.0.0", public-id = "pkg:11111111111111111111111111111111" }
+
+[[exports]]
+name = "main"
+path = "src/main.nako3"
