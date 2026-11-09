@@ -107,6 +107,10 @@ pub const NpmModuleResolver = struct {
         importer_package_root: ?[]const u8,
         specifier: []const u8,
     ) anyerror!ResolvedNpmModule,
+    /// 解決失敗の instance 単位診断（1 行）。cache 欠落等の「どの name/
+    /// version/cache key が欠けたか」を利用者に示す（#54）。未設定は
+    /// 診断なし（呼出し側は汎用文言へ倒す）。返却文面は `allocator` 所有。
+    failureDetailFn: ?*const fn (context: *anyopaque, allocator: std.mem.Allocator) anyerror!?[]u8 = null,
 
     pub fn resolve(
         self: NpmModuleResolver,
@@ -116,6 +120,12 @@ pub const NpmModuleResolver = struct {
         specifier: []const u8,
     ) !ResolvedNpmModule {
         return self.resolveFn(self.context, allocator, importer_owner, importer_package_root, specifier);
+    }
+
+    /// 直近の解決失敗診断（1 行）。provider が公開していなければ null。
+    pub fn failureDetail(self: NpmModuleResolver, allocator: std.mem.Allocator) !?[]u8 {
+        const failure_detail_fn = self.failureDetailFn orelse return null;
+        return failure_detail_fn(self.context, allocator);
     }
 };
 
@@ -855,6 +865,10 @@ pub const Loader = struct {
                     };
                     const npm = npm_resolver.resolve(self.allocator, module.package_owner, module.package_root, requested) catch |err| {
                         if (err == error.OutOfMemory) return err;
+                        // cache 欠落等の instance 単位失敗は「どの instance が
+                        // 欠けたか」を 1 行で示す（#54）。resolver が診断文面
+                        // を公開していなければ従来の汎用文言へ倒す。
+                        if (self.npmFailureDetail(import_node, path)) continue;
                         try self.importDiagnostic(import_node, path, "package内のJavaScriptでは静的に解決できない取り込み指定は使えません");
                         continue;
                     };
@@ -1191,6 +1205,19 @@ pub const Loader = struct {
 
     fn importDiagnostic(self: *Loader, node: ?*ast.Node, file: []const u8, message: []const u8) !void {
         try self.importDiagnosticAt(if (node) |value| value.span else null, file, message);
+    }
+
+    /// npm resolver が公開する直近の instance 単位失敗診断を位置付きで記録
+    /// する。診断文面が無い（resolver が公開していない・instance 単位の失敗
+    /// でない）場合は false を返し、呼出し側が汎用文言へ倒す。
+    fn npmFailureDetail(self: *Loader, import_node: ?*ast.Node, path: []const u8) bool {
+        const npm_resolver = self.options.npm_module_resolver orelse return false;
+        const detail = npm_resolver.failureDetail(self.allocator) catch return false;
+        const message = detail orelse return false;
+        // 診断は message のスライスをそのまま保持する（`importDiagnosticAt` は
+        // dupe しない）ため、ここでは解放しない。Loader の arena が寿命を持つ。
+        self.importDiagnostic(import_node, path, message) catch {};
+        return true;
     }
 
     pub fn importDiagnosticAt(self: *Loader, span: ?ast.Span, file: []const u8, message: []const u8) !void {

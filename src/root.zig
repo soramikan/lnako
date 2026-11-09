@@ -203,8 +203,8 @@ pub fn usage(writer: *std.Io.Writer) !void {
         \\使い方:
         \\  lnako build <file.nako3|.dncl|.dncl2> -o <output> [-O0..-O3] [--emit exe|obj|llvm-ir] [--llvm-dir <path>] [--compat-js [--backend embedded|aot] [--sbom <path>]]
         \\  lnako run <file.nako3|.dncl|.dncl2> [--compat-js] [--dncl] [--dncl2] -- [arguments]
-        \\  lnako check <file.nako3|.dncl|.dncl2> [--dncl] [--dncl2]
-        \\  lnako test <file.nako3|.dncl|.dncl2|directory> [--dncl] [--dncl2]
+        \\  lnako check <file.nako3|.dncl|.dncl2> [--dncl] [--dncl2] [--package-cache-dir <path>]
+        \\  lnako test <file.nako3|.dncl|.dncl2|directory> [--dncl] [--dncl2] [--package-cache-dir <path>]
         \\  lnako compat report
         \\  lnako benchmark
         \\  lnako toolchain <status|dir|install|update|remove>
@@ -229,6 +229,7 @@ pub fn usage(writer: *std.Io.Writer) !void {
         \\  --profile <name> 使用する profile
         \\  --features <a,b> 有効化する feature（カンマ区切り）
         \\  --registry <url> pkg 依存解決用 registry（既定: LNAKO_REGISTRY）
+        \\  --package-cache-dir <path> npm tarball cache の場所（既定: OS 標準 cache dir）
         \\  LNAKO_NPM_REGISTRY=<url>  npm packument の取得先（既定: https://registry.npmjs.org）
         \\  --strict-project-trust  共有 writable 配置を拒否（旧既定）
         \\  --no-project-trust-warning  共有 writable の警告を出さない（続行）

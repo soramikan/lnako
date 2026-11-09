@@ -252,11 +252,12 @@ pub fn run(
             }
             // ファイル検査ではプロジェクト準備フラグ（--locked/--profile 等）
             // は適用先が無いため用法エラーとする（黙って捨てない）。
+            // ただし `--package-cache-dir` は compile 経路へ伝播するため許可
+            // する（`run`/`build`/`test` と同じ #54 の配線）。
             if (check_prep.locked or check_prep.offline or check_prep.no_sync or
                 check_prep.profile != null or check_prep.features.items.len > 0 or
                 check_prep.no_default_features or check_prep.registry != null or
-                check_prep.cache_dir != null or check_prep.allow_plaintext_http or
-                check_prep.json)
+                check_prep.allow_plaintext_http or check_prep.json)
             {
                 try stderr.writeAll("check: ファイル指定時はプロジェクト準備フラグ（--locked/--profile 等）は使えません\n");
                 try stderr.flush();
@@ -284,6 +285,8 @@ pub fn run(
                 .writable_mode = check_prep.writableMode(init.environ_map),
                 // ファイル検査では未検査の package 命令呼出しを可視化する。
                 .report_uninspected_packages = true,
+                // `--package-cache-dir` は run/build/test と同じ経路へ伝播する。
+                .package_cache_root = check_prep.cache_dir,
             }, stderr) catch |err| {
                 if (err == error.ConflictingDnclModes) {
                     try stderr.writeAll("check: 拡張子と--dncl/--dncl2が異なるDNCL方言を要求しています\n");
@@ -440,7 +443,7 @@ pub fn run(
             };
             // プロジェクト内の入力なら依存環境を自動準備する。
             try project_command.prepareForExecution(allocator, io, input, &test_prep, init.environ_map, "test", stderr);
-            const succeeded = test_command.runTestTarget(allocator, io, input, test_mode, test_prep.writableMode(init.environ_map), stdout, stderr) catch |err| {
+            const succeeded = test_command.runTestTarget(allocator, io, input, test_mode, test_prep.writableMode(init.environ_map), test_prep.cache_dir, stdout, stderr) catch |err| {
                 if (err == error.ConflictingDnclModes) {
                     try stderr.writeAll("test: 拡張子と--dncl/--dncl2が異なるDNCL方言を要求しています\n");
                     try stderr.flush();
