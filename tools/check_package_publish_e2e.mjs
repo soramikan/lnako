@@ -480,7 +480,7 @@ async function main() {
       ["package", "publish", "--no-dry-run", "--registry", origin, "--owner", OWNER],
       { cwd: authProbe, env: { LNAKO_REGISTRY: origin, LNAKO_NPM_REGISTRY: origin, LNAKO_REGISTRY_TOKEN: "wrong-token" } },
       "誤 token publish",
-      ["401"],
+      "artifact の送信に失敗しました（HTTP 401）",
     );
     if (registry.putRequestCount !== putsBefore401) fail("誤 token publish の PUT が受理されました");
     if (registry.publishedRecord("authprobe")) fail("誤 token publish が version record を登録しました");
