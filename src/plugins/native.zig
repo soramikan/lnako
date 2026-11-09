@@ -305,7 +305,13 @@ pub const State = struct {
         }
         self.pending_namespace = if (unqualified) null else namespaces[0];
         defer self.pending_namespace = null;
-        if (initialize(descriptor.plugin_context, &self.host, &registry) != status_ok) return error.NativePluginInitializationFailed;
+        if (initialize(descriptor.plugin_context, &self.host, &registry) != status_ok) {
+            // initialize が worker を起動した後に失敗することがある。ここで
+            // deinitialize を呼ばずに library を閉じると worker が生存した
+            // ままコードが消え、後続の呼出しでクラッシュする。
+            if (descriptor.deinitialize) |deinitialize| deinitialize(descriptor.plugin_context);
+            return error.NativePluginInitializationFailed;
+        }
         errdefer if (descriptor.deinitialize) |deinitialize| deinitialize(descriptor.plugin_context);
         // 同一pathを複数alias（依存key＋明示alias等）でimportした場合、
         // 全namespace分の修飾名を登録し、どの修飾名経由でも呼べるようにする。

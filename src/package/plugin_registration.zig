@@ -119,23 +119,33 @@ pub const Report = struct {
 };
 
 /// 照合対象の package 記録。environment.json から呼出し側が写す。
+/// 1 plugin artifact 分の入力。`path` は解決済みの絶対 path、`source` は
+/// ESM の module source（native は null）。
+pub const ArtifactInput = struct {
+    /// 絶対 path（解決できない宣言は null）。
+    path: ?Path = null,
+    /// ESM か（false は native）。
+    esm: bool = false,
+
+    pub const Path = struct {
+        path: []const u8,
+        /// ESM の module source。native は null。
+        source: ?[]const u8 = null,
+    };
+};
+
 pub const PackageInput = struct {
     package_key: []const u8,
     /// project root からの相対 path（環境記録の `path`）。
     path: []const u8,
     /// 宣言命令 metadata（null は環境に `commands` が無い＝未検査）。
     declared: ?[]const npkg_commands.Command = null,
-    /// plugin artifact の絶対 path（`path` 配下に解決済み）。null は plugin
-    /// ではない package（source library）。
-    plugin_artifact: ?[]const u8 = null,
-    /// ESM plugin の module source（呼出し側が読み込んで渡す）。ESM では
-    /// `plugin_artifact` を評価せず、この source を評価する。
-    esm_source: ?[]const u8 = null,
+    /// plugin artifact 群。空は plugin ではない package。複数 export が
+    /// 別々の命令を登録する構成に対応するため全件を渡す。
+    artifacts: []const ArtifactInput = &.{},
     /// ESM plugin の package root（絶対 path）。import 解決をこの root へ
     /// 拘束する（root 外への FS fallback を拒否する）。
     package_root: ?[]const u8 = null,
-    /// ESM plugin か（false は native plugin）。
-    esm: bool = false,
     /// package 経由の公開 namespace。空は直接 path import 相当（無修飾）。
     namespace: []const u8 = "",
 };
@@ -170,11 +180,22 @@ fn inspectPackage(arena: Allocator, input: PackageInput, options: Options) error
     var result = PackageRegistration{
         .package_key = try arena.dupe(u8, input.package_key),
     };
-    if (input.plugin_artifact == null) {
+    // 解決できた artifact だけを対象にする（宣言が package dir 外を指す等、
+    // 信頼できない artifact は未解決として扱う）。
+    var resolved: std.ArrayList(ArtifactInput) = .empty;
+    defer resolved.deinit(arena);
+    for (input.artifacts) |artifact| {
+        if (artifact.path != null) try resolved.append(arena, artifact);
+    }
+    if (resolved.items.len == 0) {
         result.status = .not_plugin;
         return result;
     }
-    if (input.esm and !options.compat_js_available) {
+    const needs_compat_js = blk: {
+        for (resolved.items) |artifact| if (artifact.esm) break :blk true;
+        break :blk false;
+    };
+    if (needs_compat_js and !options.compat_js_available) {
         result.status = .compat_js_required;
         return result;
     }
@@ -185,16 +206,24 @@ fn inspectPackage(arena: Allocator, input: PackageInput, options: Options) error
         return result;
     }
 
-    const registered = collectRegistered(arena, input) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        else => {
-            // ロード失敗は不一致にしない。誤って宣言のみを「実登録に無い」
-            // と診断させないため、未検査として記録する。
-            result.status = .load_failed;
-            return result;
-        },
-    };
+    // 複数 artifact の登録をすべて集めてから 1 回だけ照合する（片方の
+    // artifact だけを見て他方の命令を未登録と誤診断しない）。
+    var merged: std.ArrayList(Registered) = .empty;
+    defer merged.deinit(arena);
+    for (resolved.items) |artifact| {
+        const one = collectRegistered(arena, input, artifact) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => {
+                // ロード失敗は不一致にしない。誤って宣言のみを「実登録に
+                // 無い」と診断させないため、未検査として記録する。
+                result.status = .load_failed;
+                return result;
+            },
+        };
+        try merged.append(arena, one);
+    }
 
+    const registered = try diffMerged(arena, input.declared.?, merged.items);
     result.status = .matched;
     result.inspected = true;
     result.matched_count = registered.matched;
@@ -204,82 +233,51 @@ fn inspectPackage(arena: Allocator, input: PackageInput, options: Options) error
     return result;
 }
 
-const RegisteredCommands = struct {
+/// 1 artifact 分の登録 command。
+const Registered = struct {
     /// 登録名（公開名。namespace 付きは `{ns}__{name}`）。
     names: []const []const u8,
-    /// `names` と対応する助詞列。JS plugin は助詞を持たないため空。
-    josi: []const []const []const u8,
-    /// 助詞の有無。false の命令は助詞/arity 照合の対象外（名前照合のみ）。
-    has_particles: []const bool,
-    matched: usize,
-    declared_only: []const npkg_commands.Command,
-    registered_only: []const []const u8,
-    shape_mismatches: []const ShapeMismatch,
+    /// ESM か（true は助詞/arity 照合の対象外）。
+    esm: bool = false,
+    /// `names` と対応する生の particles 文字列（native のみ）。
+    particles: []const []const u8 = &.{},
+    minimum_arguments: []const usize = &.{},
+    maximum_arguments: []const usize = &.{},
 };
 
-/// plugin をロードして登録 command を収集する。`error.LoadFailed` 系は
+/// 1 artifact をロードして登録 command を収集する。`error.LoadFailed` 系は
 /// 呼出し側で未検査へ落とす。
-fn collectRegistered(arena: Allocator, input: PackageInput) (error{ LoadFailed, OutOfMemory })!RegisteredCommands {
-    if (input.esm) {
+fn collectRegistered(
+    arena: Allocator,
+    input: PackageInput,
+    artifact: ArtifactInput,
+) (error{ LoadFailed, OutOfMemory })!Registered {
+    const path = artifact.path.?.path;
+    if (artifact.esm) {
         // 評価するのは artifact path ではなく、呼出し側が読んだ module source。
-        const source = input.esm_source orelse return error.LoadFailed;
+        const source = artifact.path.?.source orelse return error.LoadFailed;
         const names = @import("../compat/plugin_probe.zig").collectEsmCommandNames(
             arena,
             source,
             input.package_root,
             input.namespace,
-            input.plugin_artifact orelse "plugin.mjs",
+            path,
         ) catch return error.LoadFailed;
-        return diffNames(arena, input.declared.?, names);
+        return .{ .names = names, .esm = true };
     }
-    const registered = collectNativeCommands(arena, input.plugin_artifact.?, input.namespace) catch
+    const collected = collectNativeCommands(arena, path, input.namespace) catch
         return error.LoadFailed;
-    return diffNative(arena, input.declared.?, registered);
-}
-
-/// 宣言と登録名の一覧を照合する（助詞の無い経路: ESM plugin）。
-fn diffNames(
-    arena: Allocator,
-    declared: []const npkg_commands.Command,
-    registered_names: []const []const u8,
-) error{OutOfMemory}!RegisteredCommands {
-    var registered_only: std.ArrayList([]const u8) = .empty;
-    var declared_only: std.ArrayList(npkg_commands.Command) = .empty;
-    var matched: usize = 0;
-
-    for (registered_names) |name| {
-        var found = false;
-        for (declared) |command| {
-            if (!std.mem.eql(u8, command.name, name)) continue;
-            found = true;
-            matched += 1;
-            break;
-        }
-        if (!found) try registered_only.append(arena, name);
-    }
-    for (declared) |command| {
-        var found = false;
-        for (registered_names) |name| {
-            if (std.mem.eql(u8, command.name, name)) {
-                found = true;
-                break;
-            }
-        }
-        if (!found) try declared_only.append(arena, command);
-    }
     return .{
-        .names = registered_names,
-        .josi = &.{},
-        .has_particles = &.{},
-        .matched = matched,
-        .declared_only = try declared_only.toOwnedSlice(arena),
-        .registered_only = try registered_only.toOwnedSlice(arena),
-        .shape_mismatches = &.{},
+        .names = collected.names,
+        .esm = false,
+        .particles = collected.particles,
+        .minimum_arguments = collected.minimum_arguments,
+        .maximum_arguments = collected.maximum_arguments,
     };
 }
 
 /// native plugin の登録 command（公開名・助詞・arity）。
-const NativeRegistered = struct {
+const NativeCollected = struct {
     /// 公開名。namespace 付き登録は `{ns}__{name}`。
     names: []const []const u8,
     /// `names` と対応する助詞列（生の particles 文字列）。
@@ -295,7 +293,7 @@ fn collectNativeCommands(
     arena: Allocator,
     artifact_path: []const u8,
     namespace: []const u8,
-) (error{ LoadFailed, OutOfMemory })!NativeRegistered {
+) (error{ LoadFailed, OutOfMemory })!NativeCollected {
     const probe = @import("../plugins/native_probe.zig");
     const collected = probe.collect(arena, artifact_path, namespace) catch
         return error.LoadFailed;
@@ -307,47 +305,52 @@ fn collectNativeCommands(
     };
 }
 
-/// 宣言と native 実登録を照合する。名前は公開名（namespace 付きは
-/// `{ns}__{name}`）で比較し、双方に存在する命令は助詞/arity を検査する。
-fn diffNative(
+/// 照合結果（宣言と実登録の差分）。
+const Diff = struct {
+    matched: usize,
+    declared_only: []const npkg_commands.Command,
+    registered_only: []const []const u8,
+    shape_mismatches: []const ShapeMismatch,
+};
+
+/// 宣言 metadata と、複数 artifact 分の実登録をまとめて照合する。
+/// 名前空間は比較前に公開名（`{ns}__{name}`）へ正規化する。ESM の登録は
+/// 助詞/arity を持たないため名前照合のみ、native は形状も照合する。
+fn diffMerged(
     arena: Allocator,
     declared: []const npkg_commands.Command,
-    registered: NativeRegistered,
-) error{OutOfMemory}!RegisteredCommands {
+    registered: []const Registered,
+) error{OutOfMemory}!Diff {
     var registered_only: std.ArrayList([]const u8) = .empty;
     var declared_only: std.ArrayList(npkg_commands.Command) = .empty;
     var shape_mismatches: std.ArrayList(ShapeMismatch) = .empty;
     var matched: usize = 0;
+    var declared_seen = try arena.alloc(bool, declared.len);
+    @memset(declared_seen, false);
 
-    for (registered.names, 0..) |name, index| {
-        var found = false;
-        for (declared) |command| {
-            if (!std.mem.eql(u8, command.name, name)) continue;
-            found = true;
-            matched += 1;
-            // 助詞/arity 照合。宣言の args/josi と、実登録の particles から
-            // 導出したスロット数・助詞列を比較する。
-            if (try nativeShapeMismatch(command, registered.particles[index], registered.minimum_arguments[index], registered.maximum_arguments[index], arena)) |kind| {
-                try shape_mismatches.append(arena, .{ .name = name, .kind = kind });
-            }
-            break;
-        }
-        if (!found) try registered_only.append(arena, name);
-    }
-    for (declared) |command| {
-        var found = false;
-        for (registered.names) |name| {
-            if (std.mem.eql(u8, command.name, name)) {
+    for (registered) |artifact| {
+        for (artifact.names, 0..) |name, index| {
+            var found = false;
+            for (declared, 0..) |command, command_index| {
+                if (!std.mem.eql(u8, command.name, name)) continue;
                 found = true;
+                declared_seen[command_index] = true;
+                matched += 1;
+                // ESM は助詞/arity を公開しないため名前照合のみ。
+                if (!artifact.esm) {
+                    if (try nativeShapeMismatch(command, artifact.particles[index], artifact.minimum_arguments[index], artifact.maximum_arguments[index], arena)) |kind| {
+                        try shape_mismatches.append(arena, .{ .name = name, .kind = kind });
+                    }
+                }
                 break;
             }
+            if (!found) try registered_only.append(arena, name);
         }
-        if (!found) try declared_only.append(arena, command);
+    }
+    for (declared, 0..) |command, index| {
+        if (!declared_seen[index]) try declared_only.append(arena, command);
     }
     return .{
-        .names = registered.names,
-        .josi = &.{},
-        .has_particles = &.{},
         .matched = matched,
         .declared_only = try declared_only.toOwnedSlice(arena),
         .registered_only = try registered_only.toOwnedSlice(arena),
@@ -542,27 +545,7 @@ pub fn summaryJson(gpa: Allocator, report: *const Report) error{OutOfMemory}![]c
 
 const testing = std.testing;
 
-test "diffNames: 一致・宣言のみ・登録のみを分類する" {
-    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena_impl.deinit();
-    const arena = arena_impl.allocator();
-
-    const declared = [_]npkg_commands.Command{
-        .{ .name = "加算", .args = &.{ "A", "B" }, .josi = &.{ "と", "を" } },
-        .{ .name = "宣言だけ", .args = &.{}, .josi = &.{} },
-    };
-    const names = [_][]const u8{ "加算", "登録だけ" };
-
-    const result = try diffNames(arena, &declared, &names);
-    try testing.expectEqual(@as(usize, 1), result.matched);
-    try testing.expectEqual(@as(usize, 1), result.declared_only.len);
-    try testing.expectEqualStrings("宣言だけ", result.declared_only[0].name);
-    try testing.expectEqual(@as(usize, 1), result.registered_only.len);
-    try testing.expectEqualStrings("登録だけ", result.registered_only[0]);
-    try testing.expectEqual(@as(usize, 0), result.shape_mismatches.len);
-}
-
-test "diffNative: 一致・宣言のみ・登録のみ・助詞不一致を分類する" {
+test "diffMerged: 一致・宣言のみ・登録のみ・助詞/arity 不一致を分類する" {
     var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_impl.deinit();
     const arena = arena_impl.allocator();
@@ -573,18 +556,19 @@ test "diffNative: 一致・宣言のみ・登録のみ・助詞不一致を分�
         .{ .name = "助詞不一致", .args = &.{ "A", "B" }, .josi = &.{ "を", "と" } },
         .{ .name = "arity不一致", .args = &.{"A"}, .josi = &.{"を"} },
     };
-    const registered = NativeRegistered{
-        .names = &.{ "一致命令", "助詞不一致", "登録だけ" },
-        .particles = &.{ "AとBを", "AとBを", "Vを" },
-        .minimum_arguments = &.{ 2, 2, 1 },
-        .maximum_arguments = &.{ 2, 2, 1 },
+    const registered = [_]Registered{
+        .{
+            .names = &.{ "一致命令", "助詞不一致", "arity不一致", "登録だけ" },
+            .particles = &.{ "AとBを", "AとBを", "AとBを", "Vを" },
+            .minimum_arguments = &.{ 2, 2, 2, 1 },
+            .maximum_arguments = &.{ 2, 2, 2, 1 },
+        },
     };
 
-    const result = try diffNative(arena, &declared, registered);
-    try testing.expectEqual(@as(usize, 2), result.matched);
+    const result = try diffMerged(arena, &declared, &registered);
+    try testing.expectEqual(@as(usize, 3), result.matched);
     try testing.expectEqual(@as(usize, 1), result.declared_only.len);
     try testing.expectEqualStrings("宣言だけ", result.declared_only[0].name);
-    try testing.expectEqual(@as(usize, 1), result.declared_only.len);
     try testing.expectEqual(@as(usize, 1), result.registered_only.len);
     try testing.expectEqualStrings("登録だけ", result.registered_only[0]);
     try testing.expectEqual(@as(usize, 2), result.shape_mismatches.len);
@@ -592,6 +576,33 @@ test "diffNative: 一致・宣言のみ・登録のみ・助詞不一致を分�
     try testing.expectEqualStrings("助詞不一致", result.shape_mismatches[0].name);
     try testing.expectEqual(ShapeMismatch.Kind.arity, result.shape_mismatches[1].kind);
     try testing.expectEqualStrings("arity不一致", result.shape_mismatches[1].name);
+}
+
+test "diffMerged: 複数 artifact の登録をまとめ、ESM は名前だけ照合する" {
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const arena = arena_impl.allocator();
+
+    const declared = [_]npkg_commands.Command{
+        .{ .name = "native命令", .args = &.{"A"}, .josi = &.{"を"} },
+        .{ .name = "esm命令", .args = &.{}, .josi = &.{} },
+    };
+    const registered = [_]Registered{
+        .{
+            .names = &.{"native命令"},
+            .particles = &.{"Aを"},
+            .minimum_arguments = &.{1},
+            .maximum_arguments = &.{1},
+        },
+        .{ .names = &.{"esm命令"}, .esm = true },
+    };
+
+    const result = try diffMerged(arena, &declared, &registered);
+    // 両 artifact の命令が一致し、片方だけ見て他方を未登録としない。
+    try testing.expectEqual(@as(usize, 2), result.matched);
+    try testing.expectEqual(@as(usize, 0), result.declared_only.len);
+    try testing.expectEqual(@as(usize, 0), result.registered_only.len);
+    try testing.expectEqual(@as(usize, 0), result.shape_mismatches.len);
 }
 
 test "particleSlots: プレースホルダからスロット助詞を導出する" {
@@ -650,14 +661,19 @@ test "inspect: plugin無し・宣言無し・ESM非compatのpackageは未検査�
     const declared = [_]npkg_commands.Command{
         .{ .name = "加算", .args = &.{ "A", "B" }, .josi = &.{ "と", "を" } },
     };
+    const native_artifact = [_]ArtifactInput{
+        .{ .path = .{ .path = "/abs/lib/plugin.so" } },
+    };
+    const esm_artifact = [_]ArtifactInput{
+        .{ .path = .{ .path = "/abs/lib/plugin.mjs", .source = "export default 1;" }, .esm = true },
+    };
     const inputs = [_]PackageInput{
-        .{ .package_key = "pkg:source", .path = "lib", .plugin_artifact = null, .declared = &declared },
-        .{ .package_key = "pkg:nocommands", .path = "lib", .plugin_artifact = "lib/plugin.so", .declared = null },
+        .{ .package_key = "pkg:source", .path = "lib", .artifacts = &.{}, .declared = &declared },
+        .{ .package_key = "pkg:nocommands", .path = "lib", .artifacts = &native_artifact, .declared = null },
         .{
             .package_key = "pkg:esm",
             .path = "lib",
-            .plugin_artifact = "lib/plugin.mjs",
-            .esm = true,
+            .artifacts = &esm_artifact,
             .declared = &declared,
             .namespace = "esm",
         },
@@ -683,13 +699,15 @@ test "summaryJson: 照合結果をJSON断片として出す" {
         .{ .name = "加算", .args = &.{ "A", "B" }, .josi = &.{ "と", "を" } },
         .{ .name = "宣言だけ", .args = &.{}, .josi = &.{} },
     };
-    const registered = NativeRegistered{
-        .names = &.{ "加算", "登録だけ" },
-        .particles = &.{ "AとBを", "Vを" },
-        .minimum_arguments = &.{ 2, 1 },
-        .maximum_arguments = &.{ 2, 1 },
+    const registered = [_]Registered{
+        .{
+            .names = &.{ "加算", "登録だけ" },
+            .particles = &.{ "AとBを", "Vを" },
+            .minimum_arguments = &.{ 2, 1 },
+            .maximum_arguments = &.{ 2, 1 },
+        },
     };
-    const result = try diffNative(arena, &declared, registered);
+    const result = try diffMerged(arena, &declared, &registered);
 
     const packages = [_]PackageRegistration{
         .{

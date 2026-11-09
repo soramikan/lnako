@@ -30,7 +30,10 @@ pub fn collectEsmCommandNames(
     var state = quickjs.State.init(true);
     defer state.deinit();
 
-    const module_path = try std.fmt.allocPrint(arena, "plugin-probe/{s}/{s}", .{ namespace, module_name });
+    // module 名は package root 配下の実 path を使う。合成名に絶対 path を
+    // 連結すると bridge の owner 判定が外れ、`../` import が root 外の JS を
+    // 読めてしまう（package_root を渡しても包含検査が効かない）。
+    const module_path = try moduleDisplayPath(arena, package_root, module_name);
     const modules = [_]@import("../ir/nako_ir.zig").JavaScriptModule{
         .{
             .path = module_path,
@@ -49,6 +52,23 @@ pub fn collectEsmCommandNames(
     quickjs.installModules(&runtime, &state, &modules, effects()) catch
         return error.LoadFailed;
     return registeredKeys(arena, &state);
+}
+
+/// 評価に使う module 名。package root 配下なら root 相対へ落として
+/// bridge の owner 判定（root 包含）を成立させる。root が無い場合は
+/// 従来どおり委譲先の合成名を使う。
+fn moduleDisplayPath(arena: Allocator, package_root: ?[]const u8, artifact_abs: []const u8) error{OutOfMemory}![]u8 {
+    const root = package_root orelse return std.fmt.allocPrint(arena, "plugin-probe/{s}", .{artifact_abs});
+    var trimmed = root;
+    while (trimmed.len > 1 and (trimmed[trimmed.len - 1] == '/' or trimmed[trimmed.len - 1] == std.fs.path.sep)) {
+        trimmed = trimmed[0 .. trimmed.len - 1];
+    }
+    if (!std.mem.startsWith(u8, artifact_abs, trimmed)) {
+        return std.fmt.allocPrint(arena, "plugin-probe/{s}", .{artifact_abs});
+    }
+    var relative = artifact_abs[trimmed.len..];
+    while (relative.len > 0 and (relative[0] == '/' or relative[0] == std.fs.path.sep)) relative = relative[1..];
+    return std.fmt.allocPrint(arena, "{s}", .{relative});
 }
 
 /// `__lnako_commands` の key 一覧を arena へ写す。
