@@ -110,12 +110,15 @@ async function runChecked(command, args, options, label) {
   return result;
 }
 
-async function runExpectFailure(command, args, options, label, expectedText) {
+async function runExpectFailure(command, args, options, label, expectedTexts) {
+  const expectedList = Array.isArray(expectedTexts) ? expectedTexts : [expectedTexts];
   const result = await run(command, args, options);
   const combined = `${result.stdout}${result.stderr}`;
   if (result.status === 0) fail(`${label}は失敗するべきでした\n${combined}`);
-  if (!combined.includes(expectedText)) {
-    fail(`${label}の診断に ${expectedText} が含まれません\n${combined}`);
+  for (const expectedText of expectedList) {
+    if (!combined.includes(expectedText)) {
+      fail(`${label}の診断に ${expectedText} が含まれません\n${combined}`);
+    }
   }
   return result;
 }
@@ -199,9 +202,13 @@ function createRegistry() {
   // integrity 不一致の再現用。true のとき leftpad の artifact bytes を別内容
   // に差し替えて配信する（lock の sha256 は本物のまま → hash 検証失敗）。
   let tamperArtifact = false;
+  // tamper の置換が命中しなかったときに立てるフラグ。HTTP ハンドラ内では
+  // 例外を出さず、主流程の assert で検査する。
+  let tamperReplaceMissed = false;
   let requestCount = 0;
-  // 受理した PUT 要求の総数（version record + artifact の両方）。再公開の
-  // 冪等性（PUT が一切増えない）を要求単位で検証するために使う。
+  // PUT 要求の総数（version record + artifact の両方。JSON 解析失敗の 400 も
+  // 「届いた要求」として数え、比較を保守方向に倒す）。再公開の冪等性
+  // （PUT が一切増えない）を要求単位で検証するために使う。
   let putRequestCount = 0;
   // PUT の Authorization 契約（Bearer）。token 無しの公開を 401 で拒否する。
   const expectedAuthorization = "Bearer fixture-token";
@@ -286,9 +293,15 @@ function createRegistry() {
               const text = archive.toString("latin1");
               // ZIP は stored のため entry 名を含む raw bytes への同長置換で
               // アーカイブ構造を壊さず内容だけを変えられる。置換が命中しな
-              // かった場合、改変なしの bytes を配信してしまうため明示的に
-              // 失敗させる（hash 一致で成功してしまう self-無効化の防止）。
-              if (!text.includes("plugin.mjs")) fail("tamper 用の置換対象が leftpad artifact に存在しません");
+              // かった場合、改変なしの bytes を配信して hash 一致で成功して
+              // しまう（検証の self-無効化）。HTTP ハンドラ内では例外を出さ
+              // ず、フラグを立てて 500 を返して主流程の assert で失敗させる
+              // （finally の cleanup を生かす）。
+              if (!text.includes("plugin.mjs")) {
+                tamperReplaceMissed = true;
+                response.writeHead(500);
+                return response.end();
+              }
               archive = Buffer.from(text.replace("plugin.mjs", "plugin.MJS"), "latin1");
             }
             response.writeHead(200, { "content-type": "application/octet-stream", "content-length": archive.length });
@@ -304,32 +317,35 @@ function createRegistry() {
         // `/<owner>/<name>/<ver>.json` = version record、
         // `/<owner>/<name>/<ver>/<name>-<ver>.npkg` = artifact。
         // lnako package publish の契約（PS01 layout・Bearer 認証）に沿わない
-        // 送信は受理しない。これにより「公開 PUT に Bearer token が載る」
-        // ことを実バイナリ経路で固定する。
+        // 送信は受理しない（owner 不一致・token 無しも一律 401）。これにより
+        // 「公開 PUT に Bearer token が載る」ことを実バイナリ経路で固定する。
         if (segments[0] !== OWNER || request.headers.authorization !== expectedAuthorization) {
           response.writeHead(401);
           return response.end();
         }
-        putRequestCount += 1;
         if (segments.length === 3) {
           const name = segments[1];
           let record;
           try {
             record = JSON.parse(body.toString("utf8"));
           } catch {
+            // 受理はしていないが要求自体は届いたため要求単位で数える
+            // （冪等性検査の比較は保守方向に倒す）。
+            putRequestCount += 1;
             response.writeHead(400);
             return response.end();
           }
+          putRequestCount += 1;
           published.set(name, record);
           response.writeHead(201);
           return response.end();
         }
         if (segments.length === 4) {
+          putRequestCount += 1;
           artifacts.set(segments[1], body);
           response.writeHead(201);
           return response.end();
         }
-        putRequestCount -= 1;
       }
       response.writeHead(404);
       response.end();
@@ -345,9 +361,9 @@ function createRegistry() {
     close: () => new Promise((resolve) => server.close(() => resolve())),
     set tamperArtifact(value) { tamperArtifact = value; },
     get requestCount() { return requestCount; },
+    get tamperReplaceMissed() { return tamperReplaceMissed; },
     publishedRecord(name) { return published.get(name) ?? null; },
-    putRequestCount() { return putRequestCount; },
-    putCount() { return published.size; },
+    get putRequestCount() { return putRequestCount; },
   };
 }
 
@@ -355,9 +371,9 @@ function createRegistry() {
 /// （GET version record）で同一 artifact hash を検出して PUT を省略するため、
 /// PUT 要求総数（version record + artifact の両方）が増えずに成功する。
 async function checkRepublishIsIdempotent(compiler, registry, appDir, env, name) {
-  const putsBefore = registry.putRequestCount();
+  const putsBefore = registry.putRequestCount;
   await runChecked(compiler, ["package", "publish", "--no-dry-run", "--registry", registry.origin, "--owner", OWNER], { cwd: appDir, env }, `${name} 再公開`);
-  if (registry.putRequestCount() !== putsBefore) fail("再公開が新しい PUT を発生させました");
+  if (registry.putRequestCount !== putsBefore) fail("再公開が新しい PUT を発生させました");
   const record = registry.publishedRecord(name);
   if (!record) fail(`${name} の version record がありません`);
 }
@@ -428,7 +444,7 @@ async function main() {
     fs.writeFileSync(path.join(npmDep, "src", "main.nako3"), "「hi」を表示。\n");
     await runChecked(compiler, ["lock"], { cwd: npmDep, env: publishEnv }, "npm依存 package lock");
     // `--no-dry-run` でも検証段階（PUT 前）で拒否され、送信が発生しない。
-    const putsBeforeE039 = registry.putRequestCount();
+    const putsBeforeE039 = registry.putRequestCount;
     await runExpectFailure(
       compiler,
       ["package", "publish", "--no-dry-run", "--registry", origin, "--owner", OWNER],
@@ -436,8 +452,39 @@ async function main() {
       "npm依存 package publish",
       "E039_NPKG_UNDISTRIBUTABLE_DEPENDENCY",
     );
-    if (registry.putRequestCount() !== putsBeforeE039) fail("npm 依存の拒否前に PUT が発生しました");
+    if (registry.putRequestCount !== putsBeforeE039) fail("npm 依存の拒否前に PUT が発生しました");
     console.log("参照 publish E2E: npm 依存の公開拒否 OK（E039）");
+
+    // --- 失敗経路 (a'): 誤 token の公開は registry が 401 で拒否する ---
+    // token 無しはクライアント側検証（AuthRequired）で送信前に拒否される
+    // ため、registry の 401 経路は誤 token で到達する。未公開の package を
+    // 使うことで、artifact PUT が実際に 401 で拒否されるまでを固定する。
+    const authProbe = path.join(work, "authprobe");
+    fs.mkdirSync(path.join(authProbe, "src"), { recursive: true });
+    fs.writeFileSync(path.join(authProbe, "nako.toml"), [
+      "[package]",
+      'name = "authprobe"',
+      'version = "1.0.0"',
+      'license = "MIT"',
+      "",
+      "[[exports]]",
+      'name = "main"',
+      'path = "src/main.nako3"',
+      "",
+    ].join("\n"));
+    fs.writeFileSync(path.join(authProbe, "src", "main.nako3"), "「auth」を表示。\n");
+    await runChecked(compiler, ["lock"], { cwd: authProbe, env: publishEnv }, "authprobe lock");
+    const putsBefore401 = registry.putRequestCount;
+    await runExpectFailure(
+      compiler,
+      ["package", "publish", "--no-dry-run", "--registry", origin, "--owner", OWNER],
+      { cwd: authProbe, env: { LNAKO_REGISTRY: origin, LNAKO_NPM_REGISTRY: origin, LNAKO_REGISTRY_TOKEN: "wrong-token" } },
+      "誤 token publish",
+      ["401"],
+    );
+    if (registry.putRequestCount !== putsBefore401) fail("誤 token publish の PUT が受理されました");
+    if (registry.publishedRecord("authprobe")) fail("誤 token publish が version record を登録しました");
+    console.log("参照 publish E2E: 誤 token publish の拒否 OK（401）");
 
     // --- consumer: 別の空 project から取得して lock/sync/run ---
     const consumer = path.join(work, "consumer");
@@ -518,9 +565,9 @@ async function main() {
       ["lock", "--package-cache-dir", badVersionCache],
       { cwd: badVersion, env: { LNAKO_REGISTRY: origin } },
       "未公開 version の lock",
-      // resolver の failure message 片まで見て「version 競合」ではなく
-      // 「候補 version 無し」であることを固定する。
-      "doesn't match any versions",
+      // 診断コード（E003）と resolver の failure message 片の双方を見て、
+      // 「version 競合」ではなく「候補 version 無し」であることを固定する。
+      ["E003_CONFLICTING_VERSIONS", "doesn't match any versions"],
     );
     console.log("参照 publish E2E: 未公開 version の取得拒否 OK（E003 + 候補無し）");
 
@@ -542,6 +589,7 @@ async function main() {
     } finally {
       registry.tamperArtifact = false;
     }
+    if (registry.tamperReplaceMissed) fail("tamper の置換が leftpad artifact に命中しませんでした");
     if (fs.existsSync(path.join(tampered, ".nako", "environment.json"))) {
       fail("integrity 不一致の sync が環境を公開しました");
     }
