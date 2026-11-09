@@ -375,6 +375,7 @@ const stepSuites = new Map([
   ["Test QuickJS build", "compat-aot-test"],
   ["Build QuickJS compiler", "compat-aot-build"],
   ["Compatibility smoke test", "compat-aot-build"],
+  ["Package publish E2E check", "compat-aot-build"],
   ["Package release candidate compiler", "compat-aot-build"],
   ["Upload release candidate compiler", "compat-aot-build"],
 ]);

@@ -71,11 +71,18 @@ function parseArguments() {
 // spawnSync は Node の event loop を止め、同一プロセスの fixture registry が
 // accept できなくなる。子プロセスは必ず非同期 spawn で待つ。
 function run(command, args, options = {}) {
+  // 環境変数は fixture registry へ明示的に向けた値だけを渡す。CI/ローカルの
+  // シェルに残存する LNAKO_*（実 registry の URL・token 等）を子プロセスへ
+  // 引き継ぐと取得先が取り違えられ、失敗時の切り分けが困難になる。
+  const inheritedEnv = { ...process.env };
+  for (const key of Object.keys(inheritedEnv)) {
+    if (key.startsWith("LNAKO_")) delete inheritedEnv[key];
+  }
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd: options.cwd ?? root,
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, ...options.env },
+      env: { ...inheritedEnv, ...options.env },
     });
     let stdout = "";
     let stderr = "";
@@ -193,6 +200,11 @@ function createRegistry() {
   // に差し替えて配信する（lock の sha256 は本物のまま → hash 検証失敗）。
   let tamperArtifact = false;
   let requestCount = 0;
+  // 受理した PUT 要求の総数（version record + artifact の両方）。再公開の
+  // 冪等性（PUT が一切増えない）を要求単位で検証するために使う。
+  let putRequestCount = 0;
+  // PUT の Authorization 契約（Bearer）。token 無しの公開を 401 で拒否する。
+  const expectedAuthorization = "Bearer fixture-token";
 
   function versionRecord(name) {
     return published.get(name) ?? null;
@@ -271,7 +283,13 @@ function createRegistry() {
             let archive = artifacts.get(name);
             if (!archive) { response.writeHead(404); return response.end(); }
             if (tamperArtifact && name === "leftpad") {
-              archive = Buffer.from(archive.toString("latin1").replace("plugin.mjs", "plugin.MJS"), "latin1");
+              const text = archive.toString("latin1");
+              // ZIP は stored のため entry 名を含む raw bytes への同長置換で
+              // アーカイブ構造を壊さず内容だけを変えられる。置換が命中しな
+              // かった場合、改変なしの bytes を配信してしまうため明示的に
+              // 失敗させる（hash 一致で成功してしまう self-無効化の防止）。
+              if (!text.includes("plugin.mjs")) fail("tamper 用の置換対象が leftpad artifact に存在しません");
+              archive = Buffer.from(text.replace("plugin.mjs", "plugin.MJS"), "latin1");
             }
             response.writeHead(200, { "content-type": "application/octet-stream", "content-length": archive.length });
             return response.end(archive);
@@ -285,9 +303,24 @@ function createRegistry() {
         const segments = url.replace(/^\//, "").split("/");
         // `/<owner>/<name>/<ver>.json` = version record、
         // `/<owner>/<name>/<ver>/<name>-<ver>.npkg` = artifact。
+        // lnako package publish の契約（PS01 layout・Bearer 認証）に沿わない
+        // 送信は受理しない。これにより「公開 PUT に Bearer token が載る」
+        // ことを実バイナリ経路で固定する。
+        if (segments[0] !== OWNER || request.headers.authorization !== expectedAuthorization) {
+          response.writeHead(401);
+          return response.end();
+        }
+        putRequestCount += 1;
         if (segments.length === 3) {
           const name = segments[1];
-          published.set(name, JSON.parse(body.toString("utf8")));
+          let record;
+          try {
+            record = JSON.parse(body.toString("utf8"));
+          } catch {
+            response.writeHead(400);
+            return response.end();
+          }
+          published.set(name, record);
           response.writeHead(201);
           return response.end();
         }
@@ -296,6 +329,7 @@ function createRegistry() {
           response.writeHead(201);
           return response.end();
         }
+        putRequestCount -= 1;
       }
       response.writeHead(404);
       response.end();
@@ -312,17 +346,18 @@ function createRegistry() {
     set tamperArtifact(value) { tamperArtifact = value; },
     get requestCount() { return requestCount; },
     publishedRecord(name) { return published.get(name) ?? null; },
+    putRequestCount() { return putRequestCount; },
     putCount() { return published.size; },
   };
 }
 
 /// 同一版・同一内容の再公開（冪等性）を確認する。lnako は公開前照会
 /// （GET version record）で同一 artifact hash を検出して PUT を省略するため、
-/// PUT 総数が増えずに成功する。
+/// PUT 要求総数（version record + artifact の両方）が増えずに成功する。
 async function checkRepublishIsIdempotent(compiler, registry, appDir, env, name) {
-  const putsBefore = registry.putCount();
+  const putsBefore = registry.putRequestCount();
   await runChecked(compiler, ["package", "publish", "--no-dry-run", "--registry", registry.origin, "--owner", OWNER], { cwd: appDir, env }, `${name} 再公開`);
-  if (registry.putCount() !== putsBefore) fail("再公開が新しい PUT を発生させました");
+  if (registry.putRequestCount() !== putsBefore) fail("再公開が新しい PUT を発生させました");
   const record = registry.publishedRecord(name);
   if (!record) fail(`${name} の version record がありません`);
 }
@@ -392,13 +427,16 @@ async function main() {
     ].join("\n"));
     fs.writeFileSync(path.join(npmDep, "src", "main.nako3"), "「hi」を表示。\n");
     await runChecked(compiler, ["lock"], { cwd: npmDep, env: publishEnv }, "npm依存 package lock");
+    // `--no-dry-run` でも検証段階（PUT 前）で拒否され、送信が発生しない。
+    const putsBeforeE039 = registry.putRequestCount();
     await runExpectFailure(
       compiler,
-      ["package", "publish", "--dry-run", "--registry", origin, "--owner", OWNER],
+      ["package", "publish", "--no-dry-run", "--registry", origin, "--owner", OWNER],
       { cwd: npmDep, env: publishEnv },
       "npm依存 package publish",
       "E039_NPKG_UNDISTRIBUTABLE_DEPENDENCY",
     );
+    if (registry.putRequestCount() !== putsBeforeE039) fail("npm 依存の拒否前に PUT が発生しました");
     console.log("参照 publish E2E: npm 依存の公開拒否 OK（E039）");
 
     // --- consumer: 別の空 project から取得して lock/sync/run ---
@@ -480,9 +518,11 @@ async function main() {
       ["lock", "--package-cache-dir", badVersionCache],
       { cwd: badVersion, env: { LNAKO_REGISTRY: origin } },
       "未公開 version の lock",
-      "E003_CONFLICTING_VERSIONS",
+      // resolver の failure message 片まで見て「version 競合」ではなく
+      // 「候補 version 無し」であることを固定する。
+      "doesn't match any versions",
     );
-    console.log("参照 publish E2E: 未公開 version の取得拒否 OK（E003）");
+    console.log("参照 publish E2E: 未公開 version の取得拒否 OK（E003 + 候補無し）");
 
     // --- 失敗経路 (c): integrity 不一致は sync で拒否され環境を公開しない ---
     // leftpad の artifact bytes を別内容に差し替えて配信する。lock に記録

@@ -187,10 +187,11 @@ pub fn run(backing_allocator: Allocator, io: std.Io, options: Options, diagnosti
     var files: usize = built.files.len;
     var commands: usize = 0;
     // ESM export（`esm` artifact のみの package）は `compat-js = true` の
-    // profile を持つ project でのみ公開できる。lock が記録した選択
-    // profile の宣言を verify 対象へ伝える（profile 無し・無宣言は
-    // 従来どおり通常モード検証）。`cnako` runtime は ESM を直接扱える
-    // ため compat_js の影響を受けない。
+    // profile を持つ project でのみ公開できる。公開契約は lock の選択
+    // profile の宣言（PUBLISHING.md §5 の ESM artifact 条件）であり、CLI の
+    // `--compat-js` 単独では許可しない。profile 無し・無宣言は従来どおり
+    // 通常モード検証（E006）。`cnako` runtime は ESM を直接扱えるため
+    // compat_js の影響を受けない。
     const profile_compat_js = if (project.manifest.profiles.get(lock_state.profile)) |profile| profile.compat_js else false;
     for (runtimes.items, 0..) |runtime, runtime_index| {
         var verified = npkg_verify.verify(backing_allocator, built.archive, .{ .runtime = runtime, .compat_js = profile_compat_js }, diagnostics) catch |err| switch (err) {

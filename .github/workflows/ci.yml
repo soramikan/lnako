@@ -406,7 +406,7 @@ jobs:
       # compat-aot は QuickJS compiler をビルドしないため compat-aot-build
       # 側で実行する。
       - name: Package publish E2E check
-        if: matrix.suite == 'mac-host-compat' || (matrix.suite == 'compat-aot' && matrix.name != 'Windows x86_64') || matrix.suite == 'compat-aot-build'
+        if: matrix.suite == 'compat-aot-build' || matrix.suite == 'mac-host-compat' || (matrix.suite == 'compat-aot' && matrix.name != 'Windows x86_64')
         shell: bash
         run: node tools/check_package_publish_e2e.mjs --compiler zig-out/bin/lnako
       # Releaseは同一commitの検証済みCI runからReleaseSafe+compat-js成果物を
