@@ -80,6 +80,10 @@
         "reason": "Value・Runtime中心のコア値表現（監視対象・hard limit内）。A セキュリティ修正の値入れ子上限で +0.2 KB",
         "limitKb": 82
       },
+      "src/cli/commands/project.zig": {
+        "reason": "project 配下の依存管理 CLI（init/add/lock/sync/check/tree/why/cache・publish・宣言命令検査・--load-plugins 実登録照合）を同一 verb 表で維持（監視対象・hard limit内）",
+        "limitKb": 86
+      },
       "src/semantic/analyzer.zig": {
         "reason": "namespace alias lookupとpackage宣言命令検査がprivate symbol table・scope stateに依存（監視対象・hard limit内）",
         "limitKb": 100

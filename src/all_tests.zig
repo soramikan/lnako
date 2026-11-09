@@ -42,6 +42,8 @@ test {
     _ = @import("lnako").package.npkg_files;
     _ = @import("lnako").package.npkg_commands;
     _ = @import("lnako").package.npkg_commands_gen;
+    _ = @import("lnako").package.command_inspect;
+    _ = @import("lnako").package.plugin_registration;
     _ = @import("lnako").package.npkg_build;
     _ = @import("lnako").package.npkg_verify;
     _ = @import("lnako").package.fetch;

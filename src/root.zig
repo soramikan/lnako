@@ -61,6 +61,7 @@ pub const compat = struct {
     pub const quickjs = @import("compat/quickjs.zig");
     pub const embedded = @import("compat/embedded.zig");
     pub const report = @import("compat/report.zig");
+    pub const plugin_probe = @import("compat/plugin_probe.zig");
 };
 
 pub const plugins = struct {
@@ -76,6 +77,7 @@ pub const plugins = struct {
     pub const caniuse = @import("plugins/caniuse.zig");
     pub const kansuji = @import("plugins/kansuji.zig");
     pub const native = @import("plugins/native.zig");
+    pub const native_probe = @import("plugins/native_probe.zig");
     pub const lowlevel = @import("plugins/lowlevel.zig");
 };
 
@@ -115,6 +117,7 @@ pub const package = struct {
     pub const npkg_commands = @import("package/npkg_commands.zig");
     pub const npkg_commands_gen = @import("package/npkg_commands_gen.zig");
     pub const command_inspect = @import("package/command_inspect.zig");
+    pub const plugin_registration = @import("package/plugin_registration.zig");
     pub const command_conditions = @import("package/command_conditions.zig");
     pub const namespace_check = @import("package/namespace_check.zig");
     pub const npkg_build = @import("package/npkg_build.zig");

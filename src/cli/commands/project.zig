@@ -9,6 +9,7 @@ const std = @import("std");
 const lnako = @import("lnako");
 const edit = @import("project_edit.zig");
 const init_cmd = @import("project_init.zig");
+const project_plugins = @import("project_plugins.zig");
 
 const diag = lnako.package.diagnostics;
 const project = lnako.package.project;
@@ -56,6 +57,9 @@ pub const PrepFlags = struct {
     json: bool = false,
     /// `check --strict-sharing`: 未検査 package が残れば E033 で失敗する。
     strict_sharing: bool = false,
+    /// `check --load-plugins`: plugin を実際にロードして実登録照合を行う
+    /// （opt-in。plugin の初期化コード実行を伴うため既定では動かない）。
+    load_plugins: bool = false,
     /// 共有 writable ACL/mode を検出したら拒否（旧既定）。既定は警告+続行。
     strict_project_trust: bool = false,
     /// 共有 writable の警告を出さない（続行はする）。
@@ -176,6 +180,8 @@ fn parsePrepFlags(a: Allocator, args: []const []const u8, verb: []const u8, stde
             flags.json = true;
         } else if (std.mem.eql(u8, argument, "--strict-sharing")) {
             flags.strict_sharing = true;
+        } else if (std.mem.eql(u8, argument, "--load-plugins")) {
+            flags.load_plugins = true;
         } else if (std.mem.eql(u8, argument, "--strict-project-trust")) {
             flags.strict_project_trust = true;
         } else if (std.mem.eql(u8, argument, "--no-project-trust-warning")) {
@@ -206,6 +212,7 @@ const FlagMask = struct {
     allow_plaintext_http: bool = false,
     json: bool = false,
     strict_sharing: bool = false,
+    load_plugins: bool = false,
     strict_project_trust: bool = false,
     no_project_trust_warning: bool = false,
 };
@@ -233,6 +240,8 @@ fn rejectInertFlags(flags: *const PrepFlags, verb: []const u8, comptime allowed:
         "--json"
     else if (!allowed.strict_sharing and flags.strict_sharing)
         "--strict-sharing"
+    else if (!allowed.load_plugins and flags.load_plugins)
+        "--load-plugins"
     else if (!allowed.strict_project_trust and flags.strict_project_trust)
         "--strict-project-trust"
     else if (!allowed.no_project_trust_warning and flags.no_project_trust_warning)
@@ -993,7 +1002,8 @@ pub fn checkProject(a: Allocator, io: std.Io, args: []const []const u8, start_di
     if (parsed.rest.len > 0) return failUsage(stderr, "check: 不明な引数です: {s}\n", .{parsed.rest[0]});
     // check は副作用なしの検査コマンド。sync・取得系フラグは意味を持た
     // ないため拒否する。`--strict-sharing` は命令 metadata の未検査を
-    // E033 で失敗させる（共用保証の厳格検査）。
+    // E033 で失敗させる（共用保証の厳格検査）。`--load-plugins` は plugin
+    // を実際にロードして実登録照合を行う（opt-in）。
     try rejectInertFlags(&flags, "check", .{
         .locked = true,
         .profile = true,
@@ -1001,6 +1011,7 @@ pub fn checkProject(a: Allocator, io: std.Io, args: []const []const u8, start_di
         .no_default_features = true,
         .json = true,
         .strict_sharing = true,
+        .load_plugins = true,
         .strict_project_trust = true,
         .no_project_trust_warning = true,
     }, stderr);
@@ -1102,6 +1113,24 @@ pub fn checkProject(a: Allocator, io: std.Io, args: []const []const u8, start_di
         lnako.package.command_inspect.Report{ .arena = std.heap.ArenaAllocator.init(a) };
     defer command_report.deinit();
 
+    // plugin 実登録照合（`--load-plugins` 指定時のみ）。plugin を実際に
+    // ロードして登録された command（名前・助詞・arity）と宣言 metadata を
+    // 照合し、不一致を E029 系の診断として報告する。ロードできない
+    // package は不一致にせず未検査として記録する。
+    var registration_report: ?lnako.package.plugin_registration.Report = null;
+    defer if (registration_report) |*report| report.deinit();
+    if (flags.load_plugins and inspect.environment_current) {
+        registration_report = try project_plugins.runPluginRegistrationCheck(
+            a,
+            io,
+            &project_var,
+            .{ .compat_js_available = lnako.compat.quickjs.available() },
+        );
+        if (registration_report) |*report| {
+            try lnako.package.plugin_registration.addDiagnostics(report, &diagnostics);
+        }
+    }
+
     // 名前空間 alias の error 診断は --json でも機械可読な結果を失わないよう、
     // JSON を出力した後に失敗を返す。テキストモードは従来どおり先に失敗する。
     const has_errors = diagnostics.errorCount() > 0;
@@ -1143,8 +1172,13 @@ pub fn checkProject(a: Allocator, io: std.Io, args: []const []const u8, start_di
             try std.fmt.allocPrint(a, ",\"features\":{s}", .{try lnako.package.command_inspect.featureImpactJson(a, impact)})
         else
             "";
+        // `--load-plugins` 未指定なら key 自体を出さない（未検査を主張しない）。
+        const registration_json: []const u8 = if (registration_report) |*report|
+            try lnako.package.plugin_registration.summaryJson(a, report)
+        else
+            "";
         try stdout.print(
-            "{{\"schemaVersion\":1,\"manifest\":\"ok\",\"lock\":\"{s}\",\"environment\":\"{s}\",\"needed\":[{s}],\"commands\":{{\"sharing\":\"{s}\",\"inspected\":{d},\"uninspected\":[{s}],\"collisions\":{d},\"mismatches\":{d},\"conditions\":{s},\"namespaces\":{s}}}{s}}}\n",
+            "{{\"schemaVersion\":1,\"manifest\":\"ok\",\"lock\":\"{s}\",\"environment\":\"{s}\",\"needed\":[{s}],\"commands\":{{\"sharing\":\"{s}\",\"inspected\":{d},\"uninspected\":[{s}],\"collisions\":{d},\"mismatches\":{d},\"conditions\":{s},\"namespaces\":{s}}}{s}{s}}}\n",
             .{
                 lock_state,
                 if (inspect.environment == null) "missing" else if (inspect.environment_current) "current" else "stale",
@@ -1157,6 +1191,7 @@ pub fn checkProject(a: Allocator, io: std.Io, args: []const []const u8, start_di
                 conditions_json,
                 namespace_json,
                 features_json,
+                registration_json,
             },
         );
         try stdout.flush();
@@ -1221,6 +1256,37 @@ pub fn checkProject(a: Allocator, io: std.Io, args: []const []const u8, start_di
                     lnako.package.namespace_check.kindText(issue.kind),
                     issue.detail,
                 });
+            }
+        }
+        // plugin 実登録照合の結果（`--load-plugins` 指定時のみ表示）。
+        if (registration_report) |*report| {
+            try stdout.print("  plugin 実登録照合: {d} 件（照合済み {d} / 不一致 {d}）\n", .{
+                report.packages.len,
+                project_plugins.matchedPackageCount(report),
+                report.mismatchCount(),
+            });
+            for (report.packages) |*package| {
+                if (!package.inspected) {
+                    // 未検査は不一致にしないため、状態だけを明示する。
+                    try stdout.print("    未検査: {s} ({s})\n", .{ package.package_key, package.status.text() });
+                    continue;
+                }
+                if (package.declared_only.len == 0 and package.registered_only.len == 0 and
+                    package.shape_mismatches.len == 0)
+                {
+                    try stdout.print("    {s}: 一致（{d} 件）\n", .{ package.package_key, package.matched_count });
+                    continue;
+                }
+                try stdout.print("    {s}:\n", .{package.package_key});
+                for (package.declared_only) |command| {
+                    try stdout.print("      宣言のみ（実登録に無い）: {s}\n", .{command.name});
+                }
+                for (package.registered_only) |name| {
+                    try stdout.print("      実登録のみ（宣言に無い）: {s}\n", .{name});
+                }
+                for (package.shape_mismatches) |mismatch| {
+                    try stdout.print("      {s} 不一致: {s}\n", .{ mismatch.kind.text(), mismatch.name });
+                }
             }
         }
         if (command_report.features) |impact| {
