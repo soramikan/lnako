@@ -488,7 +488,7 @@
             "status": 1,
             "signal": null,
             "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-            "stderrSha256": "1c1c5679bf0a86110a65873dffdbd1de86088fec50816af03473f2bc727c82e0",
+            "stderrSha256": "bab7eecf268ec2060eff3e42b6f301132db1cca196cd4adfce03b96306160ef5",
             "failed": true
           }
         },
@@ -500,7 +500,8 @@
   "provenance": {
     "environment": {
       "platform": "darwin",
-      "arch": "arm64"
+      "arch": "arm64",
+      "node": "v26.13.0"
     },
     "oracle": {
       "build": 4,
@@ -509,6 +510,10 @@
       "markerSha256": "e9444955298c3bb22164a219c0f342ee32301e901ec967d648cae9a25d8bf531",
       "treeHashAlgorithm": "sha256-json-records-v3",
       "treeSha256": "7009b9bc0e96e9dfa3b51ad6a39685abfd4821435b202763b71ac53c6d444e64"
+    },
+    "lnako": {
+      "binarySha256": "aa3320890817d3cab63d377f1cd410817cbf63a3d28564ec13351e7b262adcd3",
+      "sourceManifestSha256": "0eb039ba711f967700e21b74fae01dd624e5865c539547d0b7513347f320d314"
     },
     "raw": {
       "traceSha256ByCase": {
