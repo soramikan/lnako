@@ -1,0 +1,8 @@
+[package]
+name = "helper"
+version = "1.0.0"
+license = "MIT"
+
+[[exports]]
+name = "main"
+path = "src/helper.nako3"

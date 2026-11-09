@@ -398,6 +398,17 @@ jobs:
         if: matrix.suite == 'mac-host-compat' || (matrix.suite == 'compat-aot' && matrix.name != 'Windows x86_64')
         shell: bash
         run: node tools/check_package_plugin_npm_e2e.mjs --compiler zig-out/bin/lnako
+      # Issue #58: 参照パッケージの publish→取得 E2E。公開（lnako package
+      # publish）から取得（別 project の lock/sync/run --compat-js）までを
+      # 127.0.0.1 の fixture registry で結合検証する。AOT を含まないため
+      # QuickJS 付き実バイナリがビルドされる 3 OS（macOS mac-host-compat、
+      # Linux compat-aot、Windows compat-aot-build）で実行する。Windows の
+      # compat-aot は QuickJS compiler をビルドしないため compat-aot-build
+      # 側で実行する。
+      - name: Package publish E2E check
+        if: matrix.suite == 'compat-aot-build' || matrix.suite == 'mac-host-compat' || (matrix.suite == 'compat-aot' && matrix.name != 'Windows x86_64')
+        shell: bash
+        run: node tools/check_package_publish_e2e.mjs --compiler zig-out/bin/lnako
       # Releaseは同一commitの検証済みCI runからReleaseSafe+compat-js成果物を
       # 昇格する。Debug AOT producerとは別schema・別artifact名。
       - name: Package release candidate compiler
