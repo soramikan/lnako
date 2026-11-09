@@ -116,6 +116,21 @@ const Command = struct {
     destroy: ?*const fn (?*anyopaque) callconv(.c) void,
 };
 
+/// 登録済み command の読み取り専用ビュー（実登録照合・`check --load-plugins`
+/// 用）。文字列は State が所有するため、State.deinit より先に使い切る。
+pub const CommandView = struct {
+    name: []const u8,
+    namespace: ?[]const u8,
+    particles: []const u8,
+    minimum_arguments: usize,
+    maximum_arguments: usize,
+};
+
+/// 登録済み command の一覧を返す。呼出し側は `deinit` 前に使い切る。
+pub fn registeredCommands(state: *State) []const Command {
+    return state.commands.items;
+}
+
 const Plugin = struct {
     library: NativeLibrary,
     descriptor: *const DescriptorV1,
@@ -487,6 +502,22 @@ pub fn install(runtime: *Runtime, state: *State, paths: []const []const u8, pack
         }
         try state.loadPlugin(path, namespaces.items);
     }
+}
+
+/// plugin をロードして登録された command の一覧を返す（Issue #52 の
+/// `lnako check --load-plugins` 用・実登録照合）。`runtime` の初期化は
+/// 呼出し側が行い、`state` の寿命は呼出し側が管理する。`install` と同じ
+/// 契約で paths/packages を受け、`packages` に無い path は無修飾登録と
+/// して扱う。登録の検証（ABI・builtin 衝突・重複）は既存の
+/// `registerCommand` 経路をそのまま使う。
+pub fn loadForInspection(
+    runtime: *Runtime,
+    state: *State,
+    paths: []const []const u8,
+    packages: []const nako_ir.NativePluginPackage,
+    effects: Effects,
+) !void {
+    try install(runtime, state, paths, packages, effects);
 }
 
 pub fn call(runtime: *Runtime, state: *State, effects: Effects, name: []const u8, arguments: []const Value) !?Value {

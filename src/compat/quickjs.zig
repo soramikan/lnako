@@ -696,6 +696,29 @@ pub fn installModules(runtime: *Runtime, state: *State, modules: []const @import
     }
 }
 
+/// `__lnako_commands` に登録された command key 一覧を返す（Issue #52 の
+/// `lnako check --load-plugins` 用・実登録照合）。`allocator` が返却値を
+/// 所有する。engine が無い（未評価）場合は null を返す。
+pub fn registeredCommandKeys(state: *State, allocator: std.mem.Allocator) !?[][]const u8 {
+    const engine = state.engine orelse return null;
+    const commands = try globalProperty(engine, "__lnako_commands");
+    defer lnako_qjs_value_free(commands);
+    const keys = lnako_qjs_keys(commands) orelse return quickJsError(engine);
+    defer lnako_qjs_keys_free(keys);
+    const length = lnako_qjs_keys_length(keys);
+    var names = try allocator.alloc([]const u8, length);
+    errdefer allocator.free(names);
+    var filled: usize = 0;
+    for (0..length) |index| {
+        var name_length: usize = 0;
+        const name_pointer = lnako_qjs_key(keys, index, &name_length) orelse continue;
+        names[filled] = try allocator.dupe(u8, name_pointer[0..name_length]);
+        filled += 1;
+    }
+    if (filled != length) names = try allocator.realloc(names, filled);
+    return names;
+}
+
 fn moduleFilename(allocator: std.mem.Allocator, path: []const u8) ![:0]u8 {
     const filename = try allocator.dupeSentinel(u8, path, 0);
     for (filename) |*character| if (character.* == '\\') {
