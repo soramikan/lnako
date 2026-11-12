@@ -71,7 +71,8 @@
 - native plugin の path は `@self/<pkg-dir>/<file>` marker へ書き換えられます。実行時 loader は argv[0] ではなく OS API（Linux `/proc/self/exe`、macOS `_NSGetExecutablePath`+realpath、Windows `GetModuleFileNameW`）で自身の path を得て `<out>.deps/` を解決するため、生成物を別ディレクトリへ移しても cwd に依存しません。
 - `<out>.deps/bundle.json`（schema 1）は同梱 package の自己記述です。`--sbom` を併用すると、同梱した package だけを SBOM に載せます（license 未宣言は `NOASSERTION`）。同梱物・bundle.json・SBOM の package 集合は一致します。
 - source-only 依存（native/JS artifact を持たず `.nako3` だけの package）も同梱対象です。
-- 未対応: plugin の推移的動的 library 依存（rpath 組替え）。`--compat-js --backend embedded` では payload directory を持てないため `--bundle-deps` を使えません。
+- plugin の推移的動的 library 依存は、`src/compiler_pipeline/dylib_deps.zig` で列挙できます（Mach-O の `LC_LOAD_DYLIB` 系と ELF の `DT_NEEDED`、OS 標準は除外判定）。**payload への複製と install_name/DT_NEEDED の書換は未対応**です。書換を in-place の短縮で行うには payload 相対名が元の名より短い必要があり、伸ばすには Mach-O のロードコマンド領域や ELF のセグメント配置の再計算が要ります。外部ツール（install_name_tool / patchelf）に依存させない方針のため、別スライスで扱います。Windows の PE は依存を path で持たない（DLL 名のみ）ため対象外です。
+- `--compat-js --backend embedded` では payload directory を持てないため `--bundle-deps` を使えません。
 - 検証: `tools/check_bundle_deps_e2e.mjs`（生成物を別ディレクトリへ移して実行・payload 欠落時の明示エラー・SBOM 一致）。
 
 ## compat-js AOTの未接続範囲
