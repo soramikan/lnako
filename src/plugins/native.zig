@@ -155,6 +155,10 @@ pub const State = struct {
     host: HostV1 = undefined,
     host_initialized: bool = false,
     plugins: std.ArrayList(Plugin) = .empty,
+    /// `--bundle-deps` の payload で先読みした依存 library の handle。
+    /// plugin の install name 解決を保つため close しない（State の寿命と
+    /// 同じ）。
+    preloaded: std.ArrayList(NativeLibrary) = .empty,
     commands: std.ArrayList(Command) = .empty,
     /// `initialize`実行中のpluginに割り当てるnamespace。package importの
     /// pluginが登録する命令へ`registerCommand`が引き継ぐ。
@@ -196,6 +200,9 @@ pub const State = struct {
             allocator.free(plugin.version);
         }
         self.plugins.deinit(allocator);
+        // 先読みした依存は明示的に閉じない（plugin の解決が無効になる）。
+        // process 終了時に OS が回収する。
+        self.preloaded.deinit(allocator);
         while (self.boxes.pop()) |box| {
             if (box.utf8_cache) |cache| allocator.free(cache);
             allocator.destroy(box);
@@ -272,6 +279,57 @@ pub const State = struct {
         }
     }
 
+    /// 共有ライブラリの拡張子か（payload の先読み対象判定）。
+    fn plugin_native_artifact(name: []const u8) bool {
+        const extension = std.fs.path.extension(name);
+        return std.ascii.eqlIgnoreCase(extension, ".so") or
+            std.ascii.eqlIgnoreCase(extension, ".dylib") or
+            std.ascii.eqlIgnoreCase(extension, ".dll") or
+            std.ascii.eqlIgnoreCase(extension, ".node");
+    }
+
+    /// plugin と同じ directory にある共有ライブラリを先に読み込み、plugin の
+    /// 未解決 install name をそこへ束縛する。
+    ///
+    /// `--bundle-deps` は依存を plugin と同じ directory へ平坦に置く。
+    /// Mach-O は「同じ install name の image が既にロード済みならそれを使う」
+    /// ため、先読みするだけで plugin 側の絶対 path 記載が解決される
+    /// （`install_name_tool` 相当の書換が要らない）。開いた handle は
+    /// プロセス終了まで保持する（閉じると plugin の解決が無効になる）。
+    fn preloadDependencies(self: *State, allocator: std.mem.Allocator, io: std.Io, plugin_path: []const u8) !void {
+        const directory = std.fs.path.dirname(plugin_path) orelse return;
+        var dir = std.Io.Dir.cwd().openDir(io, directory, .{ .iterate = true, .follow_symlinks = false }) catch return;
+        defer dir.close(io);
+        var names: std.ArrayListUnmanaged([]const u8) = .empty;
+        defer {
+            for (names.items) |name| allocator.free(name);
+            names.deinit(allocator);
+        }
+        var it = dir.iterate();
+        while (it.next(io) catch null) |entry| {
+            if (entry.kind != .file) continue;
+            if (!plugin_native_artifact(entry.name)) continue;
+            // plugin 自身は除く（ここで開くと二重ロードになる）。
+            const full = std.fs.path.join(allocator, &.{ directory, entry.name }) catch continue;
+            defer allocator.free(full);
+            if (std.mem.eql(u8, full, plugin_path)) continue;
+            try names.append(allocator, try allocator.dupe(u8, entry.name));
+        }
+        std.mem.sort([]const u8, names.items, {}, struct {
+            fn lessThan(_: void, left: []const u8, right: []const u8) bool {
+                return std.mem.lessThan(u8, left, right);
+            }
+        }.lessThan);
+        for (names.items) |name| {
+            const full = std.fs.path.join(allocator, &.{ directory, name }) catch continue;
+            defer allocator.free(full);
+            const library = NativeLibrary.open(allocator, full) catch continue;
+            // handle は保持する（閉じない）。読み込み順序を固定するため
+            // ここでだけ開く。
+            try self.preloaded.append(allocator, library);
+        }
+    }
+
     fn loadPlugin(self: *State, path: []const u8, namespaces: []const []const u8) !void {
         const allocator = self.allocator orelse return error.NativePluginStateUnavailable;
         for (self.plugins.items) |plugin| if (std.mem.eql(u8, plugin.path, path)) return;
@@ -283,6 +341,11 @@ pub const State = struct {
             const io = std.Io.Threaded.global_single_threaded.io();
             const resolved = try runtime_self.resolveMarker(allocator, io, path, nako_ir.self_marker, ".deps");
             defer allocator.free(resolved.?);
+            // plugin を開く前に、同じ payload に同梱した推移的依存を先に
+            // 読み込む。Mach-O の install name は「先に読まれた image」で
+            // 解決されるため、plugin 側の記載名が build 機の path のままでも
+            // payload 内の依存へ解決される（rpath 書換が不要になる）。
+            try self.preloadDependencies(allocator, io, resolved.?);
             return self.loadPlugin(resolved.?, namespaces);
         }
         var library = NativeLibrary.open(allocator, path) catch return error.NativePluginOpenFailed;

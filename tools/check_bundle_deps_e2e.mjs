@@ -247,6 +247,67 @@ fastmath__plugin__ネイティブ加算(2,3)を表示
       fail(`payload から plugin を消しても明示エラーになりません: ${broken.stdout}${broken.stderr}`);
     }
     console.log("bundle-deps E2E: payload 欠落時の明示エラー OK");
+
+  // --- 推移的依存の同梱（#56）: private 共有ライブラリへ依存する plugin を
+  // `--bundle-deps` でビルドし、payload へ依存が複製されることと、移動後に
+  // 先読み経路で plugin が動くことを検証する。
+  checkTransitiveDependency();
+
+  function checkTransitiveDependency() {
+    const depPlugin = findPlugin(/lnako[_-]test[_-]plugin[_-]with[_-]dependency/i);
+    const depHelper = findPlugin(/lnako[_-]test[_-]plugin[_-]dependency/i);
+    const depApp = path.join(work, "dep-app");
+    fs.mkdirSync(path.join(depApp, "packages", "depmath"), { recursive: true });
+    fs.writeFileSync(path.join(depApp, "packages", "depmath", "nako.toml"), `[package]
+name = "depmath"
+version = "1.0.0"
+license = "MIT"
+
+[[exports]]
+name = "plugin"
+native = "libdepmath.${pluginExtension.slice(1)}"
+`);
+    fs.copyFileSync(depPlugin, path.join(depApp, "packages", "depmath", `libdepmath.${pluginExtension.slice(1)}`));
+    // 依存 helper は plugin と同じ directory へ置く（build 時の実体）。
+    fs.copyFileSync(depHelper, path.join(depApp, "packages", "depmath", path.basename(depHelper)));
+    fs.writeFileSync(path.join(depApp, "nako.toml"), `[package]
+name = "dep-app"
+version = "0.1.0"
+license = "MIT"
+
+[dependencies.path]
+depmath = { path = "packages/depmath" }
+`);
+    fs.writeFileSync(path.join(depApp, "main.nako3"), `!「pkg:depmath/plugin」を取り込む
+depmath__plugin__依存経由加算(2,3)を表示
+`);
+    const depOutput = path.join(work, "dep-bin");
+    runChecked(compiler, ["build", "main.nako3", "-o", depOutput, "--bundle-deps"], "推移的依存つき build", { cwd: depApp });
+    const depExe = fs.existsSync(`${depOutput}${executableSuffix}`) ? `${depOutput}${executableSuffix}` : depOutput;
+    const depPayload = `${depOutput}.deps`;
+    const depManifest = JSON.parse(fs.readFileSync(path.join(depPayload, "bundle.json"), "utf8"));
+    const depPackage = depManifest.packages.find((item) => item.name === "depmath");
+    if (!depPackage) fail("depmath が同梱 package にありません");
+    if (!Array.isArray(depPackage.dependencies) || depPackage.dependencies.length === 0) {
+      fail("bundle.json に推移的依存が記録されていません");
+    }
+    const depDir = path.join(depPayload, depPackage.directory);
+    const helperBase = path.basename(depHelper);
+    if (!fs.existsSync(path.join(depDir, helperBase))) fail(`payload に依存 ${helperBase} が複製されていません`);
+
+    // 移動して実行（元 project を退避し、cwd も変える）。
+    const depMovedBase = path.join(work, "移動 先 依存", "dep-prog");
+    const depMoved = `${depMovedBase}${executableSuffix}`;
+    fs.mkdirSync(path.dirname(depMoved), { recursive: true });
+    fs.copyFileSync(depExe, depMoved);
+    fs.cpSync(depPayload, `${depMovedBase}.deps`, { recursive: true });
+    fs.rmSync(path.join(depApp, "packages"), { recursive: true, force: true });
+    fs.rmSync(path.join(depApp, ".nako"), { recursive: true, force: true });
+    const depRun = run(depMoved, [], { cwd: work });
+    if (depRun.status !== 0) fail(`推移的依存つき移動後の実行が失敗しました: ${depRun.stdout}${depRun.stderr}`);
+    if (depRun.stdout.trim() !== "7") fail(`推移的依存つき移動後の出力が想定と異なります: ${depRun.stdout}`);
+    console.log("bundle-deps E2E: 推移的依存の同梱と移動後の実行 OK");
+  }
     console.log("bundle-deps E2E: 成功");
   } finally {
     fs.rmSync(work, { recursive: true, force: true });

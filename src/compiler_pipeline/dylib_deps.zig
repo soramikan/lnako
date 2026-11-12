@@ -48,6 +48,15 @@ fn isWindowsSystemDll(name: []const u8) bool {
     return false;
 }
 
+/// 現在の OS で依存の列挙・書換が意味を持つか。PE（Windows）は依存を
+/// path で持たないため対象外。
+pub fn supported() bool {
+    return switch (builtin.os.tag) {
+        .macos, .linux => true,
+        else => false,
+    };
+}
+
 /// この binary が対象 OS の共有ライブラリ形式か（列挙の前提判定）。
 pub fn looksLikeSharedLibrary(bytes: []const u8) bool {
     if (bytes.len < 8) return false;

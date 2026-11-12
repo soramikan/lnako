@@ -16,6 +16,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const lnako = @import("lnako");
+const dylib_deps = @import("dylib_deps.zig");
 
 pub const bundle_marker = lnako.ir.nako_ir.self_marker;
 
@@ -39,6 +40,18 @@ pub const BundleFile = struct {
     source_path: []const u8,
 };
 
+/// payload へ同梱した推移的依存（native plugin が参照する private 共有
+/// ライブラリ）。`name` は plugin 側の記載名、`relative` は payload 内の
+/// 配置、`installed` は「plugin を開く前に先読みする」必要があるか。
+pub const BundleDependency = struct {
+    /// plugin が記録している依存名（install_name / DT_NEEDED）。
+    name: []const u8,
+    /// payload 内の配置（package directory + `/` + file）。
+    relative: []const u8,
+    /// 同梱元の絶対 path。
+    source_path: []const u8,
+};
+
 pub const BundlePackage = struct {
     name: []const u8,
     version: []const u8,
@@ -47,6 +60,8 @@ pub const BundlePackage = struct {
     /// payload 内の package directory 名（`bundle.json` の `directory`）。
     directory: []const u8,
     files: []const BundleFile,
+    /// native plugin の推移的依存。plugin を開く前に先読みする必要がある。
+    dependencies: []const BundleDependency = &.{},
 };
 
 /// `program.bundled_packages` から payload file 一覧を作る。
@@ -69,6 +84,7 @@ pub fn plan(allocator: std.mem.Allocator, io: std.Io, program: *lnako.ir.nako_ir
         try walkPackageRoot(allocator, io, &iterator, "", &files);
         if (files.items.len == 0) return error.BundlePackageRootEmpty;
         const directory = try packageDirectoryName(arena, package, &directories);
+        const dependencies = try collectDependencies(allocator, io, arena, directory, files.items);
         const owned = try files.toOwnedSlice(allocator);
         try packages.append(allocator, .{
             .name = package.name,
@@ -77,9 +93,69 @@ pub fn plan(allocator: std.mem.Allocator, io: std.Io, program: *lnako.ir.nako_ir
             .kind = package.kind,
             .directory = directory,
             .files = owned,
+            .dependencies = dependencies,
         });
     }
     return packages.toOwnedSlice(allocator);
+}
+
+/// native plugin artifact の推移的依存（OS 標準を除く）を集める。
+/// 依存は plugin と同じ package directory へ平坦に置く（`@loader_path` /
+/// `$ORIGIN` 相当の同居）。同名の別ファイルが既にある場合は衝突として
+/// 失敗し、黙って上書きしない。
+fn collectDependencies(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    arena: std.mem.Allocator,
+    directory: []const u8,
+    files: []const BundleFile,
+) ![]const BundleDependency {
+    var result: std.ArrayListUnmanaged(BundleDependency) = .empty;
+    errdefer result.deinit(allocator);
+    var seen = std.StringHashMapUnmanaged(void).empty;
+    defer seen.deinit(arena);
+    if (!dylib_deps.supported()) return result.toOwnedSlice(allocator);
+    for (files) |file| {
+        if (!lnako.package.npkg_commands_gen.isNativePluginArtifact(file.relative)) continue;
+        const bytes = std.Io.Dir.cwd().readFileAlloc(io, file.source_path, allocator, .limited(max_bundle_file_bytes)) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.FileNotFound => return error.BundleSourceMissing,
+            else => return error.BundleSourceUnreadable,
+        };
+        defer allocator.free(bytes);
+        const found = dylib_deps.dependencies(allocator, bytes) catch continue;
+        defer {
+            for (found) |dependency| allocator.free(dependency.name);
+            allocator.free(found);
+        }
+        for (found) |dependency| {
+            if (dylib_deps.isSystemLibrary(dependency.name)) continue;
+            const base = std.fs.path.basename(dependency.name);
+            if (base.len == 0) continue;
+            if (seen.contains(base)) continue;
+            // 依存の実体を解決する。plugin と同じ directory を先に探し、
+            // 次に記載名そのもの（絶対 path / rpath 展開済み）を使う。
+            const sibling = try std.fs.path.join(arena, &.{ std.fs.path.dirname(file.source_path) orelse ".", base });
+            const resolved = if (fileExists(io, sibling))
+                sibling
+            else if (std.fs.path.isAbsolute(dependency.name) and fileExists(io, dependency.name))
+                try arena.dupe(u8, dependency.name)
+            else
+                continue;
+            try seen.put(arena, base, {});
+            try result.append(allocator, .{
+                .name = try arena.dupe(u8, dependency.name),
+                .relative = try std.fmt.allocPrint(arena, "{s}/{s}", .{ directory, base }),
+                .source_path = try arena.dupe(u8, resolved),
+            });
+        }
+    }
+    return result.toOwnedSlice(allocator);
+}
+
+fn fileExists(io: std.Io, path: []const u8) bool {
+    const stat = std.Io.Dir.cwd().statFile(io, path, .{ .follow_symlinks = true }) catch return false;
+    return stat.kind == .file;
 }
 
 /// package root を再帰で走査し、同梱 file 一覧を作る。root 相対 path は
@@ -182,10 +258,60 @@ pub fn write(allocator: std.mem.Allocator, io: std.Io, payload_root: []const u8,
             }
             package_dir.writeFile(io, .{ .sub_path = file.relative, .data = bytes }) catch return error.BundlePayloadWriteFailed;
         }
+        // 推移的依存は plugin と同じ package directory へ置く（先読み経路が
+        // 同じ directory から解決する）。同名 file が既にある場合は衝突。
+        for (package.dependencies) |dependency| {
+            const target = try std.fs.path.join(allocator, &.{ payload_root, package.directory });
+            defer allocator.free(target);
+            const base = std.fs.path.basename(dependency.relative);
+            // 依存が package root 配下にもある場合、walkPackageRoot が既に
+            // 同じ file を複製している。内容が同じなら複製済みとして扱い、
+            // 衝突にしない（`nako.toml` の `native` と同居する fixture 等）。
+            if (package_dir_stat(payload_root, package.directory, base)) {
+                if (bundledFileMatches(io, allocator, payload_root, package.directory, base, dependency.source_path)) continue;
+                return error.BundleDependencyNameCollision;
+            }
+            const bytes = std.Io.Dir.cwd().readFileAlloc(io, dependency.source_path, allocator, .limited(max_bundle_file_bytes)) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                error.FileNotFound => return error.BundleSourceMissing,
+                else => return error.BundleSourceUnreadable,
+            };
+            defer allocator.free(bytes);
+            var dir = std.Io.Dir.cwd().createDirPathOpen(io, target, .{}) catch return error.BundlePayloadCreateFailed;
+            defer dir.close(io);
+            dir.writeFile(io, .{ .sub_path = base, .data = bytes }) catch return error.BundlePayloadWriteFailed;
+        }
     }
     const manifest_bytes = try renderManifest(allocator, packages);
     defer allocator.free(manifest_bytes);
     root.writeFile(io, .{ .sub_path = "bundle.json", .data = manifest_bytes }) catch return error.BundlePayloadWriteFailed;
+}
+
+/// payload に既にある file が、同梱元と同一内容か。
+fn bundledFileMatches(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    payload_root: []const u8,
+    directory: []const u8,
+    base: []const u8,
+    source_path: []const u8,
+) bool {
+    const payload_path = std.fs.path.join(allocator, &.{ payload_root, directory, base }) catch return false;
+    defer allocator.free(payload_path);
+    const existing = std.Io.Dir.cwd().readFileAlloc(io, payload_path, allocator, .limited(max_bundle_file_bytes)) catch return false;
+    defer allocator.free(existing);
+    const source = std.Io.Dir.cwd().readFileAlloc(io, source_path, allocator, .limited(max_bundle_file_bytes)) catch return false;
+    defer allocator.free(source);
+    return std.mem.eql(u8, existing, source);
+}
+
+/// payload 内の package directory に同名 file が既にあるか。
+fn package_dir_stat(payload_root: []const u8, directory: []const u8, base: []const u8) bool {
+    const io = std.Io.Threaded.global_single_threaded.io();
+    const joined = std.fs.path.join(std.heap.page_allocator, &.{ payload_root, directory, base }) catch return false;
+    defer std.heap.page_allocator.free(joined);
+    const stat = std.Io.Dir.cwd().statFile(io, joined, .{ .follow_symlinks = false }) catch return false;
+    return stat.kind == .file;
 }
 
 /// payload directory を消す（書き直し・失敗時の掃除用）。実体 path は
@@ -262,6 +388,9 @@ const ManifestPackage = struct {
     kind: []const u8,
     directory: []const u8,
     files: []const []const u8,
+    /// 同梱した推移的依存（plugin を開く前に先読みする対象）。
+    /// 空の package では省略する（既存出力の差分を増やさない）。
+    dependencies: []const []const u8 = &.{},
 };
 
 const Manifest = struct {
@@ -290,6 +419,17 @@ pub fn renderManifest(allocator: std.mem.Allocator, packages: []const BundlePack
                 return std.mem.lessThan(u8, left, right);
             }
         }.lessThan);
+        var dependency_paths: []const []const u8 = &.{};
+        if (package.dependencies.len > 0) {
+            const list = try temporary.alloc([]const u8, package.dependencies.len);
+            for (package.dependencies, list) |dependency, *slot| slot.* = dependency.relative;
+            std.mem.sort([]const u8, list, {}, struct {
+                fn lessThan(_: void, left: []const u8, right: []const u8) bool {
+                    return std.mem.lessThan(u8, left, right);
+                }
+            }.lessThan);
+            dependency_paths = list;
+        }
         entry.* = .{
             .name = package.name,
             .version = package.version,
@@ -297,6 +437,7 @@ pub fn renderManifest(allocator: std.mem.Allocator, packages: []const BundlePack
             .kind = @tagName(package.kind),
             .directory = package.directory,
             .files = relative_paths,
+            .dependencies = dependency_paths,
         };
         if (total == 0 and package.files.len > 0) return error.InvalidBundleManifest;
     }
