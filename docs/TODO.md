@@ -144,7 +144,7 @@ Project [#2](https://github.com/users/soramikan/projects/2)、label `package-sys
 | 命令 metadata の静的検査（#52） | 完了 | なし（declared command 接続・OS 条件の照合表示・名前空間 check・`check --load-plugins` の JS/native 実登録照合は #211/#227/#251/#259 で実装済み） |
 | npm 取得（#53） | 部分実装 | Node lifecycle script は対象外（cache 欠落時の sync 側 tarball 取得は実装済み） |
 | QuickJS ESM（#54） | 部分実装 | 下記の npm ESM 境界。QuickJS ESM の実行は `--compat-js` のみ。lock context 別の複数 version 解決・importer scope・cache miss の instance 単位診断は #258 で実装済み |
-| AOT + QuickJS（#55） | 部分実装 | `JSメソッド実行`/`JSオブジェクト取得` の AOT は #256 で実装済み。残りは値・callback・GC の完全接続、AOT dispatch trace、ESM plugin 命令の AOT dispatch |
+| AOT + QuickJS（#55） | 部分実装 | `JSメソッド実行`/`JSオブジェクト取得` の AOT は #256、AOT dispatch trace（compat JS 4命令）は #263 で実装済み。残りは値・callback・GC の完全接続、ESM plugin 命令の AOT dispatch |
 | 依存同梱（#56） | 部分実装 | `build --bundle-deps` の payload（`<out>.deps/`）・移動可能 loader・SBOM 一致・source-only 依存の同梱は実装済み。plugin の推移的動的 library 依存（rpath 組替え）の同梱が残り |
 | publish（#57） | 部分実装 | dry-run と static registry への冪等 PUT は #252 で、publish→取得 E2E は #257 で実装済み。残りは実 registry backend の upload/index 登録、中央 publication API、OS 別 binary 公開、target 適合を公開時にどこまで要求するかの確定 |
 | 3 OS E2E・文書（#58） | 部分実装 | 参照パッケージの publish→取得 E2E は #257 で実装済み。利用・公開・QuickJS/AOT 制約・cnako 移行の文書は #253 で反映済み。残りは 3 OS 結合の常時実行 |
