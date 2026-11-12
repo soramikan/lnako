@@ -63,9 +63,14 @@ pub fn resolveMarker(
 fn restIsContained(rest: []const u8) bool {
     if (rest.len == 0) return false;
     if (std.fs.path.isAbsolute(rest)) return false;
-    var iterator = std.mem.splitScalar(u8, rest, '/');
-    while (iterator.next()) |segment| {
-        if (std.mem.eql(u8, segment, "..")) return false;
+    // marker は `/` 区切りで書かれるが、Windows では `\\` も不正な
+    // 区切りとして混入し得るため両方を segment 境界として扱う。
+    var index: usize = 0;
+    while (index <= rest.len) {
+        const start = index;
+        while (index < rest.len and rest[index] != '/' and rest[index] != '\\') index += 1;
+        if (std.mem.eql(u8, rest[start..index], "..")) return false;
+        index += 1;
     }
     return true;
 }
@@ -134,7 +139,9 @@ test "resolveMarkerはpayload外へ出る指定を拒否する" {
     // 通常の相対は通る。
     const ok = (try resolveMarker(allocator, io, "@self/pkg/sub/plugin.so", "@self/", ".deps")) orelse return error.TestUnexpectedResult;
     defer allocator.free(ok);
-    try std.testing.expect(std.mem.endsWith(u8, ok, ".deps/pkg/sub/plugin.so"));
+    const ok_tail = try std.fs.path.join(allocator, &.{ ".deps", "pkg", "sub", "plugin.so" });
+    defer allocator.free(ok_tail);
+    try std.testing.expect(std.mem.endsWith(u8, ok, ok_tail));
 }
 
 test "resolveMarkerは実行ファイル隣接のpayloadへ解決する" {
@@ -144,5 +151,7 @@ test "resolveMarkerは実行ファイル隣接のpayloadへ解決する" {
     const resolved = (try resolveMarker(allocator, io, "@self/pkg/plugin.so", "@self/", ".deps")) orelse return error.TestUnexpectedResult;
     defer allocator.free(resolved);
     try std.testing.expect(std.fs.path.isAbsolute(resolved));
-    try std.testing.expect(std.mem.endsWith(u8, resolved, ".deps/pkg/plugin.so"));
+    const expected_tail = try std.fs.path.join(allocator, &.{ ".deps", "pkg", "plugin.so" });
+    defer allocator.free(expected_tail);
+    try std.testing.expect(std.mem.endsWith(u8, resolved, expected_tail));
 }
