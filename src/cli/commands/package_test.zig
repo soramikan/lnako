@@ -235,9 +235,10 @@ test "package publish は artifact と version record を PUT し、再実行を
     var second = try publish.run(a, io, options, &diagnostics2);
     defer second.deinit();
     try testing.expectEqual(publish.Status.published, second.status);
-    // 再実行では index への PUT も増えない（version record が既存で早期 return）。
-    try testing.expectEqual(@as(usize, 3), server.countCaptures("PUT"));
-    try testing.expectEqual(@as(usize, 6), server.requestCount());
+    // 再実行でも index 登録は通す（索引登録だけ失敗して中断した公開を
+    // 再試行できるようにするため）。登録は冪等なので内容は変わらない。
+    try testing.expectEqual(@as(usize, 4), server.countCaptures("PUT"));
+    try testing.expectEqual(@as(usize, 8), server.requestCount());
     try testing.expectEqualStrings(first.artifact_sha256, second.artifact_sha256);
 
     var out = std.Io.Writer.Allocating.init(a);

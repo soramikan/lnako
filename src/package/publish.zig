@@ -258,6 +258,20 @@ pub fn run(backing_allocator: Allocator, io: std.Io, options: Options, diagnosti
     const remote = try probeRemoteStatus(backing_allocator, io, policy, token, version_url, version_text, artifact_sha256, diagnostics);
     switch (remote) {
         .published => {
+            // artifact と version record は既にある。索引への登録だけが
+            // 失敗して中断した場合に再試行できるよう、ここでも登録を通す
+            // （登録は冪等なので、既に載っている版では何も変わらない）。
+            registerInIndex(a, backing_allocator, io, policy, token, registry_url, owner, &project.manifest, version_text, manifest_sha256, artifact_url, artifact_sha256, diagnostics) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                error.Canceled => return error.Canceled,
+                else => {
+                    // 索引登録だけが失敗した場合も「成果物は公開済み・
+                    // 索引が未登録」という半端な状態を利用者へ明示する。
+                    report.status = .failed;
+                    report.failure = try std.fmt.allocPrint(a, "index への登録に失敗しました: {s}", .{@errorName(err)});
+                    return report;
+                },
+            };
             report.status = .published;
             return report;
         },
@@ -877,20 +891,22 @@ fn buildIndexWithPackage(
                         if (version_item != .object) return error.InvalidRegistryIndex;
                         const text = jsonStringOf(version_item.object.get("version")) orelse return error.InvalidRegistryIndex;
                         const hash = jsonStringOf(version_item.object.get("manifestHash")) orelse return error.InvalidRegistryIndex;
-                        // artifacts.source の url/sha256 を引き継ぐ（無い
-                        // 索引は consumer が解決できないため失敗させる）。
-                        const artifacts = version_item.object.get("artifacts") orelse return error.InvalidRegistryIndex;
-                        if (artifacts != .object) return error.InvalidRegistryIndex;
-                        const source = artifacts.object.get("source") orelse return error.InvalidRegistryIndex;
-                        if (source != .object) return error.InvalidRegistryIndex;
-                        const existing_url = jsonStringOf(source.object.get("url")) orelse return error.InvalidRegistryIndex;
-                        // 索引には `sha256:<hex>` で書く。既存索引を読み直す
-                        // ときは前置を落として内部表現（生 hex）へ揃える。
-                        const existing_sha_raw = jsonStringOf(source.object.get("sha256")) orelse return error.InvalidRegistryIndex;
-                        const existing_sha = if (std.mem.startsWith(u8, existing_sha_raw, "sha256:"))
-                            existing_sha_raw["sha256:".len..]
-                        else
-                            existing_sha_raw;
+                        // 既存 version の artifact 情報は任意。native-only の
+                        // version など `artifacts.source` を持たない record が
+                        // 既に索引にあっても、公開を失敗させない（その情報は
+                        // そのまま保持し、新規版だけ足す）。
+                        var existing_url: []const u8 = "";
+                        var existing_sha: []const u8 = "";
+                        if (version_item.object.get("artifacts")) |artifacts| {
+                            if (artifacts == .object) {
+                                if (artifacts.object.get("source")) |source| {
+                                    if (source == .object) {
+                                        existing_url = jsonStringOf(source.object.get("url")) orelse "";
+                                        existing_sha = try normalizeArtifactDigest(a, source.object.get("sha256"));
+                                    }
+                                }
+                            }
+                        }
                         try versions.append(a, .{
                             .version = try a.dupe(u8, text),
                             .manifest_hash = try a.dupe(u8, hash),
@@ -996,6 +1012,30 @@ fn buildIndexWithPackage(
     }
     try writer.writeAll("]}");
     return out.toOwnedSlice();
+}
+
+/// 既存索引の artifact digest を内部表現（生 hex）へ正規化する。
+/// `sha256:<hex>` は前置を落とし、`sha256-<base64>`（SRI）は hex へ直す。
+/// 解釈できない表記は空（情報なし）として扱い、公開自体は止めない。
+fn normalizeArtifactDigest(a: Allocator, value: ?std.json.Value) ![]const u8 {
+    const text = jsonStringOf(value) orelse return "";
+    if (std.mem.startsWith(u8, text, "sha256:")) {
+        const hex = text["sha256:".len..];
+        if (hex.len == 64) return try a.dupe(u8, hex);
+        return "";
+    }
+    if (std.mem.startsWith(u8, text, "sha256-")) {
+        const encoded = text["sha256-".len..];
+        var buffer: [64]u8 = undefined;
+        const decoded = std.base64.standard.Decoder.calcSizeForSlice(encoded) catch return "";
+        if (decoded > buffer.len) return "";
+        std.base64.standard.Decoder.decode(&buffer, encoded) catch return "";
+        const bytes = buffer[0..decoded];
+        if (bytes.len != 32) return "";
+        return try std.fmt.allocPrint(a, "{x}", .{bytes});
+    }
+    if (text.len == 64) return try a.dupe(u8, text);
+    return "";
 }
 
 const IndexVersion = struct {
