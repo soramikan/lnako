@@ -116,8 +116,11 @@ external bindingを持たない値でも共有変換規則でJSへ渡せるも�
 成功しAOTが明示エラーになります（AOTが生成するexternal値の要素は、`JS関数実行`の
 浅い変換規則によりプリミティブ/配列/辞書に限られます）。値・Promise・callback・
 GCの完全接続、関数値/BigInt/bytesの引数・戻り値への接続はfollow-up（Issue #55）
-です。AOTの4命令は専用ABIを直接呼ぶため、`LNAKO_DISPATCH_TRACE`
-のdispatch traceにはまだ記録されません（follow-up）。
+です。AOTの4命令は専用ABIを直接呼びますが、`LNAKO_DISPATCH_TRACE` の
+dispatch traceへも記録します（route名はinterpreterと同じ `JS関数実行` など、
+opcodeは65535、`command` には評価式ではなく命令名のみを入れます。評価式を
+入れると利用者のスクリプト片がtraceへ漏れ、引用符でJSON行が壊れるためです）。
+AOTの4命令はIR siteを持たないので `siteId` は null になります。
 
 ### AOT最小dispatchに合わせたinterpreterの意図的制限
 

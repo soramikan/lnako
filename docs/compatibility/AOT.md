@@ -77,7 +77,7 @@
 ## compat-js AOTの未接続範囲
 
 - 公式実測・source根拠: 公式cnako3はNode.js上で動作するため、AOTコンパイル経路を持ちません。LLVM AOT＋QuickJSはlnakoのopt-in機能であり、公式互換証拠とは別に扱います。
-- lnakoの現在動作: `--compat-js --backend aot` は通常AOTとは別の `liblnako_runtime_compat.a` をリンクし、生成物へESM manifest（path・source・namespace・package root・bare alias）を収録します。`JS実行`・`JS関数実行`・`JSオブジェクト取得`・`JSメソッド実行` の最小dispatch、external binding（JS参照）の保持とGC解放、ESM module登録、compile時にlock/cacheから解決したbare npm importを実装・検証しています。Promise値そのものの受け渡し、external bindingを持たないネストした配列・辞書の引数、関数値/BigInt/bytesの引数・戻り値接続、値・callback・GCの完全接続、AOT compat dispatchのtrace記録、ESM plugin命令のAOT dispatch、Windows x86_64のcompat AOTリンクは未対応です（`JS関数実行` はPromise解決値をawaitでき、external bindingを含むネストした引数は同期できます）。
+- lnakoの現在動作: `--compat-js --backend aot` は通常AOTとは別の `liblnako_runtime_compat.a` をリンクし、生成物へESM manifest（path・source・namespace・package root・bare alias）を収録します。`JS実行`・`JS関数実行`・`JSオブジェクト取得`・`JSメソッド実行` の最小dispatch、external binding（JS参照）の保持とGC解放、ESM module登録、compile時にlock/cacheから解決したbare npm importを実装・検証しています。Promise値そのものの受け渡し、external bindingを持たないネストした配列・辞書の引数、関数値/BigInt/bytesの引数・戻り値接続、値・callback・GCの完全接続、ESM plugin命令のAOT dispatch、Windows x86_64のcompat AOTリンクは未対応です（AOT compat dispatchは `LNAKO_DISPATCH_TRACE` へ記録済み）（`JS関数実行` はPromise解決値をawaitでき、external bindingを含むネストした引数は同期できます）。
 - 判定: 未実装
 - 対象経路: AOT
 - 差分テストID: `check_aot_quickjs_separation`、`check_package_plugin_npm_e2e`

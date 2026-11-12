@@ -27,7 +27,7 @@
     ],
     "exceptions": {
       "src/compat/quickjs.zig": { "reason": "QuickJS値変換・命令dispatch・external binding・同期キャッシュ/疎配列/own data property・再帰変換と回帰テストを同一境界で維持（#55のexternal binding追加分を含む。分割を継続検討・112KB上限）", "limitKb": 112 },
-      "src/runtime/aot/compat_js.zig": { "reason": "compat AOTのQuickJS境界（JS実行/関数実行/オブジェクト取得/メソッド実行・external binding・再帰変換・GC同期・疎配列/own data property）と回帰テストを同一ABI単位で維持（分割を継続検討・118KB上限）", "limitKb": 118 },
+      "src/runtime/aot/compat_js.zig": { "reason": "compat AOTのQuickJS境界（JS実行/関数実行/オブジェクト取得/メソッド実行・external binding・再帰変換・GC同期・疎配列/own data property）と回帰テストを同一ABI単位で維持（分割を継続検討・dispatch trace接続込みで120KB上限）", "limitKb": 120 },
     "src/plugins/system/arrays.zig": {
       "reason": "命令dispatchファサード（arrays/へ実装移譲済み・テストはファサードに集約）",
       "limitKb": 40
