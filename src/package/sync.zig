@@ -63,6 +63,11 @@ pub const Options = struct {
     cache_root: ?[]const u8 = null,
     /// 取得 policy（offline・上限・timeout・平文 http 許可）。
     policy: fetch.Policy = .{},
+    /// テスト専用: 公開直前の再照合の直前に呼ばれるフック。fs 監視スレッドに
+    /// 依存する race テストを決定的にするための差込み点で、通常の呼出し側は
+    /// 設定しない（null）。
+    publish_hook: ?PublishHook = null,
+    publish_hook_context: ?*anyopaque = null,
 };
 
 /// `environment.json` まで含む同期結果。全メモリは内蔵 arena が所有する。
@@ -134,6 +139,10 @@ fn manifestFreshness(io: std.Io, arena: Allocator, project_dir: std.Io.Dir, lock
 /// `nako.lock` を読み、環境を同期する。失敗時は `session` 由来の診断を
 /// `diagnostics` へ転写して error を返す。commit 前の失敗は直前環境を変更しない。
 /// commit 後の current 公開失敗では error を返し、state 検査で stale として再試行させる。
+/// テスト専用の公開直前フック。非テストビルドでは常に null。
+/// `runWithContext` の引数として渡し、global 状態を持たない。
+pub const PublishHook = *const fn (?*anyopaque) void;
+
 pub fn run(
     gpa: Allocator,
     io: std.Io,
@@ -356,6 +365,13 @@ pub fn run(
         try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.lock", .{}, "content of mutable path dependency \"{s}\" changed while syncing; re-resolve the lock before sync", .{path});
         return error.StaleLock;
     }
+    // テスト専用フック: 公開直前の再照合の直前に任意の処理を差し込める点を
+    // 与える（`sync は構築中に nako.toml が変更されると環境を公開しない`）。
+    // 別スレッドの fs 監視で書込み機会を競合させるテストは、workspace の
+    // 生成タイミング次第で書込みが間に合わず flake する（Windows で頻発）。
+    // ここで決定的に「変更後」の状態を作れるようにする。
+    if (options.publish_hook) |hook| hook(options.publish_hook_context);
+
     // root manifest も再照合する。package 取得・展開中に外部エディタ等が
     // `nako.toml` を保存・削除すると、開始時点の manifest とは別の宣言に
     // 基づく環境を公開してしまうため。manifest 無しの lock 駆動用途では
