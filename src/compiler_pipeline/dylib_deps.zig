@@ -580,18 +580,16 @@ test "relocatedNameはOSごとの相対基準を作る" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    const name = (try relocatedName(a, "lib/x86_64-linux-gnu/libhelper.so.1")).?;
-    const base = "libhelper.so.1";
+    const input = "lib/x86_64-linux-gnu/libhelper.so.1";
     if (builtin.os.tag == .macos) {
+        const name = (try relocatedName(a, input)).?;
         try testing.expectEqualStrings("@loader_path/libhelper.so.1", name);
     } else if (builtin.os.tag == .linux) {
+        const name = (try relocatedName(a, input)).?;
         try testing.expectEqualStrings("$ORIGIN/libhelper.so.1", name);
     } else {
-        try testing.expectEqualStrings(base, "");
-    }
-    // 対象外 OS では null（書換を行わない）。
-    if (builtin.os.tag != .macos and builtin.os.tag != .linux) {
-        try testing.expect((try relocatedName(a, "libhelper.so")) == null);
+        // 対象外 OS（Windows 等）は書換を行わない（null）。
+        try testing.expect((try relocatedName(a, input)) == null);
     }
 }
 
