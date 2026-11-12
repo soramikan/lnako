@@ -145,7 +145,7 @@ Project [#2](https://github.com/users/soramikan/projects/2)、label `package-sys
 | npm 取得（#53） | 部分実装 | Node lifecycle script は対象外（cache 欠落時の sync 側 tarball 取得は実装済み） |
 | QuickJS ESM（#54） | 部分実装 | 下記の npm ESM 境界。QuickJS ESM の実行は `--compat-js` のみ |
 | AOT + QuickJS（#55） | 部分実装 | `JSメソッド実行`/`JSオブジェクト取得` の AOT、ネストした配列・辞書と関数引数、値・Promise・callback・GC の完全接続、AOT dispatch trace、Windows x86_64 の compat AOT リンク |
-| 依存同梱（#56） | 未着手 | `build --bundle-deps`、移動可能な loader、license/SBOM、source-only 依存の同梱 |
+| 依存同梱（#56） | 部分実装 | `build --bundle-deps` の payload（`<out>.deps/`）・移動可能 loader・SBOM 一致・source-only 依存の同梱は実装済み。plugin の推移的動的 library 依存（rpath 組替え）の同梱が残り |
 | publish（#57） | 部分実装 | 実 registry backend の upload/index 登録、中央 publication API、OS 別 binary 公開、target 適合を公開時にどこまで要求するかの確定（dry-run と static registry への冪等 PUT は実装済み） |
 | 3 OS E2E・文書（#58） | 部分実装 | 参照パッケージの E2E、3 OS 結合、公開から取得までの E2E。利用・公開・QuickJS/AOT 制約・cnako 移行の文書は反映済み |
 | cnako 接続（#61） | 未着手 | cnako 本体の共通ソース取り込み、`lnako sync` 委譲、上流公開リリース |

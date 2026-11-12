@@ -65,6 +65,15 @@
 - 差分テストID: `check_native_plugin_abi`
 - TODO識別子: `TODO: aot-native-plugin-static-bundle`
 
+### `build --bundle-deps`（依存同梱）
+
+- `lnako build <file> -o <out> --bundle-deps` は実行ファイルの隣へ `<out>.deps/` を作り、依存 package の native plugin artifact と source を複製します。`.nako3` 依存は compile 時に実行ファイルへ組み込まれるため、payload 側は監査用の複製です。実行時に payload を読むのは native plugin だけです。
+- native plugin の path は `@self/<pkg-dir>/<file>` marker へ書き換えられます。実行時 loader は argv[0] ではなく OS API（Linux `/proc/self/exe`、macOS `_NSGetExecutablePath`+realpath、Windows `GetModuleFileNameW`）で自身の path を得て `<out>.deps/` を解決するため、生成物を別ディレクトリへ移しても cwd に依存しません。
+- `<out>.deps/bundle.json`（schema 1）は同梱 package の自己記述です。`--sbom` を併用すると、同梱した package だけを SBOM に載せます（license 未宣言は `NOASSERTION`）。同梱物・bundle.json・SBOM の package 集合は一致します。
+- source-only 依存（native/JS artifact を持たず `.nako3` だけの package）も同梱対象です。
+- 未対応: plugin の推移的動的 library 依存（rpath 組替え）。`--compat-js --backend embedded` では payload directory を持てないため `--bundle-deps` を使えません。
+- 検証: `tools/check_bundle_deps_e2e.mjs`（生成物を別ディレクトリへ移して実行・payload 欠落時の明示エラー・SBOM 一致）。
+
 ## compat-js AOTの未接続範囲
 
 - 公式実測・source根拠: 公式cnako3はNode.js上で動作するため、AOTコンパイル経路を持ちません。LLVM AOT＋QuickJSはlnakoのopt-in機能であり、公式互換証拠とは別に扱います。

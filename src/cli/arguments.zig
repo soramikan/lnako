@@ -18,6 +18,10 @@ pub const BuildOptions = struct {
     /// `--compat-js --backend aot` 生成物へ同梱した package の license 一覧
     /// （SPDX 2.3 JSON）の出力先。Issue #56。
     sbom: ?[]const u8 = null,
+    /// 依存 package を `<out>.deps/` payload へ同梱する。通常 AOT でも
+    /// 使用可。`.nako3` 依存（source-only / native plugin 含む）の license
+    /// と file 一覧を SBOM へ載せるため、`--sbom` との併用を許す。
+    bundle_deps: bool = false,
 };
 
 pub fn parseBuildOptions(arguments: []const []const u8) !BuildOptions {
@@ -30,6 +34,7 @@ pub fn parseBuildOptions(arguments: []const []const u8) !BuildOptions {
     var forced_mode: lnako.frontend.token.Mode = .{};
     var llvm_dir: ?[]const u8 = null;
     var sbom: ?[]const u8 = null;
+    var bundle_deps = false;
     var index: usize = 1;
     while (index < arguments.len) : (index += 1) {
         const argument = arguments[index];
@@ -68,6 +73,8 @@ pub fn parseBuildOptions(arguments: []const []const u8) !BuildOptions {
             index += 1;
             if (index >= arguments.len) return error.MissingSbomPath;
             sbom = arguments[index];
+        } else if (std.mem.eql(u8, argument, "--bundle-deps")) {
+            bundle_deps = true;
         } else if (std.mem.eql(u8, argument, "--emit")) {
             index += 1;
             if (index >= arguments.len) return error.MissingEmitKind;
@@ -92,6 +99,7 @@ pub fn parseBuildOptions(arguments: []const []const u8) !BuildOptions {
         .forced_mode = forced_mode,
         .llvm_dir = llvm_dir,
         .sbom = sbom,
+        .bundle_deps = bundle_deps,
     };
 }
 
@@ -367,6 +375,17 @@ test "buildの--sbom出力先を解析する" {
     const without = try parseBuildOptions(&.{ "main.nako3", "-o", "main", "--compat-js", "--backend", "aot" });
     try std.testing.expect(without.sbom == null);
     try std.testing.expectError(error.MissingSbomPath, parseBuildOptions(&.{ "main.nako3", "-o", "main", "--compat-js", "--backend", "aot", "--sbom" }));
+}
+
+test "buildの--bundle-depsを解析する" {
+    const defaults = try parseBuildOptions(&.{ "main.nako3", "-o", "main" });
+    try std.testing.expect(!defaults.bundle_deps);
+    const enabled = try parseBuildOptions(&.{ "main.nako3", "-o", "main", "--bundle-deps" });
+    try std.testing.expect(enabled.bundle_deps);
+    // `--sbom` と併用できる（どちらも同梱物の記述）。
+    const with_sbom = try parseBuildOptions(&.{ "main.nako3", "-o", "main", "--bundle-deps", "--sbom", "out.spdx.json" });
+    try std.testing.expect(with_sbom.bundle_deps);
+    try std.testing.expectEqualStrings("out.spdx.json", with_sbom.sbom.?);
 }
 
 test "buildのcompat-js backendを解析する" {

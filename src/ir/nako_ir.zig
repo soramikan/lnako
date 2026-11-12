@@ -214,6 +214,11 @@ pub const NativePluginPackage = struct {
     namespace: []const u8,
 };
 
+/// `--bundle-deps` が同梱した native plugin の path marker。`@self/` に続く
+/// 相対 path を実行ファイル自身の配置（`<out>.deps/`）から解決する。
+/// compiler_pipeline（書換側）と plugins（解決側）が同じ文字列を使う単一の源。
+pub const self_marker = "@self/";
+
 /// JavaScript module を所有する package の帰属。`npm` は依存の出自
 /// （npm instance か path 依存の nako package か）を表し、同梱 package の
 /// metadata をどちらの manifest から読むかの判断に使う。
