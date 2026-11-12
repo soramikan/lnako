@@ -57,9 +57,18 @@ pub fn isDynamicNamedCall(function: ir.Function, name: []const u8) bool {
     return isQualifiedGlobal(name) or hasLocalName(function, name);
 }
 
+/// plugin（native/ESM）命令の本体内dispatchか。
+///
+/// ESM plugin（`--compat-js`）だけを import した program は
+/// `native_plugin_paths` が空になるため、native の有無だけで判定すると
+/// `{namespace}__{命令}` が「変数に入った関数の呼出し」と誤分類され、
+/// codegen が代入先（存在しない変数）を探して失敗する（Issue #55）。
+/// ESM plugin の namespace も同じ dispatch 対象として扱う。
 pub fn isNativePluginCall(program: ir.Program, function: ir.Function, instruction: ir.Instruction) bool {
-    return program.native_plugin_paths.len > 0 and
-        instruction.opcode == .call and
+    const has_native_plugins = program.native_plugin_paths.len > 0;
+    const has_esm_plugins = hasEsmPluginNamespace(program);
+    if (!has_native_plugins and !has_esm_plugins) return false;
+    return instruction.opcode == .call and
         instruction.direct_callee == null and
         !instruction.is_builtin_call and
         // 動的builtin束縛の印が無い呼出しはplugin dispatchへ流さない。
@@ -68,7 +77,35 @@ pub fn isNativePluginCall(program: ir.Program, function: ir.Function, instructio
         instruction.dynamic_call and
         instruction.name.len > 0 and
         lookupFunction(program, instruction.name) == null and
-        (!isDynamicNamedCall(function, instruction.name) or isPackagePluginCommandName(program, instruction.name));
+        (!isDynamicNamedCall(function, instruction.name) or
+            isPackagePluginCommandName(program, instruction.name) or
+            isEsmPluginCommandName(program, instruction.name));
+}
+
+/// `--compat-js` の ESM plugin が公開 namespace を持つか。
+pub fn hasEsmPluginNamespace(program: ir.Program) bool {
+    for (program.javascript_modules) |module| {
+        if (!module.is_plugin) continue;
+        for (module.namespaces) |namespace| {
+            // 空 namespace は直接 path import の無修飾公開 sentinel。
+            if (namespace.len > 0) return true;
+        }
+    }
+    return false;
+}
+
+/// ESM plugin の公開命令名 `{namespace}__{命令}` か。
+pub fn isEsmPluginCommandName(program: ir.Program, name: []const u8) bool {
+    for (program.javascript_modules) |module| {
+        if (!module.is_plugin) continue;
+        for (module.namespaces) |namespace| {
+            if (namespace.len == 0) continue;
+            if (name.len > namespace.len + 2 and
+                std.mem.startsWith(u8, name, namespace) and
+                name[namespace.len] == '_' and name[namespace.len + 1] == '_') return true;
+        }
+    }
+    return false;
 }
 
 /// `pkg:` import経由native pluginの公開命令名 `{namespace}__{命令}` か。

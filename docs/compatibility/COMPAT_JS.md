@@ -170,7 +170,8 @@ npm の ESM package は、lock と cache から解決した結果だけを使い
 - `--sbom <path>` を併用すると、同梱 package の license 一覧を SPDX 2.3 形式の JSON として出力します。依存の出自で読む manifest を選び、npm instance は `package.json`（`license`、旧形式 object の `type`、古い `licenses` 配列は全選択肢を ` OR ` で連結）、path 依存 ESM package は `nako.toml` の `license` だけを使います（path 依存に開発用 `package.json` があっても混入しません）。`LICENSE`/`COPYING` 等のファイルがあれば SHA1（SPDX 2.3 §8.4 で必須）と SHA-256 付きの file record と `CONTAINS` 関係も出します。同梱 source の解析は行わないため、`licenseDeclared` は宣言値、`licenseConcluded` は常に `NOASSERTION` です。宣言が無い package も `NOASSERTION` です。SPDX の式として解釈できない宣言（`MIT/X11`、`(MIT`、`MIT ()` など）は推測せず `NOASSERTION` にして元の宣言を `comment` に残します（`UNLICENSED` は付与なしを意味する `NONE`）。`documentNamespace` は package・同梱 entry・license file・出力名の digest から作るため、同じ依存でも出力名が違えば別文書になります。出力は決定的です。
 - `--sbom` は `--compat-js --backend aot` 専用です（他の組み合わせ、および生成物・入力 source と同じパスの指定は usage エラー）。通常 AOT は manifest も SBOM も生成しません。
 - 同梱する package root の `package.json` / `nako.toml` が無い、または壊れている場合は、manifest と SBOM を不完全にせず build を失敗させます。
-- ESM plugin の命令は AOT から呼び出せません。plugin 命令の AOT dispatch は未対応です。plugin モジュール内部の bare import は起動時の bare alias 登録で解決され、`JS実行` の引数内で書いた `import("...")` も同じ alias で解決されます。参照 fixture は `tests/fixtures/package-plugin-npm/`（`aot-main.nako3`）です。
+- ESM plugin の命令 `{namespace}__{命令}` は AOT の codegen で plugin dispatch として分類されます（native plugin の `native_plugin_paths` が空でも、ESM plugin の namespace を見て判定します）。以前は「変数に入った関数の呼出し」と誤分類され、存在しない変数の代入先を探して `UnknownAssignmentTarget` で build が失敗していました。
+- **実行時の invoke は未対応**です。AOT 側の `hostInvoke` が null を返すため、ESM plugin 命令を AOT 生成物から実行すると `UnknownCommand` になります。plugin モジュール内部の bare import は起動時の bare alias 登録で解決され、`JS実行`・`JS関数実行` から plugin の関数を呼ぶ経路は動作します。参照 fixture は `tests/fixtures/package-plugin-npm/`（`aot-main.nako3`）。
 - ESM-only の path 依存（`esm` だけを宣言したパッケージ）を lock で解決するには、`compat-js = true` を宣言した profile を置きます。lock と sync は、`default` が無ければ唯一の profile を自動で選びます。
 
 参照 fixture の流れ:
