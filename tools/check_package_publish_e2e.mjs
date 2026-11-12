@@ -19,8 +19,9 @@
 //
 // 外部ネットワーク・実 registry・npm CLI は使わない。npm packument も
 // fixture registry が 127.0.0.1 で配信する（LNAKO_NPM_REGISTRY で向ける）。
-// `lnako package publish` は公開時に index.json を更新しない（nako-registry
-// の範囲）ため、fixture registry が index を静的に配信する。
+// `lnako package publish` は version record の公開後に index.json へ package を
+// 登録する（冪等）。fixture registry はその PUT を受理し、以降の GET に
+// 登録内容を反映する。
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
@@ -210,6 +211,9 @@ function createRegistry() {
   // 「届いた要求」として数え、比較を保守方向に倒す）。再公開の冪等性
   // （PUT が一切増えない）を要求単位で検証するために使う。
   let putRequestCount = 0;
+  // `--no-dry-run` の publish が index.json へ登録した回数と、その内容。
+  let indexPutCount = 0;
+  let registeredIndex = null;
   // PUT の Authorization 契約（Bearer）。token 無しの公開を 401 で拒否する。
   const expectedAuthorization = "Bearer fixture-token";
 
@@ -218,6 +222,9 @@ function createRegistry() {
   }
 
   function indexDoc() {
+    // publish が index を登録した後は、その内容をそのまま配信する
+    // （consumer 側の lock/sync が publish の登録結果を読む経路を検証する）。
+    if (registeredIndex !== null) return registeredIndex;
     return {
       schemaVersion: 1,
       packages: Object.entries(PACKAGE_IDS).map(([name, id]) => {
@@ -319,6 +326,28 @@ function createRegistry() {
         // lnako package publish の契約（PS01 layout・Bearer 認証）に沿わない
         // 送信は受理しない（owner 不一致・token 無しも一律 401）。これにより
         // 「公開 PUT に Bearer token が載る」ことを実バイナリ経路で固定する。
+        // `/index.json` は package 登録の単一 document（owner 前置を持たない）。
+        if (url === "/index.json") {
+          if (request.headers.authorization !== expectedAuthorization) {
+            response.writeHead(401);
+            return response.end();
+          }
+          let parsed;
+          try {
+            parsed = JSON.parse(body.toString("utf8"));
+          } catch {
+            response.writeHead(400);
+            return response.end();
+          }
+          if (!Array.isArray(parsed?.packages)) {
+            response.writeHead(400);
+            return response.end();
+          }
+          indexPutCount += 1;
+          registeredIndex = parsed;
+          response.writeHead(204);
+          return response.end();
+        }
         if (segments[0] !== OWNER || request.headers.authorization !== expectedAuthorization) {
           response.writeHead(401);
           return response.end();

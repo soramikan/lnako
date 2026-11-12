@@ -146,7 +146,7 @@ Project [#2](https://github.com/users/soramikan/projects/2)、label `package-sys
 | QuickJS ESM（#54） | 部分実装 | 下記の npm ESM 境界。QuickJS ESM の実行は `--compat-js` のみ。lock context 別の複数 version 解決・importer scope・cache miss の instance 単位診断は #258 で実装済み |
 | AOT + QuickJS（#55） | 部分実装 | `JSメソッド実行`/`JSオブジェクト取得` の AOT は #256、AOT dispatch trace（compat JS 4命令）は #263、ESM plugin 命令の AOT codegen は #271 で実装済み。残りは値・callback・GC の完全接続と、ESM plugin 命令の実行時 invoke（AOT は plugin module を評価せず `hostInvoke` も null。COMPAT_JS.md に 3 点の原因を記載） |
 | 依存同梱（#56） | 完了 | なし（payload・移動可能 loader・SBOM 一致・source-only 依存・推移的動的 library 依存の検出/複製/`bundle.json` 記録/先読み、in-place 書換は #260/#268/#269 と本変更で実装済み） |
-| publish（#57） | 部分実装 | dry-run と static registry への冪等 PUT は #252 で、publish→取得 E2E は #257 で実装済み。target 適合の要求範囲は PUBLISHING.md §4.1 で確定（公開時は宣言 runtime の検証のみ、OS 別 binary の網羅は要求しない）。残りは実 registry backend の upload/index 登録、中央 publication API |
+| publish（#57） | 部分実装 | dry-run と static registry への冪等 PUT は #252、publish→取得 E2E は #257、実 registry backend への upload と `index.json` 登録は本変更で実装済み。target 適合の要求範囲は PUBLISHING.md §4.1 で確定。残りは中央 publication API（認証付き一括登録）と OS 別 binary の公開手順 |
 | 3 OS E2E・文書（#58） | 完了 | なし（参照パッケージの publish→取得 E2E は #257、3 OS 結合は CI の `Package publish E2E check` が macOS/Linux/Windows でフル CI 時に実行、文書は #253） |
 | cnako 接続（#61） | 未着手 | cnako 本体の共通ソース取り込み、`lnako sync` 委譲、上流公開リリース |
 | レジストリ（別リポ） | 未着手 | nako-registry の #1–#6。中央サーバー切替は nako-registry#5 が gate |

@@ -276,6 +276,8 @@ pub fn run(backing_allocator: Allocator, io: std.Io, options: Options, diagnosti
         io,
         policy,
         token,
+        registry_url,
+        owner,
         &project.manifest,
         version_text,
         manifest_sha256,
@@ -613,6 +615,8 @@ fn uploadPublication(
     io: std.Io,
     policy: fetch.Policy,
     token: []const u8,
+    registry_url: []const u8,
+    owner: []const u8,
     manifest: *const manifest_mod.Manifest,
     version_text: []const u8,
     manifest_sha256: []const u8,
@@ -656,7 +660,68 @@ fn uploadPublication(
     if (!isSuccessStatus(record_response.status)) {
         return try uploadFailure(a, &session, diagnostics, "version record", version_url, record_response.status, record_response.body);
     }
+    // version record の公開後、index.json へ package を登録する。version
+    // record が先に存在しないと consumer の解決が失敗するため、順序は
+    // 「artifact → version record → index」で固定する。
+    try registerInIndex(a, backing_allocator, io, policy, token, registry_url, owner, manifest, version_text, manifest_sha256, artifact_url, artifact_sha256, diagnostics);
     return null;
+}
+
+/// `index.json` に package record を登録する（冪等）。
+///
+/// 既に同じ package id の record があれば `versions` のみ更新する。
+/// 索引の同時更新競合を避けるため、呼出し側は「version record の PUT が
+/// 成功した後」にだけここへ来る（同じ版の再実行は version record が
+/// 既存として早期 return するため、ここも走らない）。
+fn registerInIndex(
+    a: Allocator,
+    backing_allocator: Allocator,
+    io: std.Io,
+    policy: fetch.Policy,
+    token: []const u8,
+    registry_url: []const u8,
+    owner: []const u8,
+    manifest: *const manifest_mod.Manifest,
+    version_text: []const u8,
+    manifest_sha256: []const u8,
+    artifact_url: []const u8,
+    artifact_sha256: []const u8,
+    diagnostics: *diag.List,
+) Error!void {
+    var session = fetch.Session.init(backing_allocator, io, policy);
+    defer session.deinit();
+    const authorization = try authorizationHeader(&session, token);
+    const headers = [_]std.http.Header{.{ .name = "authorization", .value = authorization }};
+    const url = std.fmt.allocPrint(a, "{s}/index.json", .{registry_url}) catch return error.OutOfMemory;
+    const existing = fetch.fetchBytesWithHeaders(&session, url, &headers, .index) catch |err| switch (err) {
+        // 索引が未作成の registry では、空の索引を作って登録する。
+        error.NotFound => null,
+        error.OutOfMemory => return error.OutOfMemory,
+        error.Canceled => return error.Canceled,
+        else => {
+            session.reportDiagnostics(diagnostics) catch return error.OutOfMemory;
+            return error.RegistryUnavailable;
+        },
+    };
+    const body = buildIndexWithPackage(a, manifest, owner, registry_url, version_text, manifest_sha256, artifact_url, artifact_sha256, existing) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => {
+            diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, url, .{}, "registry index is invalid: {s}", .{@errorName(err)}) catch return error.OutOfMemory;
+            return error.RegistryUnavailable;
+        },
+    };
+    const response = fetch.putBytes(&session, url, &headers, body, .index) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.Canceled => return error.Canceled,
+        else => {
+            _ = try uploadFailure(a, &session, diagnostics, "index", url, null, null);
+            return error.RegistryUnavailable;
+        },
+    };
+    if (!isSuccessStatus(response.status)) {
+        _ = try uploadFailure(a, &session, diagnostics, "index", url, response.status, response.body);
+        return error.RegistryUnavailable;
+    }
 }
 
 fn uploadFailure(
@@ -748,4 +813,226 @@ fn buildVersionRecord(
 
 fn stringLessThan(_: void, left: []const u8, right: []const u8) bool {
     return std.mem.order(u8, left, right) == .lt;
+}
+
+/// `index.json` の本文を作る。既存索引があれば同一 package id の record を
+/// 置き換え、無ければ追加する（決定的な順序で出力する）。
+///
+/// 索引は「package の一覧と公開済み version」を持つ。version record の本文は
+/// 持たない（consumer は version record を個別に取得する）ため、ここでは
+/// `versions` の version 文字列だけを並べる。
+fn buildIndexWithPackage(
+    a: Allocator,
+    manifest: *const manifest_mod.Manifest,
+    owner_name: []const u8,
+    registry_url: []const u8,
+    version_text: []const u8,
+    manifest_sha256: []const u8,
+    artifact_url: []const u8,
+    artifact_sha256: []const u8,
+    existing_bytes: ?[]const u8,
+) anyerror![]u8 {
+    const package_name = manifest.package.name;
+    // `id` は宣言があれば Public ID、無ければ package 名で索引する。
+    // Public ID: manifest 宣言があればそれ、無ければ `registry:<url>` の
+    // identity から導出する（consumer の lock と同じ規則）。
+    const public_id: []const u8 = manifest.package.id orelse blk: {
+        const identity_text = try std.fmt.allocPrint(a, "registry:{s}", .{registry_url});
+        defer a.free(identity_text);
+        var digest: [32]u8 = undefined;
+        std.crypto.hash.sha2.Sha256.hash(identity_text, &digest, .{});
+        const hex = std.fmt.bytesToHex(digest, .lower);
+        break :blk try std.fmt.allocPrint(a, "pkg:{s}", .{hex[0..32]});
+    };
+    defer if (manifest.package.id == null) a.free(public_id);
+
+    // 既存索引から package 一覧を取り出す（壊れていれば失敗させる）。
+    var entries: std.ArrayList(IndexEntry) = .empty;
+    defer {
+        for (entries.items) |*entry| entry.deinit(a);
+        entries.deinit(a);
+    }
+    if (existing_bytes) |bytes| {
+        if (bytes.len > 0) {
+            var parsed = try std.json.parseFromSlice(std.json.Value, a, bytes, .{});
+            defer parsed.deinit();
+            if (parsed.value != .object) return error.InvalidRegistryIndex;
+            const packages_value = parsed.value.object.get("packages") orelse return error.InvalidRegistryIndex;
+            if (packages_value != .array) return error.InvalidRegistryIndex;
+            for (packages_value.array.items) |item| {
+                if (item != .object) return error.InvalidRegistryIndex;
+                // package record の `schemaVersion` も必須（registry の
+                // package_fields 契約）。
+                const record_schema = item.object.get("schemaVersion") orelse return error.InvalidRegistryIndex;
+                if (record_schema != .integer or record_schema.integer != 1) return error.InvalidRegistryIndex;
+                const id = jsonStringOf(item.object.get("id")) orelse return error.InvalidRegistryIndex;
+                const name = jsonStringOf(item.object.get("name")) orelse return error.InvalidRegistryIndex;
+                const owner = jsonStringOf(item.object.get("owner")) orelse return error.InvalidRegistryIndex;
+                const human_id = jsonStringOf(item.object.get("humanId"));
+                var versions: std.ArrayList(IndexVersion) = .empty;
+                errdefer versions.deinit(a);
+                if (item.object.get("versions")) |versions_value| {
+                    if (versions_value != .array) return error.InvalidRegistryIndex;
+                    for (versions_value.array.items) |version_item| {
+                        if (version_item != .object) return error.InvalidRegistryIndex;
+                        const text = jsonStringOf(version_item.object.get("version")) orelse return error.InvalidRegistryIndex;
+                        const hash = jsonStringOf(version_item.object.get("manifestHash")) orelse return error.InvalidRegistryIndex;
+                        // artifacts.source の url/sha256 を引き継ぐ（無い
+                        // 索引は consumer が解決できないため失敗させる）。
+                        const artifacts = version_item.object.get("artifacts") orelse return error.InvalidRegistryIndex;
+                        if (artifacts != .object) return error.InvalidRegistryIndex;
+                        const source = artifacts.object.get("source") orelse return error.InvalidRegistryIndex;
+                        if (source != .object) return error.InvalidRegistryIndex;
+                        const existing_url = jsonStringOf(source.object.get("url")) orelse return error.InvalidRegistryIndex;
+                        // 索引には `sha256:<hex>` で書く。既存索引を読み直す
+                        // ときは前置を落として内部表現（生 hex）へ揃える。
+                        const existing_sha_raw = jsonStringOf(source.object.get("sha256")) orelse return error.InvalidRegistryIndex;
+                        const existing_sha = if (std.mem.startsWith(u8, existing_sha_raw, "sha256:"))
+                            existing_sha_raw["sha256:".len..]
+                        else
+                            existing_sha_raw;
+                        try versions.append(a, .{
+                            .version = try a.dupe(u8, text),
+                            .manifest_hash = try a.dupe(u8, hash),
+                            .artifact_url = try a.dupe(u8, existing_url),
+                            .artifact_sha256 = try a.dupe(u8, existing_sha),
+                        });
+                    }
+                }
+                try entries.append(a, .{
+                    .id = try a.dupe(u8, id),
+                    .name = try a.dupe(u8, name),
+                    .owner = try a.dupe(u8, owner),
+                    .human_id = if (human_id) |value| try a.dupe(u8, value) else null,
+                    .versions = versions,
+                });
+            }
+        }
+    }
+
+    // 同一 package id の record があれば version を足す（重複は追加しない）。
+    var found = false;
+    for (entries.items) |*entry| {
+        if (public_id.len > 0 and !std.mem.eql(u8, entry.id, public_id)) continue;
+        if (public_id.len == 0 and !std.mem.eql(u8, entry.name, package_name)) continue;
+        found = true;
+        var listed = false;
+        for (entry.versions.items) |existing_version| {
+            if (std.mem.eql(u8, existing_version.version, version_text)) {
+                listed = true;
+                break;
+            }
+        }
+        if (!listed) try entry.versions.append(a, .{
+            .version = try a.dupe(u8, version_text),
+            .manifest_hash = try a.dupe(u8, manifest_sha256),
+            .artifact_url = try a.dupe(u8, artifact_url),
+            .artifact_sha256 = try a.dupe(u8, artifact_sha256),
+        });
+        std.mem.sort(IndexVersion, entry.versions.items, {}, struct {
+            fn lessThan(_: void, left: IndexVersion, right: IndexVersion) bool {
+                return std.mem.lessThan(u8, left.version, right.version);
+            }
+        }.lessThan);
+        break;
+    }
+    if (!found) {
+        var versions: std.ArrayList(IndexVersion) = .empty;
+        errdefer versions.deinit(a);
+        try versions.append(a, .{
+            .version = try a.dupe(u8, version_text),
+            .manifest_hash = try a.dupe(u8, manifest_sha256),
+            .artifact_url = try a.dupe(u8, artifact_url),
+            .artifact_sha256 = try a.dupe(u8, artifact_sha256),
+        });
+        try entries.append(a, .{
+            .id = try a.dupe(u8, if (public_id.len > 0) public_id else package_name),
+            .name = try a.dupe(u8, package_name),
+            .owner = try a.dupe(u8, owner_name),
+            .human_id = null,
+            .versions = versions,
+        });
+    }
+    std.mem.sort(IndexEntry, entries.items, {}, struct {
+        fn lessThan(_: void, left: IndexEntry, right: IndexEntry) bool {
+            return std.mem.lessThan(u8, left.id, right.id);
+        }
+    }.lessThan);
+
+    var out = std.Io.Writer.Allocating.init(a);
+    errdefer out.deinit();
+    const writer = &out.writer;
+    try writer.writeAll("{\"schemaVersion\":1,\"packages\":[");
+    for (entries.items, 0..) |entry, index| {
+        if (index > 0) try writer.writeByte(',');
+        try writer.writeAll("{\"schemaVersion\":1,\"id\":");
+        try std.json.Stringify.value(entry.id, .{}, writer);
+        try writer.writeAll(",\"name\":");
+        try std.json.Stringify.value(entry.name, .{}, writer);
+        try writer.writeAll(",\"owner\":");
+        try std.json.Stringify.value(entry.owner, .{}, writer);
+        if (entry.human_id) |human_id| {
+            try writer.writeAll(",\"humanId\":");
+            try std.json.Stringify.value(human_id, .{}, writer);
+        }
+        try writer.writeAll(",\"versions\":[");
+        for (entry.versions.items, 0..) |version, version_index| {
+            if (version_index > 0) try writer.writeByte(',');
+            try writer.writeAll("{\"schemaVersion\":1,\"version\":");
+            try std.json.Stringify.value(version.version, .{}, writer);
+            try writer.writeAll(",\"manifestHash\":");
+            try std.json.Stringify.value(version.manifest_hash, .{}, writer);
+            try writer.writeAll(",\"artifacts\":{\"source\":{\"kind\":\"source\",\"type\":\".npkg\",\"sha256\":");
+            // `artifact_sha256` は生 hex（`Report` の契約）。registry schema は
+            // `sha256:<hex>` 表記を要求する。
+            const artifact_hash = try std.fmt.allocPrint(a, "sha256:{s}", .{version.artifact_sha256});
+            defer a.free(artifact_hash);
+            try std.json.Stringify.value(artifact_hash, .{}, writer);
+            try writer.writeAll(",\"url\":");
+            try std.json.Stringify.value(version.artifact_url, .{}, writer);
+            try writer.writeAll("}}}");
+        }
+        try writer.writeAll("]}");
+    }
+    try writer.writeAll("]}");
+    return out.toOwnedSlice();
+}
+
+const IndexVersion = struct {
+    version: []const u8,
+    manifest_hash: []const u8,
+    /// 公開済み artifact の URL。索引の version から consumer が直接辿れる
+    /// よう、version record と同じ `artifacts.source` を持つ。
+    artifact_url: []const u8,
+    artifact_sha256: []const u8,
+
+    fn deinit(self: *IndexVersion, a: Allocator) void {
+        a.free(self.version);
+        a.free(self.manifest_hash);
+        a.free(self.artifact_url);
+        a.free(self.artifact_sha256);
+    }
+};
+
+const IndexEntry = struct {
+    id: []const u8,
+    name: []const u8,
+    owner: []const u8,
+    human_id: ?[]const u8,
+    versions: std.ArrayList(IndexVersion),
+
+    fn deinit(self: *IndexEntry, a: Allocator) void {
+        a.free(self.id);
+        a.free(self.name);
+        a.free(self.owner);
+        if (self.human_id) |value| a.free(value);
+        for (self.versions.items) |*version| version.deinit(a);
+        self.versions.deinit(a);
+    }
+};
+
+fn jsonStringOf(value: ?std.json.Value) ?[]const u8 {
+    const item = value orelse return null;
+    if (item != .string) return null;
+    return item.string;
 }
