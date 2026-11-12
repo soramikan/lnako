@@ -58,6 +58,21 @@ function createWorkDir() {
   fail("作業ディレクトリを作成できません");
 }
 
+// native plugin fixture は `native-plugin-fixture` step でのみ install される
+// （`zig build` の既定 install には含まれない）。CI の job によっては事前に
+// ビルドされていないため、E2E 自身が必要ならビルドする
+// （check_native_plugin_abi.mjs と同じ方針）。
+function ensurePluginFixture() {
+  if (process.env.LNAKO_SKIP_FIXTURE_BUILD === "1") return;
+  const result = run("zig", ["build", "native-plugin-fixture"]);
+  if (result.status !== 0) fail(`native plugin fixture のビルドに失敗しました（exit=${result.status}）\n${result.stdout}${result.stderr}`);
+  const binary = path.join(root, "zig-out", "bin", `lnako${executableSuffix}`);
+  if (!fs.existsSync(binary)) {
+    const built = run("zig", ["build"]);
+    if (built.status !== 0) fail(`lnako 本体のビルドに失敗しました（exit=${built.status}）\n${built.stdout}${built.stderr}`);
+  }
+}
+
 function findPlugin(namePattern) {
   const found = [];
   const walk = (directory) => {
@@ -116,6 +131,7 @@ function validateBundleMatchesSbom(payloadRoot, sbomPath) {
 async function main() {
   const compiler = path.join(root, "zig-out", "bin", `lnako${executableSuffix}`);
   if (!fs.existsSync(compiler)) fail(`compilerがありません: ${compiler}（先に zig build を実行してください）`);
+  ensurePluginFixture();
   const plugin = findPlugin(/lnako[_-]test[_-]plugin/i);
 
   const work = createWorkDir();
@@ -173,7 +189,16 @@ fastmath__plugin__ネイティブ加算(2,3)を表示
     const payloadRoot = `${output}.deps`;
     if (!fs.existsSync(payloadRoot)) fail(`payload directoryがありません: ${payloadRoot}`);
     const manifest = validateBundleMatchesSbom(payloadRoot, sbomPath);
+    // project 自身が package として同梱されていないこと（entry の path も
+    // module_paths に載るため、境界が無いと project 全体が payload へ漏れる）。
+    if (manifest.packages.some((item) => item.name === "app")) fail("project 自身が同梱 package に含まれています");
+    const expected = ["fastmath", "puremath"];
+    const actual = manifest.packages.map((item) => item.name).sort();
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+      fail(`同梱 package が想定と異なります: expected=${expected.join(",")} actual=${actual.join(",")}`);
+    }
     const fastmath = manifest.packages.find((item) => item.name === "fastmath");
+    if (!fastmath) fail("fastmath が同梱 package にありません");
     if (fastmath.license !== "NOASSERTION") fail(`fastmath の license が NOASSERTION ではありません: ${fastmath.license}`);
     console.log(`bundle-deps E2E: build + bundle.json/SBOM 一致 OK（packages: ${manifest.packages.map((item) => item.name).join(", ")}）`);
 

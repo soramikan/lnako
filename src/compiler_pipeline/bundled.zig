@@ -30,6 +30,20 @@ pub const unknown_license = "NOASSERTION";
 /// 黙って同梱物から落とさず `error.MissingBundledPackageMetadata` で
 /// 失敗する。
 pub fn collect(allocator: std.mem.Allocator, io: std.Io, program: *lnako.ir.nako_ir.Program) !void {
+    return collectForProject(allocator, io, program, null);
+}
+
+/// `project_root` は `--bundle-deps` の同梱対象から除外する project 自身の
+/// root（null は境界なし）。project の entry やローカル module は
+/// `module_paths` に絶対 path で載るため、境界が無いと project 自身の
+/// `nako.toml` が package として同梱され、project 全体（`.nako/`・秘密
+/// file 含む）が payload へ漏れる。
+pub fn collectForProject(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    program: *lnako.ir.nako_ir.Program,
+    project_root: ?[]const u8,
+) !void {
     const bundle_nako3 = bundle_deps_enabled;
     if (program.javascript_modules.len == 0 and (!bundle_nako3 or program.module_paths.len == 0)) {
         program.bundled_packages = &.{};
@@ -66,10 +80,10 @@ pub fn collect(allocator: std.mem.Allocator, io: std.Io, program: *lnako.ir.nako
     // payload へ複製される artifact）。
     if (bundle_nako3) {
         for (program.module_paths) |module_path| {
-            try registerNako3Root(allocator, arena, &roots, &packages, module_path);
+            try registerNako3Root(allocator, io, arena, &roots, &packages, module_path, project_root);
         }
         for (program.native_plugin_paths) |plugin_path| {
-            try registerNako3Root(allocator, arena, &roots, &packages, plugin_path);
+            try registerNako3Root(allocator, io, arena, &roots, &packages, plugin_path, project_root);
         }
     }
 
@@ -144,24 +158,57 @@ const Builder = struct {
 /// ない module（project 自身の entry や直接 path import）は同梱対象外。
 fn registerNako3Root(
     allocator: std.mem.Allocator,
+    io: std.Io,
     arena: std.mem.Allocator,
     roots: *std.StringHashMapUnmanaged(usize),
     packages: *std.ArrayListUnmanaged(Builder),
     module_path: []const u8,
+    project_root: ?[]const u8,
 ) !void {
-    const root = try findPackageRoot(arena, module_path) orelse return;
+    const root = try findPackageRoot(arena, io, module_path, project_root) orelse return;
+    // project 自身の root は同梱対象外（境界チェックの二重防御）。
+    if (project_root) |boundary| {
+        if (samePath(io, arena, root, boundary)) return;
+    }
     const entry = relativeEntry(root, module_path) orelse return;
     try registerRoot(allocator, arena, roots, packages, root, .nako, entry);
+}
+
+/// 2 つの path が同一 directory を指すか。末尾 separator を無視した字句
+/// 比較に加え、実体 path での比較も行う。`/tmp` と `/private/tmp` の
+/// ように symlink を挟むと同じ directory でも字句が異なるため、字句一致
+/// だけで判定すると project 境界を見落として project 全体を同梱する。
+fn samePath(io: std.Io, arena: std.mem.Allocator, left: []const u8, right: []const u8) bool {
+    var a = left;
+    var b = right;
+    while (a.len > 1 and (a[a.len - 1] == '/' or a[a.len - 1] == std.fs.path.sep)) a = a[0 .. a.len - 1];
+    while (b.len > 1 and (b[b.len - 1] == '/' or b[b.len - 1] == std.fs.path.sep)) b = b[0 .. b.len - 1];
+    if (std.mem.eql(u8, a, b)) return true;
+    // realpath での比較。解決できない（削除済み等）場合は字句判定に委ねる。
+    const real_a = std.Io.Dir.cwd().realPathFileAlloc(io, a, arena) catch return false;
+    const real_b = std.Io.Dir.cwd().realPathFileAlloc(io, b, arena) catch return false;
+    return std.mem.eql(u8, real_a, real_b);
 }
 
 /// `module_path` から上へ辿り、`nako.toml` を持つ最内 directory を返す。
 /// 見つからなければ null。directory の読み取り失敗は package root の不在と
 /// 同じ扱いにする（上へ継続）。
-fn findPackageRoot(arena: std.mem.Allocator, module_path: []const u8) !?[]const u8 {
+fn findPackageRoot(
+    arena: std.mem.Allocator,
+    io: std.Io,
+    module_path: []const u8,
+    project_root: ?[]const u8,
+) !?[]const u8 {
     var directory = std.fs.path.dirname(module_path) orelse return null;
     while (true) {
+        // project 自身の root に達したら打ち切る。境界が無いと monorepo root
+        // や $HOME のような無関係な祖先 dir を package root として拾い、
+        // その木全体を payload へ複製してしまう。
+        if (project_root) |boundary| {
+            if (samePath(io, arena, directory, boundary)) return null;
+        }
         const manifest = try std.fs.path.join(arena, &.{ directory, "nako.toml" });
-        if (manifestExists(manifest)) return directory;
+        if (manifestExists(io, manifest)) return directory;
         const parent = std.fs.path.dirname(directory) orelse return null;
         if (parent.len == directory.len) return null;
         directory = parent;
@@ -169,8 +216,7 @@ fn findPackageRoot(arena: std.mem.Allocator, module_path: []const u8) !?[]const 
 }
 
 /// `nako.toml` の存在確認。`--bundle-deps` なしでは呼ばれない。
-fn manifestExists(path: []const u8) bool {
-    const io = std.Io.Threaded.global_single_threaded.io();
+fn manifestExists(io: std.Io, path: []const u8) bool {
     var file = std.Io.Dir.cwd().openFile(io, path, .{}) catch return false;
     file.close(io);
     return true;

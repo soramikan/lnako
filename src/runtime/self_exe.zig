@@ -45,6 +45,11 @@ pub fn resolveMarker(
 ) !?[]u8 {
     if (!std.mem.startsWith(u8, payload, marker)) return null;
     const rest = payload[marker.len..];
+    // marker 以降は payload directory 配下に留まることを要求する。`..` で
+    // `<out>.deps/` の外（任意の共有 library）へ出る指定は解決しない。
+    // 現状 marker は build 時にのみ生成されるが、path を組み立てる側が
+    // 増えても脱出経路を作らないようここで閉じる。
+    if (!restIsContained(rest)) return error.PayloadPathEscapesPayload;
     const executable = selfExecutablePathAlloc(allocator, io) catch return error.SelfExecutablePathUnavailable;
     defer allocator.free(executable);
     const joined = try std.fmt.allocPrint(allocator, "{s}{s}", .{ executable, payload_suffix });
@@ -53,10 +58,23 @@ pub fn resolveMarker(
     return with_rest;
 }
 
+/// marker 以降の相対 path が payload directory 内に留まるか。absolute と
+/// `..` segment を拒否する（`.` と空 segment は許容）。
+fn restIsContained(rest: []const u8) bool {
+    if (rest.len == 0) return false;
+    if (std.fs.path.isAbsolute(rest)) return false;
+    var iterator = std.mem.splitScalar(u8, rest, '/');
+    while (iterator.next()) |segment| {
+        if (std.mem.eql(u8, segment, "..")) return false;
+    }
+    return true;
+}
+
 fn readSelfExeLink(allocator: std.mem.Allocator, io: std.Io) ![]u8 {
     var buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    // readLink は書き込んだ byte 数を返す（[]u8 ではない）。
     const length = try std.Io.Dir.cwd().readLink(io, "/proc/self/exe", &buffer);
-    return allocator.dupe(u8, length);
+    return allocator.dupe(u8, buffer[0..length]);
 }
 
 fn nsExecutablePath(allocator: std.mem.Allocator, io: std.Io) ![]u8 {
@@ -104,6 +122,19 @@ test "resolveMarkerはmarker以外を解決しない" {
     const io = std.testing.io;
     try std.testing.expect((try resolveMarker(allocator, io, "/absolute/lib.so", "@self/", ".deps")) == null);
     try std.testing.expect((try resolveMarker(allocator, io, "./relative/lib.so", "@self/", ".deps")) == null);
+}
+
+test "resolveMarkerはpayload外へ出る指定を拒否する" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    // `..` による脱出と absolute path は payload 内に留まらない。
+    try std.testing.expectError(error.PayloadPathEscapesPayload, resolveMarker(allocator, io, "@self/../../etc/lib.so", "@self/", ".deps"));
+    try std.testing.expectError(error.PayloadPathEscapesPayload, resolveMarker(allocator, io, "@self/a/../../b.so", "@self/", ".deps"));
+    try std.testing.expectError(error.PayloadPathEscapesPayload, resolveMarker(allocator, io, "@self//abs.so", "@self/", ".deps"));
+    // 通常の相対は通る。
+    const ok = (try resolveMarker(allocator, io, "@self/pkg/sub/plugin.so", "@self/", ".deps")) orelse return error.TestUnexpectedResult;
+    defer allocator.free(ok);
+    try std.testing.expect(std.mem.endsWith(u8, ok, ".deps/pkg/sub/plugin.so"));
 }
 
 test "resolveMarkerは実行ファイル隣接のpayloadへ解決する" {

@@ -191,7 +191,27 @@ pub fn run(
             // 同梱対象にする（collectBundledPackages 内の拡張モード）。
             compiler_pipeline.bundled.bundle_deps_enabled = options.bundle_deps;
             if (options.bundle_deps or (options.compat_js and compat_backend == .aot)) {
-                compiler_pipeline.collectBundledPackages(allocator, io, &ir_program) catch |err| {
+                // `--bundle-deps` は project 自身を同梱対象から除外する。
+                // entry とローカル module も module_paths に載るため、境界を
+                // 渡さないと project 全体が payload へ複製される。
+                var project_boundary: ?[]u8 = null;
+                defer if (project_boundary) |root| allocator.free(root);
+                if (options.bundle_deps) {
+                    var rejected = false;
+                    var writable_warning = false;
+                    project_boundary = lnako.package.import_resolver.findProjectRootDetailed(
+                        allocator,
+                        io,
+                        options.input,
+                        &rejected,
+                        prep.writableMode(init.environ_map),
+                        &writable_warning,
+                    ) catch |err| blk: {
+                        if (err == error.OutOfMemory) return err;
+                        break :blk null;
+                    };
+                }
+                compiler_pipeline.collectBundledPackagesForProject(allocator, io, &ir_program, project_boundary) catch |err| {
                     try stderr.print("build: 同梱packageのmetadataを読めませんでした: {s}\n", .{@errorName(err)});
                     try stderr.flush();
                     std.process.exit(1);
@@ -669,4 +689,14 @@ fn rewritePluginMarkers(
         }
     }
     ir_program.native_plugin_paths = try rewritten.toOwnedSlice(arena);
+    // `native_plugin_packages` も同じ marker へ揃える。install と AOT emitter
+    // は path 一致で namespace を対応付けるため、ここを絶対 path のまま
+    // 残すと namespaces が空になり、修飾名の命令が登録されない（移動後の
+    // 生成物で `{ns}__{name}` 呼出しが全滅する）。
+    var rewritten_packages: std.ArrayListUnmanaged(lnako.ir.nako_ir.NativePluginPackage) = .empty;
+    for (ir_program.native_plugin_packages) |package| {
+        const path = if (try compiler_pipeline.bundleDeps.markerFor(arena, packages, package.path)) |marker| marker else package.path;
+        try rewritten_packages.append(arena, .{ .path = path, .namespace = package.namespace });
+    }
+    ir_program.native_plugin_packages = try rewritten_packages.toOwnedSlice(arena);
 }
