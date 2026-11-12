@@ -186,6 +186,9 @@ fastmath__plugin__ネイティブ加算(2,3)を表示
     const output = path.join(work, "app-bin");
     const sbomPath = path.join(work, "app-bin.spdx.json");
     runChecked(compiler, ["build", "main.nako3", "-o", output, "--bundle-deps", "--sbom", sbomPath], "build --bundle-deps --sbom", { cwd: app });
+    // リンカは Windows で `-o` の値に `.exe` を付けることがある。payload 名は
+    // 常に `-o` 値 + `.deps`（loader も suffix を落として解決する）。
+    const executablePath = fs.existsSync(`${output}${executableSuffix}`) ? `${output}${executableSuffix}` : output;
     const payloadRoot = `${output}.deps`;
     if (!fs.existsSync(payloadRoot)) fail(`payload directoryがありません: ${payloadRoot}`);
     const manifest = validateBundleMatchesSbom(payloadRoot, sbomPath);
@@ -204,7 +207,7 @@ fastmath__plugin__ネイティブ加算(2,3)を表示
 
     // native plugin path が marker 化されていること（build 機の絶対 path を
     // 埋め込まない = 移動可能の前提）。
-    const image = fs.readFileSync(output);
+    const image = fs.readFileSync(executablePath);
     if (!image.includes(Buffer.from("@self/"))) fail("生成物に @self/ marker がありません");
     if (image.includes(Buffer.from(path.join(work, "app", "packages")))) {
       fail("生成物に build 機の絶対 path が残っています");
@@ -213,10 +216,11 @@ fastmath__plugin__ネイティブ加算(2,3)を表示
     // --- 移動 E2E: 空白・日本語入りの別ディレクトリへ生成物と payload だけ
     // コピーし、元 project 状態（.nako・packages・manifest）を退避してから
     // 別 cwd で実行する。
-    const moved = path.join(work, "移動 先", "prog");
+    const movedBase = path.join(work, "移動 先", "prog");
+    const moved = `${movedBase}${executableSuffix}`;
     fs.mkdirSync(path.dirname(moved), { recursive: true });
-    fs.copyFileSync(output, moved);
-    fs.cpSync(payloadRoot, `${moved}.deps`, { recursive: true });
+    fs.copyFileSync(executablePath, moved);
+    fs.cpSync(payloadRoot, `${movedBase}.deps`, { recursive: true });
     const parked = path.join(work, "parked-project-state");
     fs.mkdirSync(parked);
     fs.renameSync(path.join(app, ".nako"), path.join(parked, "nako-env"));
@@ -235,9 +239,9 @@ fastmath__plugin__ネイティブ加算(2,3)を表示
     // 実際に payload を使っている証拠。build 機の path へ fallback しない）。
     const dylib = manifest.packages.map((item) => item.name === "fastmath" ? path.join(payloadRoot, item.directory) : null)
       .filter(Boolean)[0];
-    const pluginArtifact = fs.readdirSync(path.join(`${moved}.deps`, path.basename(dylib)))
+    const pluginArtifact = fs.readdirSync(path.join(`${movedBase}.deps`, path.basename(dylib)))
       .find((name) => name.endsWith(pluginExtension));
-    fs.rmSync(path.join(`${moved}.deps`, path.basename(dylib), pluginArtifact));
+    fs.rmSync(path.join(`${movedBase}.deps`, path.basename(dylib), pluginArtifact));
     const broken = run(moved, [], { cwd: work });
     if (broken.status === 0 || !`${broken.stdout}${broken.stderr}`.includes("NativePluginOpenFailed")) {
       fail(`payload から plugin を消しても明示エラーになりません: ${broken.stdout}${broken.stderr}`);
