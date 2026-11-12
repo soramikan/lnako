@@ -154,7 +154,7 @@ Project [#2](https://github.com/users/soramikan/projects/2)、label `package-sys
 補足:
 
 - `lnako add --npm` は未対応です。npm 依存は `nako.toml` の `[dependencies.npm]` へ直接宣言し、`lnako lock` で解決します。
-- `lnako package` の操作は `build`・`verify`・`cache` だけです。`publish` は未実装です。
+- `lnako package` の操作は `build`・`verify`・`cache`・`publish` です。`publish` は既定 dry-run で、`--no-dry-run` と `--registry` を明示したときだけ PUT します（#252）。
 - ESM-only の path 依存（`esm` だけを宣言したパッケージ）を lock で解決するには、`compat-js = true` を宣言した profile を置きます。
 - npm の materialize は Node.js・npm CLI を使いません。cache 欠落・検証不一致時は `--offline` なら失敗し、online なら lock の `url` から tarball を取得して lock の `sha256` を検証したうえで cache へ格納して materialize します（#53）。再取得できるのは http/https の url だけで、平文 http は loopback に限ります。
 - 初回 P0 の主鎖は #52 残ゲートと #53 残を並行しつつ、#50 残ゲート → #54 → #55 → #56 → #57 → #58/#61 です。
