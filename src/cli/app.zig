@@ -127,10 +127,11 @@ pub fn run(
                 std.process.exit(2);
             }
             // SBOM は「生成物へ同梱した npm/ESM package」の一覧なので、
-            // その同梱を行う compat AOT だけで意味を持つ。
+            // その同梱を行う compat AOT だけで意味を持つ。`--bundle-deps` は
+            // 通常 AOT でも `.nako3` 依存を同梱するため、`--sbom` 併用を許す。
             const wants_sbom = options.sbom != null;
-            if (wants_sbom and !(options.compat_js and compat_backend == .aot)) {
-                try stderr.writeAll("build: --sbomは--compat-js --backend aotと併用してください\n");
+            if (wants_sbom and !(options.compat_js and compat_backend == .aot) and !options.bundle_deps) {
+                try stderr.writeAll("build: --sbomは--compat-js --backend aotまたは--bundle-depsと併用してください\n");
                 try stderr.flush();
                 std.process.exit(2);
             }
@@ -148,6 +149,13 @@ pub fn run(
                     try stderr.flush();
                     std.process.exit(2);
                 }
+            }
+            // `--bundle-deps` は embedded backend（単一 file 同梱実行ファイル）
+            // では payload directory を持てないため対象外。
+            if (options.bundle_deps and options.compat_js and compat_backend == .embedded) {
+                try stderr.writeAll("build: --bundle-depsは--compat-js --backend embeddedでは使えません（通常AOTまたは--compat-js --backend aotで使用してください）\n");
+                try stderr.flush();
+                std.process.exit(2);
             }
             const extension_mode = lnako.semantic.module_graph.extensionForcedMode(options.input);
             if ((extension_mode.dncl and options.forced_mode.dncl2) or (extension_mode.dncl2 and options.forced_mode.dncl)) {
@@ -179,9 +187,40 @@ pub fn run(
             // 生成物へ source を同梱した package の metadata を IR に記録する
             // （ESM manifest の packages と --sbom の単一の源）。読み取りは
             // build 時 FS に対して行い、生成物の実行時には不要。
-            if (options.compat_js and compat_backend == .aot) {
+            // `--bundle-deps` は `.nako3` 依存（source-only / native plugin）も
+            // 同梱対象にする（collectBundledPackages 内の拡張モード）。
+            compiler_pipeline.bundled.bundle_deps_enabled = options.bundle_deps;
+            if (options.bundle_deps or (options.compat_js and compat_backend == .aot)) {
                 compiler_pipeline.collectBundledPackages(allocator, io, &ir_program) catch |err| {
                     try stderr.print("build: 同梱packageのmetadataを読めませんでした: {s}\n", .{@errorName(err)});
+                    try stderr.flush();
+                    std.process.exit(1);
+                };
+            }
+            // `--bundle-deps`: compile 前に payload を計画し、native plugin
+            // path を実行ファイル相対 marker へ書き換える（emitter が marker
+            // を生成物へ埋め込む）。payload の書き出しは codegen 成功後。
+            // plan 結果は compile 経路が共有する CLI arena を跨いで生存する
+            // 必要があるため page_allocator で確保する（process 終了までの
+            // 短命データで、compile 内の arena rollback/reuse と重ならない）。
+            var bundle_packages: ?[]compiler_pipeline.bundleDeps.BundlePackage = null;
+            var bundle_payload_root: ?[]u8 = null;
+            defer if (bundle_payload_root) |root| std.heap.page_allocator.free(root);
+            if (options.bundle_deps) {
+                const bundle_allocator = std.heap.page_allocator;
+                bundle_payload_root = compiler_pipeline.bundleDeps.payloadPath(bundle_allocator, options.output) catch |err| {
+                    try stderr.print("build: 依存packageの同梱に失敗しました: {s}\n", .{@errorName(err)});
+                    try stderr.flush();
+                    std.process.exit(1);
+                };
+                compiler_pipeline.bundleDeps.deletePayload(io, bundle_payload_root.?);
+                bundle_packages = compiler_pipeline.bundleDeps.plan(bundle_allocator, io, &ir_program) catch |err| {
+                    try stderr.print("build: 依存packageの同梱に失敗しました: {s}\n", .{@errorName(err)});
+                    try stderr.flush();
+                    std.process.exit(1);
+                };
+                rewritePluginMarkers(&ir_program, bundle_packages.?) catch |err| {
+                    try stderr.print("build: 依存packageの同梱に失敗しました: {s}\n", .{@errorName(err)});
                     try stderr.flush();
                     std.process.exit(1);
                 };
@@ -218,6 +257,22 @@ pub fn run(
                 std.process.exit(1);
             };
             try stdout.print("{s} を生成しました\n", .{options.output});
+            // `--bundle-deps`: 依存 package の file を `<out>.deps/` へ複製する
+            // （plan は compile 前に済ませてある。SBOM（併用時）は同梱物と
+            // 同じ `bundled_packages` を読む）。
+            if (options.bundle_deps) {
+                compiler_pipeline.bundleDeps.write(allocator, io, bundle_payload_root.?, bundle_packages.?) catch |err| {
+                    compiler_pipeline.bundleDeps.deletePayload(io, bundle_payload_root.?);
+                    if (bundle_packages) |packages| freeBundlePackages(std.heap.page_allocator, packages);
+                    bundle_packages = null;
+                    try stderr.print("build: 依存packageの同梱に失敗しました: {s}\n", .{@errorName(err)});
+                    try stderr.flush();
+                    std.process.exit(1);
+                };
+                if (bundle_packages) |packages| freeBundlePackages(std.heap.page_allocator, packages);
+                bundle_packages = null;
+                try stdout.print("{s} を生成しました（同梱payload）\n", .{bundle_payload_root.?});
+            }
             if (options.sbom) |sbom_path| {
                 compiler_pipeline.writeCompatSbom(allocator, io, sbom_path, &ir_program, options.output) catch |err| {
                     try stderr.print("build: SBOMの生成に失敗しました: {s}\n", .{@errorName(err)});
@@ -581,4 +636,37 @@ fn runToolchainCommand(
     }
     try stderr.print("toolchain: 不明な操作です: {s}（status|dir|install|update|remove）\n", .{verb});
     std.process.exit(2);
+}
+
+/// `plan` の結果を解放する。file の relative/source_path と files slice は
+/// `plan` 呼び出し側の allocator（CLI arena）で確保されている。
+fn freeBundlePackages(allocator: std.mem.Allocator, packages: []const compiler_pipeline.bundleDeps.BundlePackage) void {
+    for (packages) |item| {
+        for (item.files) |file| {
+            allocator.free(file.relative);
+            allocator.free(file.source_path);
+        }
+        allocator.free(item.files);
+    }
+    allocator.free(packages);
+}
+
+/// native plugin path を payload marker へ書き換える。package 配下に無い
+/// plugin は従来どおり build 機の絶対 path のまま残す（`--bundle-deps` の
+/// 対象外。同梱しない path を marker 化すると実行時に解決できない）。
+/// 書換後の slice は program arena に置く（IR と同じ lifetime）。
+fn rewritePluginMarkers(
+    ir_program: *lnako.ir.nako_ir.Program,
+    packages: []const compiler_pipeline.bundleDeps.BundlePackage,
+) !void {
+    const arena = ir_program.arena.allocator();
+    var rewritten: std.ArrayListUnmanaged([]const u8) = .empty;
+    for (ir_program.native_plugin_paths) |plugin_path| {
+        if (try compiler_pipeline.bundleDeps.markerFor(arena, packages, plugin_path)) |marker| {
+            try rewritten.append(arena, marker);
+        } else {
+            try rewritten.append(arena, plugin_path);
+        }
+    }
+    ir_program.native_plugin_paths = try rewritten.toOwnedSlice(arena);
 }

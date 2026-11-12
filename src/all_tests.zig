@@ -9,6 +9,7 @@ test {
     _ = @import("compiler_pipeline/compile.zig");
     _ = @import("compiler_pipeline/embedded.zig");
     _ = @import("compiler_pipeline/bundled.zig");
+    _ = @import("compiler_pipeline/bundle_deps.zig");
     _ = @import("compiler_pipeline/sbom.zig");
 
     _ = @import("host.zig");

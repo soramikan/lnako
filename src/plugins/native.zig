@@ -275,6 +275,16 @@ pub const State = struct {
     fn loadPlugin(self: *State, path: []const u8, namespaces: []const []const u8) !void {
         const allocator = self.allocator orelse return error.NativePluginStateUnavailable;
         for (self.plugins.items) |plugin| if (std.mem.eql(u8, plugin.path, path)) return;
+        // `--bundle-deps` の payload marker（`@self/<pkg>/<file>`）は実行
+        // ファイル自身の配置を基準へ解決する（cwd・起動方法に依存しない）。
+        // marker 以外の path は従来どおり（相対は cwd 基準）。
+        if (std.mem.startsWith(u8, path, nako_ir.self_marker)) {
+            const runtime_self = @import("../runtime/self_exe.zig");
+            const io = std.Io.Threaded.global_single_threaded.io();
+            const resolved = try runtime_self.resolveMarker(allocator, io, path, nako_ir.self_marker, ".deps");
+            defer allocator.free(resolved.?);
+            return self.loadPlugin(resolved.?, namespaces);
+        }
         var library = NativeLibrary.open(allocator, path) catch return error.NativePluginOpenFailed;
         errdefer library.close();
         const entry = library.lookup(EntryV1, "lnako_plugin_v1") orelse return error.NativePluginEntryMissing;

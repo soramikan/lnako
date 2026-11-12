@@ -55,6 +55,8 @@ pub const runtime = struct {
     pub const value = @import("runtime/value.zig");
     pub const operators = @import("runtime/operators.zig");
     pub const interpreter = @import("runtime/interpreter.zig");
+    /// 実行ファイル自身の path 解決（`--bundle-deps` の移動可能 loader）。
+    pub const self_exe = @import("runtime/self_exe.zig");
 };
 
 pub const compat = struct {
@@ -204,7 +206,7 @@ pub fn usage(writer: *std.Io.Writer) !void {
         \\lnako - なでしこ3ネイティブコンパイラ
         \\
         \\使い方:
-        \\  lnako build <file.nako3|.dncl|.dncl2> -o <output> [-O0..-O3] [--emit exe|obj|llvm-ir] [--llvm-dir <path>] [--compat-js [--backend embedded|aot] [--sbom <path>]]
+        \\  lnako build <file.nako3|.dncl|.dncl2> -o <output> [-O0..-O3] [--emit exe|obj|llvm-ir] [--llvm-dir <path>] [--compat-js [--backend embedded|aot] [--sbom <path>]] [--bundle-deps]
         \\  lnako run <file.nako3|.dncl|.dncl2> [--compat-js] [--dncl] [--dncl2] -- [arguments]
         \\  lnako check <file.nako3|.dncl|.dncl2> [--dncl] [--dncl2] [--package-cache-dir <path>]
         \\  lnako test <file.nako3|.dncl|.dncl2|directory> [--dncl] [--dncl2] [--package-cache-dir <path>]
@@ -224,6 +226,10 @@ pub fn usage(writer: *std.Io.Writer) !void {
         \\  lnako why <name> [--profile <name>] [--features <a,b>] [--locked]
         \\  lnako check [--locked] [--profile <name>] [--features <a,b>] [--no-default-features] [--json] [--strict-sharing]    プロジェクトの依存・環境・命令 metadata と feature 影響を検査（副作用なし）
         \\  lnako cache dir|clean [--package-cache-dir <path>]
+        \\
+        \\build の同梱オプション:
+        \\  --bundle-deps    依存 package（.nako3 source・native plugin artifact）を <out>.deps/ へ同梱する。
+        \\                   生成物を別環境へ移動しても payload だけで動く（--sbom と併用可）
         \\
         \\依存準備オプション（run/test/build で有効。lock/tree/why/check/add/remove/update でも対応するものを使用可）:
         \\  --locked         nako.lock を変更せず、不足・陳腐なら失敗（add/remove/update では使用不可）

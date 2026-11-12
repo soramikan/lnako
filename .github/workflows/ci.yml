@@ -829,6 +829,13 @@ jobs:
       - name: Differential package import cnako oracle
         if: matrix.task == 'native' && matrix.optimizationKey == 'O2'
         run: node tools/compare_package_import_oracle.mjs --no-build --oracle .cache/oracle/nadesiko3-3.7.24
+      # Issue #56: `build --bundle-deps` の生成物を別ディレクトリへ移動して
+      # 実行し、payload（native plugin・source-only 依存）と SBOM 一致を
+      # 検証する。native plugin fixture と正式 3 OS toolchain を使うため
+      # native route へ置く。
+      - name: Bundle deps E2E check
+        if: matrix.task == 'native' && matrix.optimizationKey == 'O2'
+        run: node tools/check_bundle_deps_e2e.mjs
       - name: Upload native AOT oracle artifact
         if: matrix.task == 'native' && always()
         continue-on-error: true
@@ -1104,6 +1111,10 @@ jobs:
       - name: Differential package import cnako oracle
         if: matrix.task == 'native' && matrix.fixtureShardIndex == 0 && matrix.optimizationKey == 'O2-O3'
         run: node tools/compare_package_import_oracle.mjs --no-build --oracle .cache/oracle/nadesiko3-3.7.24
+      # Issue #56: `build --bundle-deps` の移動可能 payload E2E（3 OS）。
+      - name: Bundle deps E2E check
+        if: matrix.task == 'native' && matrix.fixtureShardIndex == 0 && matrix.optimizationKey == 'O2-O3'
+        run: node tools/check_bundle_deps_e2e.mjs
       - name: Upload native AOT oracle artifact
         if: matrix.task == 'native' && always()
         continue-on-error: true
@@ -1357,6 +1368,10 @@ jobs:
       - name: Differential package import cnako oracle
         if: matrix.task == 'native' && matrix.fixtureShardIndex == 0 && matrix.optimizationKey == 'O2-O3'
         run: node tools/compare_package_import_oracle.mjs --no-build --oracle .cache/oracle/nadesiko3-3.7.24
+      # Issue #56: `build --bundle-deps` の移動可能 payload E2E（3 OS）。
+      - name: Bundle deps E2E check
+        if: matrix.task == 'native' && matrix.fixtureShardIndex == 0 && matrix.optimizationKey == 'O2-O3'
+        run: node tools/check_bundle_deps_e2e.mjs
       - name: Upload native AOT oracle artifact
         if: matrix.task == 'native' && always()
         continue-on-error: true

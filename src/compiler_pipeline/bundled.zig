@@ -8,6 +8,11 @@
 const std = @import("std");
 const lnako = @import("lnako");
 
+/// `--bundle-deps` で `.nako3` 依存（source-only / native plugin）も収集する
+/// 拡張モード。CLI が `--bundle-deps` 指定時だけ立てる（既存の compat AOT
+/// 経路では JS modules だけを収集する現状を変えない）。
+pub var bundle_deps_enabled: bool = false;
+
 const max_package_metadata_bytes: usize = 1024 * 1024;
 
 /// 宣言 license が無い package の SPDX 表現。SBOM では「未主張」を意味し、
@@ -17,15 +22,16 @@ pub const unknown_license = "NOASSERTION";
 /// `program.javascript_modules` の package root を一意化し、package 単位の
 /// metadata を `program.bundled_packages` へ記録する。
 ///
-/// 同じ ESM file を複数 package root が共有し得るため、`package_root`（実行時
-/// の代表 1 件）ではなく `package_roots`（全帰属）を使う。依存の出自は
-/// `package_owner` で判別し、npm instance は `package.json`、path 依存の ESM
-/// package は `nako.toml` だけを読む（path 依存に開発用 package.json が
-/// あっても npm 名/version/license/purl を混入させない）。
-/// 必要な manifest が無い root は、黙って同梱物から落とさず
-/// `error.MissingBundledPackageMetadata` で失敗する。
+/// `bundle_deps` が有効な場合は `.nako3` 依存（source-only / native plugin
+/// 含む）も同梱対象にする。module_graph は `.nako3` package module を
+/// `module_paths` と `package_root` でしか保持しないため、帰属は
+/// `module_paths[i]` が `package_root` 配下にあるかで判定する（JS modules
+/// の attribution 規約と同じ境界判定）。必要な manifest が無い root は、
+/// 黙って同梱物から落とさず `error.MissingBundledPackageMetadata` で
+/// 失敗する。
 pub fn collect(allocator: std.mem.Allocator, io: std.Io, program: *lnako.ir.nako_ir.Program) !void {
-    if (program.javascript_modules.len == 0) {
+    const bundle_nako3 = bundle_deps_enabled;
+    if (program.javascript_modules.len == 0 and (!bundle_nako3 or program.module_paths.len == 0)) {
         program.bundled_packages = &.{};
         return;
     }
@@ -50,6 +56,20 @@ pub fn collect(allocator: std.mem.Allocator, io: std.Io, program: *lnako.ir.nako
             const origin: Origin = if (attribution.npm) .npm else .nako;
             const entry: ?[]const u8 = relativeEntry(attribution.root, module.path);
             try registerRoot(allocator, arena, &roots, &packages, attribution.root, origin, entry);
+        }
+    }
+
+    // `--bundle-deps`: `.nako3` 依存 package（source-only / native plugin）を
+    // 収集する。module_paths の package module は package root 配下にある
+    // ので、JS attribution と同じ境界判定で root 相対 path を作る。native
+    // plugin は `native_plugin_paths` から root 配下のものを拾う（実行時に
+    // payload へ複製される artifact）。
+    if (bundle_nako3) {
+        for (program.module_paths) |module_path| {
+            try registerNako3Root(allocator, arena, &roots, &packages, module_path);
+        }
+        for (program.native_plugin_paths) |plugin_path| {
+            try registerNako3Root(allocator, arena, &roots, &packages, plugin_path);
         }
     }
 
@@ -116,6 +136,45 @@ const Builder = struct {
     origin: Origin = .unknown,
     entries: std.ArrayListUnmanaged([]const u8) = .empty,
 };
+
+/// `.nako3` / native plugin module の path から所属 package root を探して
+/// 登録する。module path から上へ辿り、`nako.toml` を持つ最初の directory
+/// を package root とする（`package_owner` 付き import edge の
+/// PackageInheritance.root と同じ「最内 package root」規約）。root が見つから
+/// ない module（project 自身の entry や直接 path import）は同梱対象外。
+fn registerNako3Root(
+    allocator: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    roots: *std.StringHashMapUnmanaged(usize),
+    packages: *std.ArrayListUnmanaged(Builder),
+    module_path: []const u8,
+) !void {
+    const root = try findPackageRoot(arena, module_path) orelse return;
+    const entry = relativeEntry(root, module_path) orelse return;
+    try registerRoot(allocator, arena, roots, packages, root, .nako, entry);
+}
+
+/// `module_path` から上へ辿り、`nako.toml` を持つ最内 directory を返す。
+/// 見つからなければ null。directory の読み取り失敗は package root の不在と
+/// 同じ扱いにする（上へ継続）。
+fn findPackageRoot(arena: std.mem.Allocator, module_path: []const u8) !?[]const u8 {
+    var directory = std.fs.path.dirname(module_path) orelse return null;
+    while (true) {
+        const manifest = try std.fs.path.join(arena, &.{ directory, "nako.toml" });
+        if (manifestExists(manifest)) return directory;
+        const parent = std.fs.path.dirname(directory) orelse return null;
+        if (parent.len == directory.len) return null;
+        directory = parent;
+    }
+}
+
+/// `nako.toml` の存在確認。`--bundle-deps` なしでは呼ばれない。
+fn manifestExists(path: []const u8) bool {
+    const io = std.Io.Threaded.global_single_threaded.io();
+    var file = std.Io.Dir.cwd().openFile(io, path, .{}) catch return false;
+    file.close(io);
+    return true;
+}
 
 /// `arena` に所有を移した metadata。`temporary` は parse/書式化の一時領域で、
 /// 返却前に解放できる。
