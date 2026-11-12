@@ -2,6 +2,7 @@ pub const compile = @import("compiler_pipeline/compile.zig");
 pub const embedded = @import("compiler_pipeline/embedded.zig");
 pub const bundled = @import("compiler_pipeline/bundled.zig");
 pub const bundle_deps = @import("compiler_pipeline/bundle_deps.zig");
+pub const dylib_deps = @import("compiler_pipeline/dylib_deps.zig");
 pub const sbom = @import("compiler_pipeline/sbom.zig");
 
 pub const compileInput = compile.compileInput;
@@ -15,3 +16,4 @@ pub const collectBundledPackagesForProject = bundled.collectForProject;
 pub const writeCompatSbom = sbom.write;
 /// `build --bundle-deps` の payload（`<out>.deps/`）を plan・書き出す。
 pub const bundleDeps = bundle_deps;
+pub const dylibDeps = dylib_deps;
