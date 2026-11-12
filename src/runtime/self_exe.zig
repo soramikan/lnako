@@ -58,7 +58,15 @@ pub fn resolveMarker(
     const payload_base = stripExecutableSuffix(executable);
     const joined = try std.fmt.allocPrint(allocator, "{s}{s}", .{ payload_base, payload_suffix });
     defer allocator.free(joined);
-    const with_rest = try std.fs.path.join(allocator, &.{ joined, rest });
+    // marker は `/` 区切りで書かれる。`std.fs.path.join` は component 内部の
+    // separator を変換しないため、Windows で `.deps\a/b.so` のような混在
+    // path になる。host の separator へ揃えてから結合する。
+    const normalized = try allocator.dupe(u8, rest);
+    defer allocator.free(normalized);
+    for (normalized) |*character| {
+        if (character.* == '/' and std.fs.path.sep != '/') character.* = std.fs.path.sep;
+    }
+    const with_rest = try std.fs.path.join(allocator, &.{ joined, normalized });
     return with_rest;
 }
 
