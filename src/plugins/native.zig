@@ -316,8 +316,10 @@ pub const State = struct {
             while (it.next()) |key| allocator.free(key.*);
             opened.deinit(allocator);
         }
-        var rounds: usize = 0;
-        while (pending.items.len > 0 and rounds < 8) : (rounds += 1) {
+        // 候補が尽きるまで処理する。循環は `opened`（既に開いた basename）で
+        // 止まるため、件数の上限は設けない（直接依存が 9 件以上ある plugin を
+        // 取りこぼさない）。
+        while (pending.items.len > 0) {
             const name = pending.orderedRemove(0);
             defer allocator.free(name);
             if (opened.contains(name)) continue;
@@ -350,7 +352,9 @@ pub const State = struct {
         out: *std.ArrayListUnmanaged([]const u8),
     ) !void {
         _ = self;
-        const bytes = std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(8 * 1024 * 1024)) catch return;
+        // build 時（`bundle_deps.zig`）は 256 MiB まで受理する。先読みでも
+        // 同じ上限を使い、受理した plugin の依存を読み落とさない。
+        const bytes = std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(256 * 1024 * 1024)) catch return;
         defer allocator.free(bytes);
         const found = readDependencyNames(allocator, bytes) catch return;
         defer {
