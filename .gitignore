@@ -14,3 +14,6 @@ benchmarks/comparison/results/*.md
 
 # Zig package cache for fetched dependencies
 zig-pkg/
+
+# 作業用 worktree（リポジトリ外の作業コピー。コミット対象外）
+.worktrees/

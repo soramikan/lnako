@@ -801,47 +801,33 @@ test "sync は構築中に nako.toml が変更されると環境を公開しな�
     const cache_root = try std.fs.path.join(testing.allocator, &.{ root, "cache" });
     defer testing.allocator.free(cache_root);
 
-    var stop = std.atomic.Value(bool).init(false);
-    var written = std.atomic.Value(bool).init(false);
-    const Watcher = struct {
+    // 公開直前の再照合の直前に `nako.toml` を書き換える。以前は別 thread の
+    // fs 監視で `.lnako-work-*` の出現を待っていたが、workspace の生成と
+    // 監視のタイミング次第で書込みが間に合わず flake した（Windows で頻発）。
+    // sync のテスト用フックで決定的に「変更後」の状態を作る。
+    const Hook = struct {
         root_path: []const u8,
-        stop_flag: *std.atomic.Value(bool),
-        wrote: *std.atomic.Value(bool),
-        fn run(self: *const @This()) void {
-            // sync.run の testing.io と直列化しないよう実 io を使う。
+        fn run(context: ?*anyopaque) void {
+            const self: *const @This() = @ptrCast(@alignCast(context.?));
             const wio = std.Io.Threaded.global_single_threaded.io();
-            var dir = std.Io.Dir.cwd().openDir(wio, self.root_path, .{ .iterate = true }) catch return;
+            var dir = std.Io.Dir.cwd().openDir(wio, self.root_path, .{}) catch return;
             defer dir.close(wio);
-            while (!self.stop_flag.load(.acquire)) {
-                var iterator = dir.iterate();
-                while (iterator.next(wio) catch null) |entry| {
-                    if (entry.kind == .directory and std.mem.startsWith(u8, entry.name, ".lnako-work-")) {
-                        dir.writeFile(wio, .{
-                            .sub_path = "nako.toml",
-                            .data = "[package]\nname = \"tampered\"\nversion = \"9.9.9\"\nlicense = \"MIT\"\n",
-                        }) catch {};
-                        self.wrote.store(true, .release);
-                        return;
-                    }
-                }
-            }
+            dir.writeFile(wio, .{
+                .sub_path = "nako.toml",
+                .data = "[package]\nname = \"tampered\"\nversion = \"9.9.9\"\nlicense = \"MIT\"\n",
+            }) catch {};
         }
     };
-    const watcher = Watcher{ .root_path = root, .stop_flag = &stop, .wrote = &written };
-    const thread = std.Thread.spawn(.{}, Watcher.run, .{&watcher}) catch null;
-    defer if (thread) |t| t.join();
-    defer stop.store(true, .release);
+    const hook = Hook{ .root_path = root };
 
     var list = diag.List.init(testing.allocator);
     defer list.deinit();
-    if (thread == null) return error.SkipZigTest;
     try testing.expectError(error.StaleLock, sync.run(testing.allocator, io, .{
         .project_root = root,
         .cache_root = cache_root,
+        .publish_hook = Hook.run,
+        .publish_hook_context = @constCast(&hook),
     }, &list));
-    // watcher が workspace 出現中に書込みに成功した（= 公開直前の
-    // 再照合が実行区間内だった）ことを確認する。
-    try testing.expect(written.load(.acquire));
     try testing.expectError(error.FileNotFound, temporary.dir.access(io, ".nako/environment.json", .{}));
 }
 
