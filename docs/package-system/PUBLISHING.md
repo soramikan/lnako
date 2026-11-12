@@ -64,16 +64,32 @@ lnako package verify out.npkg --compat-js --feature http
 - 成功時は `out.npkg: package-common-demo 1.0.0（5 ファイル、5 命令）— 検証 OK` のように収録数と公開命令数を表示します。失敗時は `E0xx` の診断コードと該当ファイルを表示します。
 - `verify` に `--json` はありません。
 
-## 4. 公開（publish）は未実装
+## 4. 公開（publish）
 
-現行バージョンに `lnako package publish` はありません。`package` の操作にも含まれないため、公開を自動化する手順はまだ提供していません。実装は Issue #57 の範囲で、予定している契約は次のとおりです。CLI 名とフラグは実装時に確定します。
+`lnako package publish <root>` は `.npkg` を組み立てて検証し、静的 registry へ冪等に PUT します。既定は dry-run で、外部を変更しません。
 
-- 公開前検証: metadata・hash・対象 artifact 一式・path 依存・license を `package verify` 相当で確認する。source-only パッケージには native ABI や OS 別 binary を要求しない。
-- dry-run: 外部を変更せず、検証結果だけを返す。
-- 再実行: 同じ版・同じ内容の再実行は成功とし、異なる内容による同版の上書きは拒否する。一部 upload の失敗から再実行で復旧できるようにする。
-- 状態表示: Release への公開とレジストリ登録の完了を別の状態として報告する。
-- 初期 backend: 作者の GitHub Releases へ `.npkg` 一式を upload し、静的レジストリの索引へ登録する（レジストリ側は nako-registry の範囲）。
-- 認証情報は CLI 引数へ直接書かず、環境変数または設定から渡す。
+```sh
+# 検証だけ（既定）
+lnako package publish .
+
+# 実際に PUT する
+lnako package publish . --no-dry-run --registry https://registry.example --owner myname
+```
+
+- 公開前検証: metadata・hash・対象 artifact 一式・path 依存・license を `package verify` 相当で確認します。宣言された全 runtime（未宣言なら `lnako`）について検証し、1 つでも失敗すれば公開しません。source-only パッケージに native ABI や OS 別 binary は要求しません。
+- dry-run は外部を変更せず、検証結果だけを返します。
+- 再実行は冪等です。同じ版・同じ内容の再実行は成功し（artifact の再 PUT をスキップ）、異なる内容による同版の上書きは拒否します。
+- 認証情報は CLI 引数へ直接書かず、環境変数 `LNAKO_REGISTRY_TOKEN` などから渡します。loopback 以外の平文 `http` registry は `--allow-plaintext-http` を明示した場合だけ許可します。
+- 失敗経路は fails-closed です。誤った token は 401 で拒否し version record を登録しません。npm/git/http 依存を持つ package は公開を拒否します（静的 registry の version record で表現できず、consumer の provider も解決しないため）。path 依存は `.npkg` へ同梱して自己完結させます。
+
+### 4.1 公開時に要求する target 適合
+
+**方針: 公開時に要求するのは「宣言された runtime すべてで検証が通ること」だけで、OS・CPU・ABI の網羅は要求しません。**
+
+- 根拠: なでしこ3 の package は source-only が第一級で、native/ESM artifact を持たない package が大半です。OS 別 binary の網羅を公開条件にすると、source-only package の公開が不可能になります。
+- 条件付き artifact（`when`・`min-os`・`libc` など）は、公開時点で「宣言された全条件が妥当か」だけを検査し、**全条件を満たす artifact 一式が揃っていることは要求しません**。ある OS 向け binary だけを公開し、後から追加する使い方を許容します。
+- OS 別 binary の充足は **利用者側の `package verify` / `lock` が対象環境で判定**します。対象条件を省略した `verify` は適合を証明できないため artifact を選択しません（§3）。
+- 将来、全 target の網羅を必須にする場合は新しい schema version で導入し、既存 package の公開を遡って壊さない方針とします。
 
 現時点で手動配布する場合は、`.npkg` と manifest を GitHub Releases へ置き、静的レジストリの索引を自前で更新する必要があります。索引のレイアウトと record の契約は[仕様案](SPECIFICATION.md)の第5節を参照してください。索引の適合例は `tools/package-system/conformance/valid/registry/`、`.npkg` メタデータの適合例は `tools/package-system/conformance/valid/npkg/` にあります。
 
