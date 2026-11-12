@@ -181,9 +181,50 @@ pub fn build(b: *std.Build) void {
     });
     const install_invalid_native_plugin_fixture = b.addInstallArtifact(invalid_native_plugin_fixture, .{});
 
+    // Issue #56: private 共有ライブラリへ依存する plugin fixture。
+    // `--bundle-deps` が依存を payload へ複製し、plugin を開く前に先読みする
+    // ことで移動後も動くことを検証する。helper は plugin と同じ directory へ
+    // install し、plugin 側は実行時探索（RPATH/LD_LIBRARY_PATH なし）で
+    // 見つからない配置にする（先読みが無いと壊れることを保証する）。
+    const native_plugin_dependency_helper = b.addLibrary(.{
+        .name = "lnako_test_plugin_dependency",
+        .linkage = .dynamic,
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    native_plugin_dependency_helper.root_module.addCSourceFiles(.{
+        .root = b.path("tests/native_plugin"),
+        .files = &.{"helper.c"},
+        .flags = &.{"-std=c11"},
+    });
+    const install_native_plugin_dependency_helper = b.addInstallArtifact(native_plugin_dependency_helper, .{});
+
+    const native_plugin_dependency_fixture = b.addLibrary(.{
+        .name = "lnako_test_plugin_with_dependency",
+        .linkage = .dynamic,
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    native_plugin_dependency_fixture.root_module.addIncludePath(b.path("include"));
+    native_plugin_dependency_fixture.root_module.addCSourceFiles(.{
+        .root = b.path("tests/native_plugin"),
+        .files = &.{"fixture_with_dependency.c"},
+        .flags = &.{"-std=c11"},
+    });
+    native_plugin_dependency_fixture.root_module.linkLibrary(native_plugin_dependency_helper);
+    const install_native_plugin_dependency_fixture = b.addInstallArtifact(native_plugin_dependency_fixture, .{});
+
     const native_plugin_fixture_step = b.step("native-plugin-fixture", "ネイティブプラグインABIのfixtureを生成する");
     native_plugin_fixture_step.dependOn(&install_native_plugin_fixture.step);
     native_plugin_fixture_step.dependOn(&install_invalid_native_plugin_fixture.step);
+    native_plugin_fixture_step.dependOn(&install_native_plugin_dependency_helper.step);
+    native_plugin_fixture_step.dependOn(&install_native_plugin_dependency_fixture.step);
 
     const run_step = b.step("run", "lnakoを実行する");
     const run_cmd = b.addRunArtifact(exe);
