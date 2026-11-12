@@ -316,3 +316,299 @@ test "machoDependenciesはLC_LOAD_DYLIBのinstall nameを読む" {
     try testing.expect(!isSystemLibrary(list[0].name));
     try testing.expect(isSystemLibrary(list[1].name));
 }
+
+/// 依存記載名を書き換えるのに必要な「新しい名前」を作る。
+/// macOS は `@loader_path/<basename>`、Linux は `$ORIGIN/<basename>`。
+/// どちらも「実行時に読み込む側のディレクトリ」基準で、payload 内に同居
+/// させた依存を指す。対象外の OS は null。
+pub fn relocatedName(allocator: std.mem.Allocator, dependency_name: []const u8) !?[]const u8 {
+    switch (builtin.os.tag) {
+        .macos => {
+            const base = std.fs.path.basename(dependency_name);
+            if (base.len == 0) return null;
+            return try std.fmt.allocPrint(allocator, "@loader_path/{s}", .{base});
+        },
+        .linux => {
+            const base = std.fs.path.basename(dependency_name);
+            if (base.len == 0) return null;
+            return try std.fmt.allocPrint(allocator, "$ORIGIN/{s}", .{base});
+        },
+        else => return null,
+    }
+}
+
+/// `LC_LOAD_DYLIB` の install name を in-place で書き換える。
+///
+/// Mach-O のロードコマンドは `cmdsize` で領域が固定されているため、新しい
+/// 名前が元の名前より長い場合は書換できない（ロードコマンド領域の再配置が
+/// 要る）。収まらない場合は `error.DependencyNameTooLong` を返し、壊れた
+/// 生成物を作らない。
+pub const Replacement = struct {
+    from: []const u8,
+    to: []const u8,
+};
+
+pub fn rewriteMachoNames(
+    allocator: std.mem.Allocator,
+    bytes: []u8,
+    replacements: []const Replacement,
+) !usize {
+    const magic = readU32Le(bytes, 0) orelse return 0;
+    const is64 = magic == 0xfeedfacf;
+    if (!is64 and magic != 0xfeedface) return 0;
+    const header_size: usize = if (is64) 32 else 28;
+    const ncmds = readU32Le(bytes, 16) orelse return 0;
+    var offset = header_size;
+    var index: u32 = 0;
+    var rewritten: usize = 0;
+    while (index < ncmds) : (index += 1) {
+        const cmd = readU32Le(bytes, offset) orelse break;
+        const cmdsize = readU32Le(bytes, offset + 4) orelse break;
+        if (cmdsize < 8) break;
+        const end_of_cmd = offset + cmdsize;
+        if (end_of_cmd > bytes.len) break;
+        switch (cmd) {
+            0xc, 0x80000018, 0x8000001f, 0x80000023 => {
+                const name_off = readU32Le(bytes, offset + 8) orelse {
+                    offset = end_of_cmd;
+                    continue;
+                };
+                if (name_off < cmdsize) {
+                    const start = offset + name_off;
+                    const end = std.mem.indexOfScalarPos(u8, bytes[0..end_of_cmd], start, 0) orelse end_of_cmd;
+                    if (end > start) {
+                        const current = bytes[start..end];
+                        for (replacements) |replacement| {
+                            if (!std.mem.eql(u8, current, replacement.from)) continue;
+                            if (replacement.to.len > current.len) return error.DependencyNameTooLong;
+                            // 短縮して残りを 0 で埋める（NUL 終端を保つ）。
+                            const region = bytes[start .. start + current.len + 1];
+                            @memset(region, 0);
+                            @memcpy(region[0..replacement.to.len], replacement.to);
+                            rewritten += 1;
+                            break;
+                        }
+                    }
+                }
+            },
+            else => {},
+        }
+        offset = end_of_cmd;
+    }
+    _ = allocator;
+    return rewritten;
+}
+
+/// ELF の `DT_NEEDED` 文字列を in-place で書き換える。
+///
+/// `.dynstr` は文字列の連結で、各エントリは NUL 終端の可変長。短縮は
+/// できても伸長はできない（後続文字列のオフセットが変わるため）。
+/// 新しい名前が元より長い場合は `error.DependencyNameTooLong` を返す。
+pub fn rewriteElfNeeded(
+    allocator: std.mem.Allocator,
+    bytes: []u8,
+    replacements: []const Replacement,
+) !usize {
+    _ = allocator;
+    if (bytes.len < 64 or !std.mem.eql(u8, bytes[0..4], "\x7fELF")) return 0;
+    const is64 = bytes[4] == 2;
+    const little = bytes[5] == 1;
+    const phoff: u64 = if (is64)
+        readU64(bytes, 32, little) orelse return 0
+    else
+        readU32(bytes, 28, little) orelse return 0;
+    const phentsize: u16 = if (is64)
+        readU16(bytes, 54, little) orelse return 0
+    else
+        readU16(bytes, 42, little) orelse return 0;
+    const phnum: u16 = if (is64)
+        readU16(bytes, 56, little) orelse return 0
+    else
+        readU16(bytes, 44, little) orelse return 0;
+    const ph_start: usize = @intCast(phoff);
+    const entry_size: u64 = if (is64) 16 else 8;
+    var needed_offsets: [128]u64 = undefined;
+    var needed_count: usize = 0;
+    var strtab_vaddr: ?u64 = null;
+    var index: u16 = 0;
+    while (index < phnum) : (index += 1) {
+        const base = ph_start + @as(usize, index) * phentsize;
+        const p_type = readU32(bytes, base, little) orelse return 0;
+        if (p_type != 2) continue;
+        const dyn_off: u64 = if (is64)
+            readU64(bytes, base + 8, little) orelse return 0
+        else
+            readU32(bytes, base + 4, little) orelse return 0;
+        const dyn_size: u64 = if (is64)
+            readU64(bytes, base + 32, little) orelse return 0
+        else
+            readU32(bytes, base + 16, little) orelse return 0;
+        var cursor = dyn_off;
+        const dyn_end = dyn_off + dyn_size;
+        while (cursor + entry_size <= dyn_end and cursor + entry_size <= bytes.len) : (cursor += entry_size) {
+            const tag: i64 = if (is64)
+                @bitCast(readU64(bytes, @intCast(cursor), little) orelse return 0)
+            else
+                @as(i64, @intCast(readU32(bytes, @intCast(cursor), little) orelse return 0));
+            const value: u64 = if (is64)
+                readU64(bytes, @intCast(cursor + 8), little) orelse return 0
+            else
+                readU32(bytes, @intCast(cursor + 4), little) orelse return 0;
+            if (tag == 0) break;
+            if (tag == 1 and needed_count < needed_offsets.len) {
+                needed_offsets[needed_count] = value;
+                needed_count += 1;
+            } else if (tag == 5) strtab_vaddr = value;
+        }
+    }
+    const strtab_v = strtab_vaddr orelse return 0;
+    const strtab = vaddrToOffset(bytes, is64, little, strtab_v) orelse return 0;
+    var rewritten: usize = 0;
+    for (needed_offsets[0..needed_count]) |offset_in_strtab| {
+        const start_u64 = strtab + offset_in_strtab;
+        if (start_u64 >= bytes.len) continue;
+        const start: usize = @intCast(start_u64);
+        const end = std.mem.indexOfScalarPos(u8, bytes, start, 0) orelse continue;
+        if (end <= start) continue;
+        const current = bytes[start..end];
+        for (replacements) |replacement| {
+            if (!std.mem.eql(u8, current, replacement.from)) continue;
+            if (replacement.to.len > current.len) return error.DependencyNameTooLong;
+            const region = bytes[start .. end + 1];
+            @memset(region, 0);
+            @memcpy(region[0..replacement.to.len], replacement.to);
+            rewritten += 1;
+            break;
+        }
+    }
+    return rewritten;
+}
+
+/// ELF の実行時探索パス（`DT_RUNPATH`/`DT_RPATH`）を in-place で書き換える。
+pub fn rewriteElfRunpath(
+    allocator: std.mem.Allocator,
+    bytes: []u8,
+    replacements: []const Replacement,
+) !usize {
+    // DT_NEEDED と同じ .dynstr を指すため、文字列の置換規則も同じ。
+    // DT_RUNPATH(29)/DT_RPATH(15) を拾う点だけが異なる。
+    _ = allocator;
+    if (bytes.len < 64 or !std.mem.eql(u8, bytes[0..4], "\x7fELF")) return 0;
+    const is64 = bytes[4] == 2;
+    const little = bytes[5] == 1;
+    const phoff: u64 = if (is64)
+        readU64(bytes, 32, little) orelse return 0
+    else
+        readU32(bytes, 28, little) orelse return 0;
+    const phentsize: u16 = if (is64)
+        readU16(bytes, 54, little) orelse return 0
+    else
+        readU16(bytes, 42, little) orelse return 0;
+    const phnum: u16 = if (is64)
+        readU16(bytes, 56, little) orelse return 0
+    else
+        readU16(bytes, 44, little) orelse return 0;
+    const ph_start: usize = @intCast(phoff);
+    const entry_size: u64 = if (is64) 16 else 8;
+    var path_offsets: [16]u64 = undefined;
+    var path_count: usize = 0;
+    var strtab_vaddr: ?u64 = null;
+    var index: u16 = 0;
+    while (index < phnum) : (index += 1) {
+        const base = ph_start + @as(usize, index) * phentsize;
+        const p_type = readU32(bytes, base, little) orelse return 0;
+        if (p_type != 2) continue;
+        const dyn_off: u64 = if (is64)
+            readU64(bytes, base + 8, little) orelse return 0
+        else
+            readU32(bytes, base + 4, little) orelse return 0;
+        const dyn_size: u64 = if (is64)
+            readU64(bytes, base + 32, little) orelse return 0
+        else
+            readU32(bytes, base + 16, little) orelse return 0;
+        var cursor = dyn_off;
+        const dyn_end = dyn_off + dyn_size;
+        while (cursor + entry_size <= dyn_end and cursor + entry_size <= bytes.len) : (cursor += entry_size) {
+            const tag: i64 = if (is64)
+                @bitCast(readU64(bytes, @intCast(cursor), little) orelse return 0)
+            else
+                @as(i64, @intCast(readU32(bytes, @intCast(cursor), little) orelse return 0));
+            const value: u64 = if (is64)
+                readU64(bytes, @intCast(cursor + 8), little) orelse return 0
+            else
+                readU32(bytes, @intCast(cursor + 4), little) orelse return 0;
+            if (tag == 0) break;
+            if ((tag == 15 or tag == 29) and path_count < path_offsets.len) {
+                path_offsets[path_count] = value;
+                path_count += 1;
+            } else if (tag == 5) strtab_vaddr = value;
+        }
+    }
+    const strtab_v = strtab_vaddr orelse return 0;
+    const strtab = vaddrToOffset(bytes, is64, little, strtab_v) orelse return 0;
+    var rewritten: usize = 0;
+    for (path_offsets[0..path_count]) |offset_in_strtab| {
+        const start_u64 = strtab + offset_in_strtab;
+        if (start_u64 >= bytes.len) continue;
+        const start: usize = @intCast(start_u64);
+        const end = std.mem.indexOfScalarPos(u8, bytes, start, 0) orelse continue;
+        if (end <= start) continue;
+        const current = bytes[start..end];
+        for (replacements) |replacement| {
+            if (!std.mem.eql(u8, current, replacement.from)) continue;
+            if (replacement.to.len > current.len) return error.DependencyNameTooLong;
+            const region = bytes[start .. end + 1];
+            @memset(region, 0);
+            @memcpy(region[0..replacement.to.len], replacement.to);
+            rewritten += 1;
+            break;
+        }
+    }
+    return rewritten;
+}
+
+test "relocatedNameはOSごとの相対基準を作る" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const name = (try relocatedName(a, "lib/x86_64-linux-gnu/libhelper.so.1")).?;
+    const base = "libhelper.so.1";
+    if (builtin.os.tag == .macos) {
+        try testing.expectEqualStrings("@loader_path/libhelper.so.1", name);
+    } else if (builtin.os.tag == .linux) {
+        try testing.expectEqualStrings("$ORIGIN/libhelper.so.1", name);
+    } else {
+        try testing.expectEqualStrings(base, "");
+    }
+    // 対象外 OS では null（書換を行わない）。
+    if (builtin.os.tag != .macos and builtin.os.tag != .linux) {
+        try testing.expect((try relocatedName(a, "libhelper.so")) == null);
+    }
+}
+
+test "rewriteMachoNamesはcmdsizeに収まらない名前で失敗する" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // 合成 Mach-O: LC_LOAD_DYLIB 1 件、name="libhelper.dylib"(15) で
+    // cmdsize = 24 + 15 + 1 = 40。これより長い名前は入らない。
+    const original = "libhelper.dylib";
+    const cmdsize = std.mem.alignForward(usize, 24 + original.len + 1, 8);
+    const total = 32 + cmdsize;
+    const bytes = try a.alloc(u8, total);
+    @memset(bytes, 0);
+    std.mem.writeInt(u32, bytes[0..4], 0xfeedfacf, .little);
+    std.mem.writeInt(u32, bytes[16..20], 1, .little);
+    std.mem.writeInt(u32, bytes[20..24], @intCast(cmdsize), .little);
+    std.mem.writeInt(u32, bytes[32..36], 0xc, .little);
+    std.mem.writeInt(u32, bytes[36..40], @intCast(cmdsize), .little);
+    std.mem.writeInt(u32, bytes[40..44], 24, .little);
+    @memcpy(bytes[56..][0..original.len], original);
+
+    const too_long = [_]Replacement{.{ .from = original, .to = "@loader_path/libhelper.dylib" }};
+    try testing.expectError(error.DependencyNameTooLong, rewriteMachoNames(a, bytes, &too_long));
+    // 短縮なら成功する。
+    const shorter = [_]Replacement{.{ .from = original, .to = "libh.dylib" }};
+    try testing.expectEqual(@as(usize, 1), try rewriteMachoNames(a, bytes, &shorter));
+    try testing.expectEqualStrings("libh.dylib", bytes[56 .. 56 + "libh.dylib".len]);
+}

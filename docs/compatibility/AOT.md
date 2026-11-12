@@ -71,7 +71,10 @@
 - native plugin の path は `@self/<pkg-dir>/<file>` marker へ書き換えられます。実行時 loader は argv[0] ではなく OS API（Linux `/proc/self/exe`、macOS `_NSGetExecutablePath`+realpath、Windows `GetModuleFileNameW`）で自身の path を得て `<out>.deps/` を解決するため、生成物を別ディレクトリへ移しても cwd に依存しません。
 - `<out>.deps/bundle.json`（schema 1）は同梱 package の自己記述です。`--sbom` を併用すると、同梱した package だけを SBOM に載せます（license 未宣言は `NOASSERTION`）。同梱物・bundle.json・SBOM の package 集合は一致します。
 - source-only 依存（native/JS artifact を持たず `.nako3` だけの package）も同梱対象です。
-- plugin の推移的動的 library 依存は、`src/compiler_pipeline/dylib_deps.zig` で列挙できます（Mach-O の `LC_LOAD_DYLIB` 系と ELF の `DT_NEEDED`、OS 標準は除外判定）。**payload への複製と install_name/DT_NEEDED の書換は未対応**です。書換を in-place の短縮で行うには payload 相対名が元の名より短い必要があり、伸ばすには Mach-O のロードコマンド領域や ELF のセグメント配置の再計算が要ります。外部ツール（install_name_tool / patchelf）に依存させない方針のため、別スライスで扱います。Windows の PE は依存を path で持たない（DLL 名のみ）ため対象外です。
+- plugin の推移的動的 library 依存は `src/compiler_pipeline/dylib_deps.zig` で列挙できます（Mach-O の `LC_LOAD_DYLIB` 系と ELF の `DT_NEEDED`、OS 標準は除外判定）。`rewriteMachoNames`/`rewriteElfNeeded` で記載名を `@loader_path/<base>`（macOS）・`$ORIGIN/<base>`（Linux）へ in-place 書換できます。
+- **書換は短縮のみ可能**です。Mach-O の `LC_LOAD_DYLIB` は `cmdsize` で領域が固定（実測: `cmdsize=48` に対し `payload/libhelper.dylib` 23 byte、`@loader_path/libhelper.dylib` は 28 byte 必要で収まらない）、ELF の `.dynstr` も後続文字列のオフセットが変わるため伸長できません。収まらない場合は `error.DependencyNameTooLong` で失敗し、壊れた生成物を作りません。
+- 伸長できない場合の代替として、**依存を先に `dlopen` してから plugin を読む方式**が使えます。Mach-O の install name で先に読み込めば、plugin 側の同じ install name は既ロードの image に解決されます（実測で移動後の plugin が動作）。payload の `bundle.json` に依存一覧を記録し、起動時に payload 内の依存を先読みする経路は別スライスです。
+- Windows の PE は依存を path で持たない（DLL 名のみ）ため書換対象外です。payload の DLL は実行ファイルと同じディレクトリの探索で解決されます。
 - `--compat-js --backend embedded` では payload directory を持てないため `--bundle-deps` を使えません。
 - 検証: `tools/check_bundle_deps_e2e.mjs`（生成物を別ディレクトリへ移して実行・payload 欠落時の明示エラー・SBOM 一致）。
 
