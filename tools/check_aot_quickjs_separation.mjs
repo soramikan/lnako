@@ -4,7 +4,7 @@
 // QuickJSとESM manifestが収録され、`JS実行` からESM moduleを呼べることを
 // 実際の生成物（シンボルと実行結果）で確認する。Issue #55の最小スライス。
 import { spawnSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -88,6 +88,22 @@ try {
     "0\n3\n5\n3\nx!\n1\n0\n1\n1\n3\n0\n30\n0\n5\n1,2\n\n[object Object]\n[object Object]\na,true,\n3\n1,2\n{\"x\":10}\ns\ntrue\nnull\nundefined",
     "JS関数実行の最小変換結果（戻り値の配列・辞書・Promise解決値を含む）",
   );
+
+  // compat AOT の dispatch trace: `JS関数実行` も AOT の dispatch 列に載ること
+  // （#55 の残ゲート）。trace 無効時と同じ出力であることと、route 名・
+  // opcode・success を固定する。
+  const functionCallTrace = join(work, "compat-js-function-call-trace.jsonl");
+  const tracedRun = spawnSync(functionCallBinary, [], {
+    encoding: "utf8",
+    env: { ...process.env, LNAKO_DISPATCH_TRACE: functionCallTrace },
+  });
+  expectEqual((tracedRun.stdout ?? "").trim(), functionCallOutput, "trace有効時もJS関数実行の出力が一致");
+  const traceEvents = readTraceLines(functionCallTrace);
+  const jsResults = traceEvents.filter((event) => event.phase === "dispatch-result" && event.route === "JS関数実行");
+  if (jsResults.length === 0) fail("compat AOTのdispatch traceにJS関数実行が記録されていません");
+  if (!jsResults.every((event) => event.opcode === 65535)) fail(`compat AOTのJS関数実行 opcodeが65535以外です: ${JSON.stringify(jsResults[0])}`);
+  if (!jsResults.every((event) => event.engine === "aot")) fail("compat AOTのtraceイベントのengineがaotではありません");
+  if (!jsResults.some((event) => event.success === true)) fail("compat AOTのJS関数実行にsuccess=trueのresultがありません");
 
   // `JSオブジェクト取得` / `JSメソッド実行`: JS関数実行が返した配列/辞書を
   // external binding（JS参照）として保持し、AOTとインタプリタが同じ結果を返すこと。
@@ -378,6 +394,15 @@ function resolveNm(explicit) {
 function runCompiler(source, output, extra) {
   const result = spawnSync(compiler, ["build", source, "-o", output, ...extra], { encoding: "utf8" });
   if (result.status !== 0) fail(`コンパイルに失敗しました: ${source}\n${result.stdout}${result.stderr}`);
+}
+
+/// dispatch trace（JSONL）を読む。trace が無い/壊れている場合は失敗させる。
+function readTraceLines(path) {
+  if (!existsSync(path)) fail(`dispatch traceが生成されませんでした: ${path}`);
+  return readFileSync(path, "utf8")
+    .split("\n")
+    .filter((line) => line.trim().length > 0)
+    .map((line) => JSON.parse(line));
 }
 
 function runBinary(path) {

@@ -856,6 +856,14 @@ fn callArgumentRaw(runtime: *state.Runtime, engine_value: *Engine, value: Value,
 /// 第2引数1個を実引数として呼び出す。`JS実行` のeval/drain/await/例外経路を共有し、
 /// 戻り値がPromiseなら解決値を待ってから `callResultFromRaw` のプリミティブ＋
 /// 浅い配列/辞書変換だけを通す。rejectとpendingはbridgeの文言で明示エラーにする。
+/// compat JS 呼出しの dispatch trace route 名。interpreter 経路の
+/// `JS関数実行` と同じ表記にして両経路を突き合わせられるようにする。
+const compat_js_route = "JS関数実行";
+/// `JS関数実行` の opcode。AOT の builtin opcode 表には載らない compat 専用
+/// 経路なので、dispatch trace の列を区別できる固定値を割り当てる
+/// （`aot_builtin.Command` の値域外）。
+const compat_js_opcode: u16 = 0xffff;
+
 pub export fn lnako_aot_compat_js_call(out: *Value, arguments: ?[*]const Value, count: usize) callconv(.c) void {
     out.* = .{};
     const runtime = if (state.active_runtime) |*active| active else return;
@@ -885,6 +893,18 @@ pub export fn lnako_aot_compat_js_call(out: *Value, arguments: ?[*]const Value, 
         return;
     };
     defer runtime.allocator.free(source);
+    // AOT dispatch trace へ compat JS 呼出しも記録する（`LNAKO_DISPATCH_TRACE`）。
+    // interpreter 経路の `JS関数実行` と同じ route 名を使い、両経路の
+    // dispatch 列を突き合わせられるようにする。site_id は IR の site を
+    // 持たない ABI なので 0（生成コード側の site とは対応しない）。
+    //
+    // `command` には評価式（`source`）を入れない。ユーザーのスクリプト片が
+    // trace へ漏れるうえ、trace 行は JSON をエスケープせずに組み立てるため
+    // 引用符を含む式で JSON が壊れる。命令名（canonical 名）だけを記録する。
+    const trace_call_id = runtime.dispatch_trace.begin(compat_js_route, compat_js_opcode, compat_js_route, 0);
+    const failure_epoch_at_entry = runtime.failure_epoch;
+    var trace_success = false;
+    defer runtime.dispatch_trace.result(trace_call_id, compat_js_route, compat_js_opcode, compat_js_route, 0, trace_success);
     const engine_value = ensureEngine() catch |failure| {
         runtime.setFailure(failure);
         return;
@@ -989,6 +1009,7 @@ pub export fn lnako_aot_compat_js_call(out: *Value, arguments: ?[*]const Value, 
         }
         return;
     };
+    trace_success = runtime.failure_epoch == failure_epoch_at_entry;
 }
 
 /// `JSオブジェクト取得` / `JSメソッド実行` で、変換できない値に使う文言。
