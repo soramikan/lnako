@@ -250,8 +250,13 @@ fastmath__plugin__ネイティブ加算(2,3)を表示
 
   // --- 推移的依存の同梱（#56）: private 共有ライブラリへ依存する plugin を
   // `--bundle-deps` でビルドし、payload へ依存が複製されることと、移動後に
-  // 先読み経路で plugin が動くことを検証する。
-  checkTransitiveDependency();
+  // 先読み経路で plugin が動くことを検証する。PE は依存を path で持たない
+  // （DLL 名のみ）ため、この経路は macOS/Linux のみが対象。
+  if (process.platform === "win32") {
+    console.log("bundle-deps E2E: 推移的依存の同梱はPEでは対象外のため skip（DLL は実行ファイル隣接の探索で解決）");
+  } else {
+    checkTransitiveDependency();
+  }
 
   function checkTransitiveDependency() {
     const depPlugin = findPlugin(/lnako[_-]test[_-]plugin[_-]with[_-]dependency/i);
