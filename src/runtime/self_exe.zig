@@ -52,10 +52,27 @@ pub fn resolveMarker(
     if (!restIsContained(rest)) return error.PayloadPathEscapesPayload;
     const executable = selfExecutablePathAlloc(allocator, io) catch return error.SelfExecutablePathUnavailable;
     defer allocator.free(executable);
-    const joined = try std.fmt.allocPrint(allocator, "{s}{s}", .{ executable, payload_suffix });
+    // payload directory は build 時の `-o` 値 + suffix。Windows のリンカは
+    // `-o app` から `app.exe` を作るため、実行時の自己 path に残る
+    // executable suffix を落として build 時の名前へ戻す。
+    const payload_base = stripExecutableSuffix(executable);
+    const joined = try std.fmt.allocPrint(allocator, "{s}{s}", .{ payload_base, payload_suffix });
     defer allocator.free(joined);
     const with_rest = try std.fs.path.join(allocator, &.{ joined, rest });
     return with_rest;
+}
+
+/// 実行ファイル名から linker が付けた executable suffix を落とす
+/// （`lnako build -o app` の payload 名は `app.deps` で、Windows の実体は
+/// `app.exe` のため）。suffix が無ければそのまま返す。
+fn stripExecutableSuffix(executable: []const u8) []const u8 {
+    const suffix = switch (builtin.os.tag) {
+        .windows => ".exe",
+        else => return executable,
+    };
+    if (executable.len <= suffix.len) return executable;
+    if (!std.ascii.eqlIgnoreCase(executable[executable.len - suffix.len ..], suffix)) return executable;
+    return executable[0 .. executable.len - suffix.len];
 }
 
 /// marker 以降の相対 path が payload directory 内に留まるか。absolute と
@@ -127,6 +144,24 @@ test "resolveMarkerはmarker以外を解決しない" {
     const io = std.testing.io;
     try std.testing.expect((try resolveMarker(allocator, io, "/absolute/lib.so", "@self/", ".deps")) == null);
     try std.testing.expect((try resolveMarker(allocator, io, "./relative/lib.so", "@self/", ".deps")) == null);
+}
+
+test "stripExecutableSuffixはpayload名をbuild時の出力名へ戻す" {
+    const cases = [_]struct { input: []const u8, expected: []const u8 }{
+        .{ .input = "/a/app", .expected = "/a/app" },
+        .{ .input = "/a/app.exe", .expected = "/a/app" },
+        .{ .input = "/a/app.EXE", .expected = "/a/app" },
+        .{ .input = "/a/app.exe.exe", .expected = "/a/app.exe" },
+    };
+    for (cases) |case| {
+        const actual = stripExecutableSuffix(case.input);
+        if (builtin.os.tag == .windows) {
+            try std.testing.expectEqualStrings(case.expected, actual);
+        } else {
+            // Windows 以外は suffix を落とさない（`.exe` も通常の名前）。
+            try std.testing.expectEqualStrings(case.input, actual);
+        }
+    }
 }
 
 test "resolveMarkerはpayload外へ出る指定を拒否する" {
