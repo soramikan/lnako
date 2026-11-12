@@ -682,6 +682,10 @@ fn sourceUtf8Alloc(runtime: *state.Runtime, value: Value) ![]u8 {
 pub export fn lnako_aot_compat_js_eval(out: *Value, arguments: ?[*]const Value, count: usize) callconv(.c) void {
     out.* = .{};
     const runtime = if (state.active_runtime) |*active| active else return;
+    const failure_epoch_at_entry = runtime.failure_epoch;
+    const trace_call_id = runtime.dispatch_trace.begin("JS実行", compat_js_eval_opcode, "JS実行", 0);
+    var trace_success = false;
+    defer runtime.dispatch_trace.result(trace_call_id, "JS実行", compat_js_eval_opcode, "JS実行", 0, trace_success);
     if (count == 0 or arguments == null) {
         runtime.setFailureText("JS実行 requires a source argument");
         return;
@@ -717,6 +721,7 @@ pub export fn lnako_aot_compat_js_eval(out: *Value, arguments: ?[*]const Value, 
         runtime.setFailure(failure);
         return;
     };
+    trace_success = runtime.failure_epoch == failure_epoch_at_entry;
 }
 
 fn isStringValue(value: Value) bool {
@@ -863,6 +868,11 @@ const compat_js_route = "JS関数実行";
 /// 経路なので、dispatch trace の列を区別できる固定値を割り当てる
 /// （`aot_builtin.Command` の値域外）。
 const compat_js_opcode: u16 = 0xffff;
+/// 4 命令を trace 上で区別するための opcode。いずれも builtin 表の外にある
+/// compat 専用経路なので、`aot_builtin.Command` の値域外の固定値を割り当てる。
+const compat_js_eval_opcode: u16 = 0xfffe;
+const compat_js_object_get_opcode: u16 = 0xfffd;
+const compat_js_method_call_opcode: u16 = 0xfffc;
 
 pub export fn lnako_aot_compat_js_call(out: *Value, arguments: ?[*]const Value, count: usize) callconv(.c) void {
     out.* = .{};
@@ -1077,6 +1087,10 @@ fn reportUnsupported(runtime: *state.Runtime, failure: anyerror, message: []cons
 pub export fn lnako_aot_compat_js_object_get(out: *Value, arguments: ?[*]const Value, count: usize) callconv(.c) void {
     out.* = .{};
     const runtime = if (state.active_runtime) |*active| active else return;
+    const failure_epoch_at_entry = runtime.failure_epoch;
+    const trace_call_id = runtime.dispatch_trace.begin("JSオブジェクト取得", compat_js_object_get_opcode, "JSオブジェクト取得", 0);
+    var trace_success = false;
+    defer runtime.dispatch_trace.result(trace_call_id, "JSオブジェクト取得", compat_js_object_get_opcode, "JSオブジェクト取得", 0, trace_success);
     if (count < 2 or arguments == null) {
         runtime.setFailureText("JSオブジェクト取得 requires a value and a property name");
         return;
@@ -1127,6 +1141,7 @@ pub export fn lnako_aot_compat_js_object_get(out: *Value, arguments: ?[*]const V
         reportUnsupported(runtime, failure, unsupported_object_get_message);
         return;
     };
+    trace_success = runtime.failure_epoch == failure_epoch_at_entry;
 }
 
 /// `--compat-js` AOTの `JSメソッド実行(obj, method, args)` 最小dispatch。
@@ -1138,6 +1153,10 @@ pub export fn lnako_aot_compat_js_object_get(out: *Value, arguments: ?[*]const V
 pub export fn lnako_aot_compat_js_method_call(out: *Value, arguments: ?[*]const Value, count: usize) callconv(.c) void {
     out.* = .{};
     const runtime = if (state.active_runtime) |*active| active else return;
+    const failure_epoch_at_entry = runtime.failure_epoch;
+    const trace_call_id = runtime.dispatch_trace.begin("JSメソッド実行", compat_js_method_call_opcode, "JSメソッド実行", 0);
+    var trace_success = false;
+    defer runtime.dispatch_trace.result(trace_call_id, "JSメソッド実行", compat_js_method_call_opcode, "JSメソッド実行", 0, trace_success);
     if (count < 2 or arguments == null) {
         runtime.setFailureText("JSメソッド実行 requires an object and a method name in AOT compat mode");
         return;
@@ -1236,6 +1255,7 @@ pub export fn lnako_aot_compat_js_method_call(out: *Value, arguments: ?[*]const 
         reportUnsupported(runtime, failure, unsupported_method_message);
         return;
     };
+    trace_success = runtime.failure_epoch == failure_epoch_at_entry;
 }
 
 /// QuickJSのmodule名は `/` 区切りで比較される。interpreter側の

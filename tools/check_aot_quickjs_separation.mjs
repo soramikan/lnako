@@ -97,6 +97,9 @@ try {
     encoding: "utf8",
     env: { ...process.env, LNAKO_DISPATCH_TRACE: functionCallTrace },
   });
+  if (tracedRun.status !== 0) {
+    fail(`trace有効実行が異常終了しました: status=${tracedRun.status}\n${tracedRun.stdout ?? ""}${tracedRun.stderr ?? ""}`);
+  }
   expectEqual((tracedRun.stdout ?? "").trim(), functionCallOutput, "trace有効時もJS関数実行の出力が一致");
   const traceEvents = readTraceLines(functionCallTrace);
   const jsResults = traceEvents.filter((event) => event.phase === "dispatch-result" && event.route === "JS関数実行");
@@ -104,6 +107,9 @@ try {
   if (!jsResults.every((event) => event.opcode === 65535)) fail(`compat AOTのJS関数実行 opcodeが65535以外です: ${JSON.stringify(jsResults[0])}`);
   if (!jsResults.every((event) => event.engine === "aot")) fail("compat AOTのtraceイベントのengineがaotではありません");
   if (!jsResults.some((event) => event.success === true)) fail("compat AOTのJS関数実行にsuccess=trueのresultがありません");
+  // `JS実行` も trace に載る（fixture は JS実行 を含む）。
+  const evalResults = traceEvents.filter((event) => event.phase === "dispatch-result" && event.route === "JS実行");
+  if (evalResults.length === 0) fail("compat AOTのdispatch traceにJS実行が記録されていません");
 
   // `JSオブジェクト取得` / `JSメソッド実行`: JS関数実行が返した配列/辞書を
   // external binding（JS参照）として保持し、AOTとインタプリタが同じ結果を返すこと。
