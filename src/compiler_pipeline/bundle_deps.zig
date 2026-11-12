@@ -18,6 +18,8 @@ const builtin = @import("builtin");
 const lnako = @import("lnako");
 const dylib_deps = @import("dylib_deps.zig");
 
+const testing = std.testing;
+
 pub const bundle_marker = lnako.ir.nako_ir.self_marker;
 
 const max_bundle_file_bytes: usize = 256 * 1024 * 1024;
@@ -84,7 +86,7 @@ pub fn plan(allocator: std.mem.Allocator, io: std.Io, program: *lnako.ir.nako_ir
         try walkPackageRoot(allocator, io, &iterator, "", &files);
         if (files.items.len == 0) return error.BundlePackageRootEmpty;
         const directory = try packageDirectoryName(arena, package, &directories);
-        const dependencies = try collectDependencies(allocator, io, arena, directory, files.items);
+        const dependencies = try collectDependencies(allocator, io, arena, directory, package.root, files.items);
         const owned = try files.toOwnedSlice(allocator);
         try packages.append(allocator, .{
             .name = package.name,
@@ -108,6 +110,7 @@ fn collectDependencies(
     io: std.Io,
     arena: std.mem.Allocator,
     directory: []const u8,
+    package_root: []const u8,
     files: []const BundleFile,
 ) ![]const BundleDependency {
     var result: std.ArrayListUnmanaged(BundleDependency) = .empty;
@@ -132,6 +135,8 @@ fn collectDependencies(
             if (dylib_deps.isSystemLibrary(dependency.name)) continue;
             const base = std.fs.path.basename(dependency.name);
             if (base.len == 0) continue;
+            // `seen` の key は arena 所有（呼出し元の `base` は毎回 free される
+            // ため、そのまま入れると dangling key になる）。
             if (seen.contains(base)) continue;
             // 依存の実体を解決する。plugin と同じ directory を先に探し、
             // 次に記載名そのもの（絶対 path / rpath 展開済み）を使う。
@@ -142,7 +147,13 @@ fn collectDependencies(
                 try arena.dupe(u8, dependency.name)
             else
                 continue;
-            try seen.put(arena, base, {});
+            // symlink 経由で package の外を指す依存を同梱しない。実体 path が
+            // package root 配下に留まることを要求する（`walkPackageRoot` は
+            // realpath を使うため、root 外を指す symlink は既に除外される）。
+            const real = std.Io.Dir.cwd().realPathFileAlloc(io, resolved, arena) catch continue;
+            const package_real = std.Io.Dir.cwd().realPathFileAlloc(io, package_root, arena) catch continue;
+            if (!pathWithin(package_real, real)) continue;
+            try seen.put(arena, try arena.dupe(u8, base), {});
             try result.append(allocator, .{
                 .name = try arena.dupe(u8, dependency.name),
                 .relative = try std.fmt.allocPrint(arena, "{s}/{s}", .{ directory, base }),
@@ -151,6 +162,13 @@ fn collectDependencies(
         }
     }
     return result.toOwnedSlice(allocator);
+}
+
+/// `child` が `parent` 配下（同一 path 境界）か。
+fn pathWithin(parent: []const u8, child: []const u8) bool {
+    if (!std.mem.startsWith(u8, child, parent)) return false;
+    if (child.len == parent.len) return true;
+    return child[parent.len] == std.fs.path.sep or child[parent.len] == '/';
 }
 
 fn fileExists(io: std.Io, path: []const u8) bool {
@@ -706,4 +724,59 @@ test "markerForはpackage配下に無いplugin pathを対象外にする" {
     };
     try std.testing.expectEqualStrings("@self/pkg-11111111/plugin.so", (try markerFor(allocator, &packages, "/src/plugin.so")).?);
     try std.testing.expect((try markerFor(allocator, &packages, "/elsewhere/plugin.so")) == null);
+}
+
+test "pathWithinは境界を跨ぐprefixを拒否する" {
+    try testing.expect(pathWithin("/a/b", "/a/b"));
+    try testing.expect(pathWithin("/a/b", "/a/b/c"));
+    try testing.expect(!pathWithin("/a/b", "/a/bc"));
+    try testing.expect(!pathWithin("/a/b", "/a"));
+}
+
+test "collectDependenciesはprivate依存を拾いシステム依存を除く" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var temporary = lnako.package.test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "pkg");
+    // 依存名 "libhelper.dylib" と "/usr/lib/libSystem.B.dylib" を持つ
+    // 最小の Mach-O を合成する。
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const names = [_][]const u8{ "libhelper.dylib", "/usr/lib/libSystem.B.dylib" };
+    const first_size = std.mem.alignForward(usize, 24 + names[0].len + 1, 8);
+    const second_size = std.mem.alignForward(usize, 24 + names[1].len + 1, 8);
+    const total = 32 + first_size + second_size;
+    const plugin = try a.alloc(u8, total);
+    @memset(plugin, 0);
+    std.mem.writeInt(u32, plugin[0..4], 0xfeedfacf, .little);
+    std.mem.writeInt(u32, plugin[16..20], 2, .little);
+    std.mem.writeInt(u32, plugin[20..24], @intCast(first_size + second_size), .little);
+    var offset: usize = 32;
+    for (names, 0..) |name, index| {
+        const size = if (index == 0) first_size else second_size;
+        std.mem.writeInt(u32, plugin[offset..][0..4], 0xc, .little);
+        std.mem.writeInt(u32, plugin[offset + 4 ..][0..4], @intCast(size), .little);
+        std.mem.writeInt(u32, plugin[offset + 8 ..][0..4], 24, .little);
+        @memcpy(plugin[offset + 24 ..][0..name.len], name);
+        offset += size;
+    }
+    try temporary.dir.writeFile(io, .{ .sub_path = "pkg/libplug.dylib", .data = plugin });
+    try temporary.dir.writeFile(io, .{ .sub_path = "pkg/libhelper.dylib", .data = "helper" });
+    const root = try temporary.dir.realPathFileAlloc(io, "pkg", allocator);
+    defer allocator.free(root);
+    const plugin_path = try std.fs.path.join(allocator, &.{ root, "libplug.dylib" });
+    defer allocator.free(plugin_path);
+    const files = [_]BundleFile{.{ .relative = "libplug.dylib", .source_path = plugin_path }};
+    const deps = if (@import("dylib_deps.zig").supported())
+        try collectDependencies(allocator, io, arena.allocator(), "pkg-1", root, &files)
+    else
+        &[_]BundleDependency{};
+    defer allocator.free(deps);
+    if (@import("dylib_deps.zig").supported()) {
+        try testing.expectEqual(@as(usize, 1), deps.len);
+        try testing.expectEqualStrings("libhelper.dylib", std.fs.path.basename(deps[0].relative));
+        try testing.expectEqualStrings("pkg-1/libhelper.dylib", deps[0].relative);
+    }
 }

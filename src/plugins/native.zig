@@ -288,46 +288,254 @@ pub const State = struct {
             std.ascii.eqlIgnoreCase(extension, ".node");
     }
 
-    /// plugin と同じ directory にある共有ライブラリを先に読み込み、plugin の
-    /// 未解決 install name をそこへ束縛する。
+    /// plugin が依存する共有ライブラリを、plugin と同じ directory から
+    /// 先に読み込む。
     ///
     /// `--bundle-deps` は依存を plugin と同じ directory へ平坦に置く。
     /// Mach-O は「同じ install name の image が既にロード済みならそれを使う」
     /// ため、先読みするだけで plugin 側の絶対 path 記載が解決される
-    /// （`install_name_tool` 相当の書換が要らない）。開いた handle は
-    /// プロセス終了まで保持する（閉じると plugin の解決が無効になる）。
+    /// （`install_name_tool` 相当の書換が要らない）。
+    ///
+    /// 読み込む対象は **plugin 自身の記載名と basename が一致する file だけ**
+    /// に限る。directory 内の全共有ライブラリを無条件に開くと、同じ
+    /// package に同居する別 plugin の依存まで巻き込んで副作用を起こす。
+    /// 依存の依存（推移）は 1 段ずつ解決する: 開いた library の記載名を
+    /// 読み、同じ directory に一致する file があれば続けて開く。
     fn preloadDependencies(self: *State, allocator: std.mem.Allocator, io: std.Io, plugin_path: []const u8) !void {
         const directory = std.fs.path.dirname(plugin_path) orelse return;
-        var dir = std.Io.Dir.cwd().openDir(io, directory, .{ .iterate = true, .follow_symlinks = false }) catch return;
-        defer dir.close(io);
-        var names: std.ArrayListUnmanaged([]const u8) = .empty;
+        var pending: std.ArrayListUnmanaged([]const u8) = .empty;
         defer {
-            for (names.items) |name| allocator.free(name);
-            names.deinit(allocator);
+            for (pending.items) |name| allocator.free(name);
+            pending.deinit(allocator);
         }
-        var it = dir.iterate();
-        while (it.next(io) catch null) |entry| {
-            if (entry.kind != .file) continue;
-            if (!plugin_native_artifact(entry.name)) continue;
-            // plugin 自身は除く（ここで開くと二重ロードになる）。
-            const full = std.fs.path.join(allocator, &.{ directory, entry.name }) catch continue;
-            defer allocator.free(full);
-            if (std.mem.eql(u8, full, plugin_path)) continue;
-            try names.append(allocator, try allocator.dupe(u8, entry.name));
+        // plugin 自身の記載名から始める（推移は 1 段ずつ辿る）。
+        self.collectDependencyNames(allocator, io, plugin_path, &pending) catch {};
+        var opened: std.StringHashMapUnmanaged(void) = .empty;
+        defer {
+            var it = opened.keyIterator();
+            while (it.next()) |key| allocator.free(key.*);
+            opened.deinit(allocator);
         }
-        std.mem.sort([]const u8, names.items, {}, struct {
-            fn lessThan(_: void, left: []const u8, right: []const u8) bool {
-                return std.mem.lessThan(u8, left, right);
-            }
-        }.lessThan);
-        for (names.items) |name| {
+        var rounds: usize = 0;
+        while (pending.items.len > 0 and rounds < 8) : (rounds += 1) {
+            const name = pending.orderedRemove(0);
+            defer allocator.free(name);
+            if (opened.contains(name)) continue;
             const full = std.fs.path.join(allocator, &.{ directory, name }) catch continue;
             defer allocator.free(full);
+            if (std.mem.eql(u8, full, plugin_path)) continue;
+            if (!fileExists(io, full)) continue;
             const library = NativeLibrary.open(allocator, full) catch continue;
-            // handle は保持する（閉じない）。読み込み順序を固定するため
-            // ここでだけ開く。
             try self.preloaded.append(allocator, library);
+            try opened.put(allocator, try allocator.dupe(u8, name), {});
+            // 開いた library 自身の依存も辿る（順序に依存しないよう、
+            // 解決できるものを繰り返し試す）。
+            self.collectDependencyNames(allocator, io, full, &pending) catch {};
         }
+    }
+
+    /// 共有ライブラリの記載名（install_name / DT_NEEDED）の basename を
+    /// `out` へ追加する。OS 標準は除外する。
+    ///
+    /// `compiler_pipeline/dylib_deps.zig` と同じ解析だが、この file は
+    /// `root` ではなく `lnako` module の外側にあるため、module 境界を跨ぐ
+    /// import を持てない。実行時に必要なのは「記載名の basename」だけなので、
+    /// ここでは同じロジックを最小限で持つ（build 時の検出と二重実装になる
+    /// 点は `dylib_deps.zig` の doc に明記する）。
+    fn collectDependencyNames(
+        self: *State,
+        allocator: std.mem.Allocator,
+        io: std.Io,
+        path: []const u8,
+        out: *std.ArrayListUnmanaged([]const u8),
+    ) !void {
+        _ = self;
+        const bytes = std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(8 * 1024 * 1024)) catch return;
+        defer allocator.free(bytes);
+        const found = readDependencyNames(allocator, bytes) catch return;
+        defer {
+            for (found) |dependency| allocator.free(dependency);
+            allocator.free(found);
+        }
+        for (found) |name| {
+            if (isSystemDependencyName(name)) continue;
+            const base = std.fs.path.basename(name);
+            if (base.len == 0) continue;
+            var listed = false;
+            for (out.items) |existing| {
+                if (std.mem.eql(u8, existing, base)) {
+                    listed = true;
+                    break;
+                }
+            }
+            if (listed) continue;
+            try out.append(allocator, try allocator.dupe(u8, base));
+        }
+    }
+
+    /// 共有ライブラリの記載名（install_name / DT_NEEDED）を読む。
+    ///
+    /// `compiler_pipeline/dylib_deps.zig` と同じ解析だが、この file は
+    /// `lnako` module 側にあり、`dylib_deps.zig` は `root` module 側からも
+    /// 参照されるため relative import を持てない（同一 file が 2 module に
+    /// 属することを Zig が拒否する）。実行時に必要なのは記載名の basename
+    /// だけなので、ここでは最小限の同型実装を持つ。**解析規則を変える
+    /// ときは両方を揃えること**（build 時の検出と実行時の先読みで同じ
+    /// 判定を使う必要がある）。
+    fn readDependencyNames(allocator: std.mem.Allocator, bytes: []const u8) ![][]const u8 {
+        var list: std.ArrayListUnmanaged([]const u8) = .empty;
+        errdefer {
+            for (list.items) |item| allocator.free(item);
+            list.deinit(allocator);
+        }
+        if (bytes.len < 32) return list.toOwnedSlice(allocator);
+        if (bytes[0] == 0x7f and bytes[1] == 0x45 and bytes[2] == 0x4c and bytes[3] == 0x46) {
+            try readElfDependencyNames(allocator, bytes, &list);
+        } else {
+            try readMachODependencyNames(allocator, bytes, &list);
+        }
+        return list.toOwnedSlice(allocator);
+    }
+
+    fn readMachODependencyNames(allocator: std.mem.Allocator, bytes: []const u8, out: *std.ArrayListUnmanaged([]const u8)) !void {
+        const magic = readIntLe(u32, bytes, 0) orelse return;
+        const is64 = magic == 0xfeedfacf;
+        if (!is64 and magic != 0xfeedface) return;
+        const header_size: usize = if (is64) 32 else 28;
+        const ncmds = readIntLe(u32, bytes, 16) orelse return;
+        var offset = header_size;
+        var index: u32 = 0;
+        while (index < ncmds) : (index += 1) {
+            const cmd = readIntLe(u32, bytes, offset) orelse return;
+            const cmdsize = readIntLe(u32, bytes, offset + 4) orelse return;
+            if (cmdsize < 8) return;
+            const end_of_cmd = offset + cmdsize;
+            if (end_of_cmd > bytes.len) return;
+            switch (cmd) {
+                0xc, 0x80000018, 0x8000001f, 0x80000023 => {
+                    if (readIntLe(u32, bytes, offset + 8)) |name_off| {
+                        if (name_off < cmdsize) {
+                            const start = offset + name_off;
+                            const end = std.mem.indexOfScalarPos(u8, bytes[0..end_of_cmd], start, 0) orelse end_of_cmd;
+                            if (end > start) try out.append(allocator, try allocator.dupe(u8, bytes[start..end]));
+                        }
+                    }
+                },
+                else => {},
+            }
+            offset = end_of_cmd;
+        }
+    }
+
+    fn readElfDependencyNames(allocator: std.mem.Allocator, bytes: []const u8, out: *std.ArrayListUnmanaged([]const u8)) !void {
+        if (bytes.len < 64) return;
+        const is64 = bytes[4] == 2;
+        const little = bytes[5] == 1;
+        const phoff: u64 = if (is64)
+            readIntEndian(u64, bytes, 32, little) orelse return
+        else
+            readIntEndian(u32, bytes, 28, little) orelse return;
+        const phentsize: u16 = if (is64)
+            readIntEndian(u16, bytes, 54, little) orelse return
+        else
+            readIntEndian(u16, bytes, 42, little) orelse return;
+        const phnum: u16 = if (is64)
+            readIntEndian(u16, bytes, 56, little) orelse return
+        else
+            readIntEndian(u16, bytes, 44, little) orelse return;
+        var needed: [128]u64 = undefined;
+        var needed_count: usize = 0;
+        var strtab_vaddr: ?u64 = null;
+        var load_ranges: [32]struct { vaddr: u64, offset: u64, filesz: u64 } = undefined;
+        var load_count: usize = 0;
+        var index: u16 = 0;
+        const ph_start: usize = @intCast(phoff);
+        while (index < phnum) : (index += 1) {
+            const base = ph_start + @as(usize, index) * phentsize;
+            const p_type = readIntEndian(u32, bytes, base, little) orelse return;
+            if (p_type == 1 and load_count < load_ranges.len) {
+                load_ranges[load_count] = .{
+                    .offset = if (is64) readIntEndian(u64, bytes, base + 8, little) orelse return else readIntEndian(u32, bytes, base + 4, little) orelse return,
+                    .vaddr = if (is64) readIntEndian(u64, bytes, base + 16, little) orelse return else readIntEndian(u32, bytes, base + 8, little) orelse return,
+                    .filesz = if (is64) readIntEndian(u64, bytes, base + 32, little) orelse return else readIntEndian(u32, bytes, base + 16, little) orelse return,
+                };
+                load_count += 1;
+                continue;
+            }
+            if (p_type != 2) continue;
+            const dyn_off: u64 = if (is64)
+                readIntEndian(u64, bytes, base + 8, little) orelse return
+            else
+                readIntEndian(u32, bytes, base + 4, little) orelse return;
+            const dyn_size: u64 = if (is64)
+                readIntEndian(u64, bytes, base + 32, little) orelse return
+            else
+                readIntEndian(u32, bytes, base + 16, little) orelse return;
+            const entry_size: u64 = if (is64) 16 else 8;
+            var cursor = dyn_off;
+            while (cursor + entry_size <= dyn_off + dyn_size and cursor + entry_size <= bytes.len) : (cursor += entry_size) {
+                const tag: i64 = if (is64)
+                    @bitCast(readIntEndian(u64, bytes, @intCast(cursor), little) orelse return)
+                else
+                    @as(i64, @intCast(readIntEndian(u32, bytes, @intCast(cursor), little) orelse return));
+                const value: u64 = if (is64)
+                    readIntEndian(u64, bytes, @intCast(cursor + 8), little) orelse return
+                else
+                    readIntEndian(u32, bytes, @intCast(cursor + 4), little) orelse return;
+                if (tag == 0) break;
+                if (tag == 1 and needed_count < needed.len) {
+                    needed[needed_count] = value;
+                    needed_count += 1;
+                } else if (tag == 5) strtab_vaddr = value;
+            }
+        }
+        const strtab = blk: {
+            const want = strtab_vaddr orelse return;
+            for (load_ranges[0..load_count]) |range| {
+                if (want >= range.vaddr and want < range.vaddr + range.filesz) break :blk range.offset + (want - range.vaddr);
+            }
+            return;
+        };
+        for (needed[0..needed_count]) |offset_in_strtab| {
+            const start_u64 = strtab + offset_in_strtab;
+            if (start_u64 >= bytes.len) continue;
+            const start: usize = @intCast(start_u64);
+            const end = std.mem.indexOfScalarPos(u8, bytes, start, 0) orelse continue;
+            if (end > start) try out.append(allocator, try allocator.dupe(u8, bytes[start..end]));
+        }
+    }
+
+    fn readIntLe(comptime T: type, bytes: []const u8, offset: usize) ?T {
+        return readIntEndian(T, bytes, offset, true);
+    }
+
+    fn readIntEndian(comptime T: type, bytes: []const u8, offset: usize, little: bool) ?T {
+        const size = @sizeOf(T);
+        if (offset + size > bytes.len) return null;
+        return std.mem.readInt(T, bytes[offset..][0..size], if (little) .little else .big);
+    }
+
+    fn isSystemDependencyName(name: []const u8) bool {
+        if (std.mem.startsWith(u8, name, "/usr/lib/")) return true;
+        if (std.mem.startsWith(u8, name, "/System/")) return true;
+        if (std.mem.startsWith(u8, name, "/lib/")) return true;
+        if (std.mem.startsWith(u8, name, "/lib64/")) return true;
+        if (std.mem.startsWith(u8, name, "ld-linux")) return true;
+        if (std.mem.startsWith(u8, name, "ld-musl")) return true;
+        if (std.mem.endsWith(u8, name, "libSystem.B.dylib")) return true;
+        var lower: [260]u8 = undefined;
+        if (name.len <= lower.len) {
+            for (name, 0..) |ch, i| lower[i] = std.ascii.toLower(ch);
+            const tail = lower[0..name.len];
+            const known = [_][]const u8{ "libc.so", "libm.so", "libpthread.so", "libdl.so", "librt.so", "kernel32.dll", "user32.dll", "advapi32.dll", "ntdll.dll", "ws2_32.dll", "ucrtbase.dll", "api-ms-win-", "msvcrt.dll" };
+            for (known) |prefix| if (std.mem.startsWith(u8, tail, prefix)) return true;
+        }
+        return false;
+    }
+
+    fn fileExists(io: std.Io, path: []const u8) bool {
+        const stat = std.Io.Dir.cwd().statFile(io, path, .{ .follow_symlinks = true }) catch return false;
+        return stat.kind == .file;
     }
 
     fn loadPlugin(self: *State, path: []const u8, namespaces: []const []const u8) !void {
