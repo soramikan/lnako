@@ -57,9 +57,18 @@ pub fn isDynamicNamedCall(function: ir.Function, name: []const u8) bool {
     return isQualifiedGlobal(name) or hasLocalName(function, name);
 }
 
+/// plugin（native/ESM）命令の本体内dispatchか。
+///
+/// ESM plugin（`--compat-js`）だけを import した program は
+/// `native_plugin_paths` が空になるため、native の有無だけで判定すると
+/// `{namespace}__{命令}` が「変数に入った関数の呼出し」と誤分類され、
+/// codegen が代入先（存在しない変数）を探して失敗する（Issue #55）。
+/// ESM plugin の namespace も同じ dispatch 対象として扱う。
 pub fn isNativePluginCall(program: ir.Program, function: ir.Function, instruction: ir.Instruction) bool {
-    return program.native_plugin_paths.len > 0 and
-        instruction.opcode == .call and
+    const has_native_plugins = program.native_plugin_paths.len > 0;
+    const has_esm_plugins = hasEsmPluginNamespace(program);
+    if (!has_native_plugins and !has_esm_plugins) return false;
+    return instruction.opcode == .call and
         instruction.direct_callee == null and
         !instruction.is_builtin_call and
         // 動的builtin束縛の印が無い呼出しはplugin dispatchへ流さない。
@@ -68,7 +77,35 @@ pub fn isNativePluginCall(program: ir.Program, function: ir.Function, instructio
         instruction.dynamic_call and
         instruction.name.len > 0 and
         lookupFunction(program, instruction.name) == null and
-        (!isDynamicNamedCall(function, instruction.name) or isPackagePluginCommandName(program, instruction.name));
+        (!isDynamicNamedCall(function, instruction.name) or
+            isPackagePluginCommandName(program, instruction.name) or
+            isEsmPluginCommandName(program, instruction.name));
+}
+
+/// `--compat-js` の ESM plugin が公開 namespace を持つか。
+pub fn hasEsmPluginNamespace(program: ir.Program) bool {
+    for (program.javascript_modules) |module| {
+        if (!module.is_plugin) continue;
+        for (module.namespaces) |namespace| {
+            // 空 namespace は直接 path import の無修飾公開 sentinel。
+            if (namespace.len > 0) return true;
+        }
+    }
+    return false;
+}
+
+/// ESM plugin の公開命令名 `{namespace}__{命令}` か。
+pub fn isEsmPluginCommandName(program: ir.Program, name: []const u8) bool {
+    for (program.javascript_modules) |module| {
+        if (!module.is_plugin) continue;
+        for (module.namespaces) |namespace| {
+            if (namespace.len == 0) continue;
+            if (name.len > namespace.len + 2 and
+                std.mem.startsWith(u8, name, namespace) and
+                name[namespace.len] == '_' and name[namespace.len + 1] == '_') return true;
+        }
+    }
+    return false;
 }
 
 /// `pkg:` import経由native pluginの公開命令名 `{namespace}__{命令}` か。
@@ -145,4 +182,98 @@ pub fn shiftOpcode(operator: []const u8) ?u8 {
     };
     for (entries) |entry| if (std.mem.eql(u8, operator, entry.operator)) return entry.opcode;
     return null;
+}
+
+const testing = std.testing;
+
+/// ESM plugin の namespace だけを持つ最小の program を作る。
+fn testEsmPluginProgram(javascript_modules: []const ir.JavaScriptModule) ir.Program {
+    return .{
+        .arena = std.heap.ArenaAllocator.init(testing.allocator),
+        .functions = &.{},
+        .module_entries = &.{},
+        .javascript_modules = @constCast(javascript_modules),
+    };
+}
+
+fn testInstruction(name: []const u8) ir.Instruction {
+    return .{
+        .result = null,
+        .span = .{ .start = 0, .end = 0, .source_start = 0, .source_end = 0, .line = 0, .column = 0 },
+        .opcode = .call,
+        .type = .dynamic,
+        .name = name,
+        .dynamic_call = true,
+        .direct_callee = null,
+        .is_builtin_call = false,
+    };
+}
+
+test "isNativePluginCallはESM pluginの公開namespaceをdispatch対象にする" {
+    const modules = [_]ir.JavaScriptModule{
+        .{ .path = "plugin.mjs", .source = "", .is_plugin = true, .namespaces = &.{"greet"} },
+    };
+    var program = testEsmPluginProgram(&modules);
+    defer program.arena.deinit();
+    const function = ir.Function{
+        .id = 0,
+        .name = "main",
+        .parameters = &.{},
+        .blocks = &.{},
+        .entry = 0,
+        .return_type = .dynamic,
+        .is_async = false,
+        .is_test = false,
+    };
+    // native plugin が無くても ESM plugin の `{ns}__{命令}` を拾う。
+    try testing.expect(isNativePluginCall(program, function, testInstruction("greet__挨拶")));
+    // namespace 不一致は拾わない。
+    try testing.expect(!isNativePluginCall(program, function, testInstruction("other__挨拶")));
+    // `dynamic_call` の印が無い呼出しは対象外。
+    var not_dynamic = testInstruction("greet__挨拶");
+    not_dynamic.dynamic_call = false;
+    try testing.expect(!isNativePluginCall(program, function, not_dynamic));
+}
+
+test "isNativePluginCallは空namespaceと非plugin moduleを無視する" {
+    // 空 namespace は直接 path import の無修飾公開 sentinel。
+    const empty_ns = [_]ir.JavaScriptModule{
+        .{ .path = "direct.mjs", .source = "", .is_plugin = true, .namespaces = &.{""} },
+    };
+    var program_empty = testEsmPluginProgram(&empty_ns);
+    defer program_empty.arena.deinit();
+    try testing.expect(!hasEsmPluginNamespace(program_empty));
+    const empty_function = ir.Function{
+        .id = 0,
+        .name = "main",
+        .parameters = &.{},
+        .blocks = &.{},
+        .entry = 0,
+        .return_type = .dynamic,
+        .is_async = false,
+        .is_test = false,
+    };
+    try testing.expect(!isNativePluginCall(program_empty, empty_function, testInstruction("__挨拶")));
+
+    // `is_plugin` でない module は plugin ではない（通常の ESM library）。
+    const library = [_]ir.JavaScriptModule{
+        .{ .path = "lib.mjs", .source = "", .is_plugin = false, .namespaces = &.{"lib"} },
+    };
+    var program_library = testEsmPluginProgram(&library);
+    defer program_library.arena.deinit();
+    try testing.expect(!hasEsmPluginNamespace(program_library));
+    try testing.expect(!isEsmPluginCommandName(program_library, "lib__関数"));
+}
+
+test "isEsmPluginCommandNameは境界を跨ぐprefixを拒否する" {
+    const modules = [_]ir.JavaScriptModule{
+        .{ .path = "plugin.mjs", .source = "", .is_plugin = true, .namespaces = &.{"greet"} },
+    };
+    var program = testEsmPluginProgram(&modules);
+    defer program.arena.deinit();
+    try testing.expect(isEsmPluginCommandName(program, "greet__挨拶"));
+    // `__` が無い・namespace が部分一致するだけの名前は対象外。
+    try testing.expect(!isEsmPluginCommandName(program, "greet_挨拶"));
+    try testing.expect(!isEsmPluginCommandName(program, "greet"));
+    try testing.expect(!isEsmPluginCommandName(program, "greetx__挨拶"));
 }
