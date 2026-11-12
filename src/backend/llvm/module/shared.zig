@@ -183,3 +183,97 @@ pub fn shiftOpcode(operator: []const u8) ?u8 {
     for (entries) |entry| if (std.mem.eql(u8, operator, entry.operator)) return entry.opcode;
     return null;
 }
+
+const testing = std.testing;
+
+/// ESM plugin の namespace だけを持つ最小の program を作る。
+fn testEsmPluginProgram(javascript_modules: []const ir.JavaScriptModule) ir.Program {
+    return .{
+        .arena = std.heap.ArenaAllocator.init(testing.allocator),
+        .functions = &.{},
+        .module_entries = &.{},
+        .javascript_modules = @constCast(javascript_modules),
+    };
+}
+
+fn testInstruction(name: []const u8) ir.Instruction {
+    return .{
+        .result = null,
+        .span = .{ .start = 0, .end = 0, .source_start = 0, .source_end = 0, .line = 0, .column = 0 },
+        .opcode = .call,
+        .type = .dynamic,
+        .name = name,
+        .dynamic_call = true,
+        .direct_callee = null,
+        .is_builtin_call = false,
+    };
+}
+
+test "isNativePluginCallはESM pluginの公開namespaceをdispatch対象にする" {
+    const modules = [_]ir.JavaScriptModule{
+        .{ .path = "plugin.mjs", .source = "", .is_plugin = true, .namespaces = &.{"greet"} },
+    };
+    var program = testEsmPluginProgram(&modules);
+    defer program.arena.deinit();
+    const function = ir.Function{
+        .id = 0,
+        .name = "main",
+        .parameters = &.{},
+        .blocks = &.{},
+        .entry = 0,
+        .return_type = .dynamic,
+        .is_async = false,
+        .is_test = false,
+    };
+    // native plugin が無くても ESM plugin の `{ns}__{命令}` を拾う。
+    try testing.expect(isNativePluginCall(program, function, testInstruction("greet__挨拶")));
+    // namespace 不一致は拾わない。
+    try testing.expect(!isNativePluginCall(program, function, testInstruction("other__挨拶")));
+    // `dynamic_call` の印が無い呼出しは対象外。
+    var not_dynamic = testInstruction("greet__挨拶");
+    not_dynamic.dynamic_call = false;
+    try testing.expect(!isNativePluginCall(program, function, not_dynamic));
+}
+
+test "isNativePluginCallは空namespaceと非plugin moduleを無視する" {
+    // 空 namespace は直接 path import の無修飾公開 sentinel。
+    const empty_ns = [_]ir.JavaScriptModule{
+        .{ .path = "direct.mjs", .source = "", .is_plugin = true, .namespaces = &.{""} },
+    };
+    var program_empty = testEsmPluginProgram(&empty_ns);
+    defer program_empty.arena.deinit();
+    try testing.expect(!hasEsmPluginNamespace(program_empty));
+    const empty_function = ir.Function{
+        .id = 0,
+        .name = "main",
+        .parameters = &.{},
+        .blocks = &.{},
+        .entry = 0,
+        .return_type = .dynamic,
+        .is_async = false,
+        .is_test = false,
+    };
+    try testing.expect(!isNativePluginCall(program_empty, empty_function, testInstruction("__挨拶")));
+
+    // `is_plugin` でない module は plugin ではない（通常の ESM library）。
+    const library = [_]ir.JavaScriptModule{
+        .{ .path = "lib.mjs", .source = "", .is_plugin = false, .namespaces = &.{"lib"} },
+    };
+    var program_library = testEsmPluginProgram(&library);
+    defer program_library.arena.deinit();
+    try testing.expect(!hasEsmPluginNamespace(program_library));
+    try testing.expect(!isEsmPluginCommandName(program_library, "lib__関数"));
+}
+
+test "isEsmPluginCommandNameは境界を跨ぐprefixを拒否する" {
+    const modules = [_]ir.JavaScriptModule{
+        .{ .path = "plugin.mjs", .source = "", .is_plugin = true, .namespaces = &.{"greet"} },
+    };
+    var program = testEsmPluginProgram(&modules);
+    defer program.arena.deinit();
+    try testing.expect(isEsmPluginCommandName(program, "greet__挨拶"));
+    // `__` が無い・namespace が部分一致するだけの名前は対象外。
+    try testing.expect(!isEsmPluginCommandName(program, "greet_挨拶"));
+    try testing.expect(!isEsmPluginCommandName(program, "greet"));
+    try testing.expect(!isEsmPluginCommandName(program, "greetx__挨拶"));
+}
