@@ -149,6 +149,17 @@ pub fn run(
                     try stderr.flush();
                     std.process.exit(2);
                 }
+                // payload の内側を SBOM の出力先にすると、payload の自己記述
+                // （bundle.json）や同梱物を SBOM が上書き・混入させる。
+                if (options.bundle_deps) {
+                    const payload_root = try compiler_pipeline.bundleDeps.payloadPath(allocator, options.output);
+                    defer allocator.free(payload_root);
+                    if (pathIsInside(allocator, payload_root, sbom_path)) {
+                        try stderr.writeAll("build: --sbomは--bundle-depsのpayload内に出力できません\n");
+                        try stderr.flush();
+                        std.process.exit(2);
+                    }
+                }
             }
             // `--bundle-deps` は embedded backend（単一 file 同梱実行ファイル）
             // では payload directory を持てないため対象外。
@@ -206,10 +217,19 @@ pub fn run(
                         &rejected,
                         prep.writableMode(init.environ_map),
                         &writable_warning,
-                    ) catch |err| blk: {
-                        if (err == error.OutOfMemory) return err;
-                        break :blk null;
+                    ) catch |err| switch (err) {
+                        error.OutOfMemory => return err,
+                        else => null,
                     };
+                    // 境界が特定できないと project 自身が同梱対象になり、
+                    // `.nako/`・秘密 file を含む project 全体が payload へ
+                    // 複製され得る。同梱は「依存だけを入れる」契約なので、
+                    // 境界不明は fail-closed にする。
+                    if (project_boundary == null) {
+                        try stderr.writeAll("build: --bundle-depsはproject rootを特定できないため中止します（nako.tomlを持つproject内で実行してください）\n");
+                        try stderr.flush();
+                        std.process.exit(2);
+                    }
                 }
                 compiler_pipeline.collectBundledPackagesForProject(allocator, io, &ir_program, project_boundary) catch |err| {
                     try stderr.print("build: 同梱packageのmetadataを読めませんでした: {s}\n", .{@errorName(err)});
@@ -656,6 +676,18 @@ fn runToolchainCommand(
     }
     try stderr.print("toolchain: 不明な操作です: {s}（status|dir|install|update|remove）\n", .{verb});
     std.process.exit(2);
+}
+
+/// `candidate` が `directory` 配下（または同一）か。両方を絶対 path へ
+/// 正規化してから比較する。
+fn pathIsInside(allocator: std.mem.Allocator, directory: []const u8, candidate: []const u8) bool {
+    const base = std.fs.path.resolve(allocator, &.{directory}) catch return false;
+    defer allocator.free(base);
+    const target = std.fs.path.resolve(allocator, &.{candidate}) catch return false;
+    defer allocator.free(target);
+    if (!std.mem.startsWith(u8, target, base)) return false;
+    if (target.len == base.len) return true;
+    return target[base.len] == std.fs.path.sep;
 }
 
 /// `plan` の結果を解放する。file の relative/source_path と files slice は

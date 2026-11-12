@@ -14,6 +14,7 @@
 //! `--sbom` の package 集合と厳密一致させる（同梱物と SBOM の単一の源は
 //! `program.bundled_packages`）。
 const std = @import("std");
+const builtin = @import("builtin");
 const lnako = @import("lnako");
 
 pub const bundle_marker = lnako.ir.nako_ir.self_marker;
@@ -25,6 +26,11 @@ const bundled_kind = lnako.ir.nako_ir.BundledPackageKind;
 /// payload directory の suffix。`lnako build -o dist/app --bundle-deps` は
 /// `dist/app.deps/` を作る。
 pub const payload_suffix = ".deps";
+
+/// payload の自己記述 file 名。存在は「この tool が書いた payload」の証拠で、
+/// 削除時の所有確認にも使う（`<out>.deps` という名前の任意 directory を
+/// 再帰削除しない）。
+pub const manifest_file_name = "bundle.json";
 
 pub const BundleFile = struct {
     /// payload directory 相対 path。`/` 区切りへ正規化する。
@@ -192,16 +198,32 @@ pub fn deletePayload(io: std.Io, payload_root: []const u8) void {
     // no-follow stat で payload が directory のときだけ削除する
     // （symlink を木ごと追わない。reparse point はリンク本体のみ消す）。
     const stat = directory.statFile(io, base, .{ .follow_symlinks = false }) catch return;
-    if (stat.kind != .directory) {
-        directory.deleteFile(io, base) catch {};
-        return;
-    }
+    if (stat.kind != .directory) return;
+    // `<out>.deps` という名前の任意ディレクトリを再帰削除しない。この tool が
+    // 書いた payload だけを消す（`bundle.json` の存在を所有の証拠にする）。
+    var owned_directory = directory.openDir(io, base, .{}) catch return;
+    defer owned_directory.close(io);
+    if (owned_directory.statFile(io, manifest_file_name, .{ .follow_symlinks = false })) |manifest_stat| {
+        if (manifest_stat.kind != .file) return;
+    } else |_| return;
     directory.deleteTree(io, base) catch {};
 }
 
 /// `<out>` から payload directory の path を作る（`<out>.deps`）。
+/// Windows ではリンカが `-o app` から `app.exe` を作るため、`-o app.exe` と
+/// `-o app` が同じ payload（`app.deps`）を指すよう executable suffix を
+/// 落とす。loader 側（`runtime/self_exe.zig`）も同じ規則で解決する。
 pub fn payloadPath(allocator: std.mem.Allocator, output_path: []const u8) ![]u8 {
-    return std.fmt.allocPrint(allocator, "{s}{s}", .{ output_path, payload_suffix });
+    return std.fmt.allocPrint(allocator, "{s}{s}", .{ payloadBase(output_path), payload_suffix });
+}
+
+/// payload 名の基準（Windows のみ executable suffix を落とす）。
+fn payloadBase(output_path: []const u8) []const u8 {
+    if (builtin.os.tag != .windows) return output_path;
+    const suffix = ".exe";
+    if (output_path.len <= suffix.len) return output_path;
+    if (!std.ascii.eqlIgnoreCase(output_path[output_path.len - suffix.len ..], suffix)) return output_path;
+    return output_path[0 .. output_path.len - suffix.len];
 }
 
 /// `plan` 結果から IR への書換情報を作る。`native_plugin_paths` が
@@ -209,19 +231,23 @@ pub fn payloadPath(allocator: std.mem.Allocator, output_path: []const u8) ![]u8 
 /// 差し替える。package 配下に無い plugin path は `--bundle-deps` の対象外
 /// （従来どおり build 機の絶対 path のまま）。
 pub fn markerFor(arena: std.mem.Allocator, packages: []const BundlePackage, plugin_path: []const u8) !?[]const u8 {
-    // IR の plugin path は相対（直接 import）の場合もあるため、実体 path で
-    // 突き合わせる。解決できない path は一致対象外（同梱されない従来 path）。
-    var resolved: ?[]u8 = null;
-    defer if (resolved) |path| arena.free(path);
-    if (std.fs.path.isAbsolute(plugin_path)) {
-        resolved = try arena.dupe(u8, plugin_path);
-    } else {
-        const joined = try std.fs.path.resolve(arena, &.{ ".", plugin_path });
-        resolved = joined;
-    }
+    // IR の plugin path は相対（直接 import）の場合も、package 内 artifact が
+    // symlink の場合もあるため、実体 path へ解決してから突き合わせる。
+    // 解決できない（削除済み・権限なし）path は一致対象外。
+    const io = std.Io.Threaded.global_single_threaded.io();
+    const absolute = if (std.fs.path.isAbsolute(plugin_path))
+        try arena.dupe(u8, plugin_path)
+    else
+        try std.fs.path.resolve(arena, &.{ ".", plugin_path });
+    defer arena.free(absolute);
+    // realpath は失敗し得る（削除済み・権限なし）。失敗時は絶対 path を
+    // そのまま突き合わせに使う。
+    const resolved_path: []const u8 = std.Io.Dir.cwd().realPathFileAlloc(io, absolute, arena) catch absolute;
+    defer if (resolved_path.ptr != absolute.ptr) arena.free(@constCast(resolved_path));
+    const resolved: []const u8 = resolved_path;
     for (packages) |package| {
         for (package.files) |file| {
-            if (!std.mem.eql(u8, file.source_path, resolved.?)) continue;
+            if (!std.mem.eql(u8, file.source_path, resolved)) continue;
             const relative = try std.fmt.allocPrint(arena, "{s}/{s}", .{ package.directory, file.relative });
             return try std.fmt.allocPrint(arena, "{s}{s}", .{ bundle_marker, relative });
         }
@@ -456,9 +482,12 @@ test "payloadPathは出力fileの隣へ.depsを付ける" {
     const path = try payloadPath(allocator, "dist/app");
     defer allocator.free(path);
     try std.testing.expectEqualStrings("dist/app.deps", path);
-    const windows_path = try payloadPath(allocator, "dist\\app.exe");
-    defer allocator.free(windows_path);
-    try std.testing.expectEqualStrings("dist\\app.exe.deps", windows_path);
+    // Windows は executable suffix を落として `-o app` と同じ payload に
+    // 揃える（それ以外の OS は指定名をそのまま使う）。
+    const exe_path = try payloadPath(allocator, "dist\\app.exe");
+    defer allocator.free(exe_path);
+    const expected = if (@import("builtin").os.tag == .windows) "dist\\app.deps" else "dist\\app.exe.deps";
+    try std.testing.expectEqualStrings(expected, exe_path);
 }
 
 test "packageDirectoryNameは同名別rootを別名にし同名を衝突させない" {

@@ -377,6 +377,17 @@ test "buildの--sbom出力先を解析する" {
     try std.testing.expectError(error.MissingSbomPath, parseBuildOptions(&.{ "main.nako3", "-o", "main", "--compat-js", "--backend", "aot", "--sbom" }));
 }
 
+test "buildの--bundle-depsを解析する" {
+    const defaults = try parseBuildOptions(&.{ "main.nako3", "-o", "main" });
+    try std.testing.expect(!defaults.bundle_deps);
+    const enabled = try parseBuildOptions(&.{ "main.nako3", "-o", "main", "--bundle-deps" });
+    try std.testing.expect(enabled.bundle_deps);
+    // `--sbom` と併用できる（どちらも同梱物の記述）。
+    const with_sbom = try parseBuildOptions(&.{ "main.nako3", "-o", "main", "--bundle-deps", "--sbom", "out.spdx.json" });
+    try std.testing.expect(with_sbom.bundle_deps);
+    try std.testing.expectEqualStrings("out.spdx.json", with_sbom.sbom.?);
+}
+
 test "buildのcompat-js backendを解析する" {
     // 既定はembedded（従来方式）。AOT+QuickJSは --backend aot の明示opt-in。
     const defaults = try parseBuildOptions(&.{ "main.nako3", "-o", "main", "--compat-js" });
