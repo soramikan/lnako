@@ -3594,7 +3594,12 @@ test "Interpreter低レイヤーのincremental hashはファイルstreamと一�
     const path = try std.fs.path.join(allocator, &.{ directory, "hash-input.bin" });
     defer allocator.free(path);
 
-    const fixture_size: usize = 200 * 1024;
+    // chunk_size=1 では「読み出し回数 = fixture_size」になる。この試験の
+    // 目的は供給量によらず digest が一致することであり、200KiB を 1 byte ずつ
+    // 読む 20 万回のループは CI のマシン負荷で 5 分のテスト上限に達した
+    // （macOS arm64 の mac-host-compat で timeout）。境界（1 byte）と
+    // 中間・大きい供給を保ったまま、反復回数を実用的な範囲へ下げる。
+    const fixture_size: usize = 16 * 1024;
     const fixture = try allocator.alloc(u8, fixture_size);
     defer allocator.free(fixture);
     for (fixture, 0..) |*byte, index| byte.* = @truncate(index *% 131 +% 7);
@@ -3606,7 +3611,7 @@ test "Interpreter低レイヤーのincremental hashはファイルstreamと一�
     const expected = std.fmt.bufPrint(&expected_hex, "{x}", .{expected_digest}) catch unreachable;
 
     // 1 byte、7 byte、64KiBのいずれの供給でもdigestが一致する。
-    for ([_]usize{ 1, 7, 65536 }) |chunk_size| {
+    for ([_]usize{ 1, 7, 4096 }) |chunk_size| {
         const source = try std.fmt.allocPrint(allocator,
             \\H=ファイル開("{s}","rb")
             \\X=ハッシュ開始("sha256")

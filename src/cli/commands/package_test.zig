@@ -196,6 +196,8 @@ test "package publish は artifact と version record を PUT し、再実行を
     const routes = [_]RegistryRoute{
         .{ .method = "PUT", .path = artifact_path, .status = 201 },
         .{ .method = "PUT", .path = record_path, .status = 201 },
+        // publish は version record の公開後に index.json へ package を登録する。
+        .{ .method = "PUT", .path = "/index.json", .status = 204 },
     };
     try server.serve(&routes);
 
@@ -206,9 +208,9 @@ test "package publish は artifact と version record を PUT し、再実行を
     var first = try publish.run(a, io, options, &diagnostics);
     defer first.deinit();
     try testing.expectEqual(publish.Status.uploaded, first.status);
-    // GET（未公開）+ artifact PUT + record PUT。
-    try testing.expectEqual(@as(usize, 3), server.requestCount());
-    try testing.expectEqual(@as(usize, 2), server.countCaptures("PUT"));
+    // GET（未公開）+ artifact PUT + record PUT + index GET + index PUT。
+    try testing.expectEqual(@as(usize, 5), server.requestCount());
+    try testing.expectEqual(@as(usize, 3), server.countCaptures("PUT"));
 
     const artifact_request = server.findCapture("PUT", artifact_path).?;
     try testing.expectEqualStrings("Bearer test-token", artifact_request.authorization.?);
@@ -233,8 +235,10 @@ test "package publish は artifact と version record を PUT し、再実行を
     var second = try publish.run(a, io, options, &diagnostics2);
     defer second.deinit();
     try testing.expectEqual(publish.Status.published, second.status);
-    try testing.expectEqual(@as(usize, 2), server.countCaptures("PUT"));
-    try testing.expectEqual(@as(usize, 4), server.requestCount());
+    // 再実行でも index 登録は通す（索引登録だけ失敗して中断した公開を
+    // 再試行できるようにするため）。登録は冪等なので内容は変わらない。
+    try testing.expectEqual(@as(usize, 4), server.countCaptures("PUT"));
+    try testing.expectEqual(@as(usize, 8), server.requestCount());
     try testing.expectEqualStrings(first.artifact_sha256, second.artifact_sha256);
 
     var out = std.Io.Writer.Allocating.init(a);
@@ -312,6 +316,7 @@ test "package publish は送信失敗を保持し、再実行で復旧する" {
     const healthy_routes = [_]RegistryRoute{
         .{ .method = "PUT", .path = artifact_path, .status = 201 },
         .{ .method = "PUT", .path = record_path, .status = 201 },
+        .{ .method = "PUT", .path = "/index.json", .status = 204 },
     };
     try healthy.serve(&healthy_routes);
     var diagnostics2 = diag.List.init(a);
@@ -321,7 +326,8 @@ test "package publish は送信失敗を保持し、再実行で復旧する" {
     var retried = try publish.run(a, io, retry_options, &diagnostics2);
     defer retried.deinit();
     try testing.expectEqual(publish.Status.uploaded, retried.status);
-    try testing.expectEqual(@as(usize, 2), healthy.countCaptures("PUT"));
+    // artifact・record・index の 3 PUT。
+    try testing.expectEqual(@as(usize, 3), healthy.countCaptures("PUT"));
 }
 
 fn serverCapturesFor(server: *RegistryServer, method: []const u8, path: []const u8) usize {
@@ -477,6 +483,7 @@ test "package publish は record 送信失敗後も再実行で復旧する" {
     const healthy_routes = [_]RegistryRoute{
         .{ .method = "PUT", .path = artifact_path, .status = 201 },
         .{ .method = "PUT", .path = record_path, .status = 201 },
+        .{ .method = "PUT", .path = "/index.json", .status = 204 },
     };
     try healthy.serve(&healthy_routes);
     var retry_diagnostics = diag.List.init(a);
@@ -486,9 +493,9 @@ test "package publish は record 送信失敗後も再実行で復旧する" {
     var retried = try publish.run(a, io, retry_options, &retry_diagnostics);
     defer retried.deinit();
     try testing.expectEqual(publish.Status.uploaded, retried.status);
-    // 再実行時は GET 404 のあと artifact と record の 2 PUT。
-    try testing.expectEqual(@as(usize, 2), healthy.countCaptures("PUT"));
-    try testing.expectEqual(@as(usize, 3), healthy.captureCount());
+    // 再実行時は GET 404 + artifact PUT + record PUT + index GET + index PUT。
+    try testing.expectEqual(@as(usize, 3), healthy.countCaptures("PUT"));
+    try testing.expectEqual(@as(usize, 5), healthy.captureCount());
 }
 
 test "package publish は registry 照会の HTTP 失敗を送信前に拒否する" {
