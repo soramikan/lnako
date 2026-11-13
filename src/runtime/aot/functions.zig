@@ -210,6 +210,39 @@ pub export fn lnako_aot_native_plugin_call(
     success = runtime.failure_epoch == start_epoch;
 }
 
+/// ESM plugin の命令を名前で呼ぶ（Issue #55）。native plugin と同じ ABI 形で、
+/// dispatch trace の route だけ `esm-plugin` にする。
+pub export fn lnako_aot_esm_plugin_call(
+    out: *state.Value,
+    arguments: ?[*]const state.Value,
+    len: usize,
+    name: ?[*]const u8,
+    name_len: usize,
+    site_id: u64,
+) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (state.active_runtime) |*active| active else return;
+    const name_pointer = name orelse {
+        runtime.setFailure(error.InvalidArgumentCount);
+        return;
+    };
+    const command_name = name_pointer[0..name_len];
+    const call_id = runtime.dispatch_trace.begin(command_name, 0, "esm-plugin", site_id);
+    const start_epoch = runtime.failure_epoch;
+    var success = false;
+    defer runtime.dispatch_trace.result(call_id, command_name, 0, "esm-plugin", site_id, success);
+    if (arguments == null and len != 0) {
+        runtime.setFailure(error.InvalidArgumentCount);
+        return;
+    }
+    const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+    out.* = state.esmPluginBuiltin(runtime, command_name, actual) catch |failure| {
+        runtime.setFailure(failure);
+        return;
+    };
+    success = runtime.failure_epoch == start_epoch;
+}
+
 pub export fn lnako_aot_function_new(out: *state.Value, callback: state.FunctionCallback, arity: usize, captures: ?[*]const state.Value, capture_count: usize) callconv(.c) void {
     out.* = .{};
     const runtime = if (state.active_runtime) |*value| value else return;

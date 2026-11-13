@@ -16,6 +16,7 @@ const DebugLocation = shared.DebugLocation;
 const arithmeticOpcode = shared.arithmeticOpcode;
 const isDisplayCall = shared.isDisplayCall;
 const isNativePluginCall = shared.isNativePluginCall;
+const isEsmPluginCommandName = shared.isEsmPluginCommandName;
 const lookupFunction = shared.lookupFunction;
 const shiftOpcode = shared.shiftOpcode;
 const valueType = shared.valueType;
@@ -132,6 +133,7 @@ pub fn emitPreamble(emitter: *Emitter) !void {
             "declare void @lnako_aot_native_plugin_register(ptr, i64)\n" ++
             "declare void @lnako_aot_native_plugin_package_register(ptr, i64, ptr, i64)\n" ++
             "declare void @lnako_aot_native_plugin_call(ptr, ptr, i64, ptr, i64, i64)\n" ++
+            "declare void @lnako_aot_esm_plugin_call(ptr, ptr, i64, ptr, i64, i64)\n" ++
             "declare i64 @lnako_aot_dispatch_display_begin(i64)\n" ++
             "declare i64 @lnako_aot_dispatch_display_begin_with_epoch(i64, ptr)\n" ++
             "declare void @lnako_aot_dispatch_result(i64, i64, i64)\n" ++
@@ -194,8 +196,16 @@ pub fn collectModuleData(emitter: *Emitter) !void {
                 try emitter.appendGlobal("エラーメッセージ");
             }
             if (instruction.opcode == .call and instruction.direct_callee == null) {
-                if (isNativePluginCall(emitter.program, function, instruction) and emitter.nativePluginNameIndex(instruction.name) == null) {
-                    try emitter.native_plugin_names.append(emitter.allocator, instruction.name);
+                if (isNativePluginCall(emitter.program, function, instruction)) {
+                    // ESM plugin の命令は runtime が module 評価で登録するため、
+                    // 名前を ABI 引数として渡す別の表へ入れる。
+                    if (isEsmPluginCommandName(emitter.program, instruction.name)) {
+                        if (emitter.esmPluginNameIndex(instruction.name) == null) {
+                            try emitter.esm_plugin_names.append(emitter.allocator, instruction.name);
+                        }
+                    } else if (emitter.nativePluginNameIndex(instruction.name) == null) {
+                        try emitter.native_plugin_names.append(emitter.allocator, instruction.name);
+                    }
                 }
                 // aot_builtin.lookupは全コマンド名への逐次比較なので、call命令
                 // ごとに一度だけ解決して以降の判定は解決済みのenumで行う。
@@ -386,6 +396,19 @@ pub fn emitDeclarations(emitter: *Emitter) !void {
     if (try emitter.hasDynamicBuiltin() and emitter.globals.items.len > 0) try writer.writeByte('\n');
     for (emitter.native_plugin_names.items, 0..) |name, index| {
         try writer.print("@lnako.native.plugin.name.{d} = private unnamed_addr constant [{d} x i8] ", .{ index, name.len });
+        if (name.len == 0) {
+            try writer.writeAll("zeroinitializer\n");
+        } else {
+            try writer.writeByte('[');
+            for (name, 0..) |byte, byte_index| {
+                if (byte_index > 0) try writer.writeAll(", ");
+                try writer.print("i8 {d}", .{byte});
+            }
+            try writer.writeAll("]\n");
+        }
+    }
+    for (emitter.esm_plugin_names.items, 0..) |name, index| {
+        try writer.print("@lnako.esm.plugin.name.{d} = private unnamed_addr constant [{d} x i8] ", .{ index, name.len });
         if (name.len == 0) {
             try writer.writeAll("zeroinitializer\n");
         } else {

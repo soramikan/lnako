@@ -9,8 +9,7 @@
 // を実際のバイナリで実行する。ESM plugin 命令と npm bare import が同時に
 // 動くことを stdout 全体で確認する。加えて `--backend aot` で同じ project を
 // ビルドし、AOT runtime の ESM manifest 経由で npm bare import が解決できる
-// ことを確認する（ESM plugin 命令の AOT dispatch は follow-up のため、AOT は
-// `aot-main.nako3` = JS実行経由の entry を使う。この制約は出力に明記する）。
+// ことを確認する（AOT は plugin 命令を実行し、npm bare import も解決する）。
 //
 // 外部ネットワーク・npm CLI・Node lifecycle script は起動しない。registry は
 // このプロセス内の HTTP server を 127.0.0.1 で listen する（#226 と同じ方針）。
@@ -299,13 +298,14 @@ async function main() {
       return;
     }
 
-    // --- AOT: npm resolver / ESM manifest を生成物で確認する ---
-    // ESM plugin 命令の AOT dispatch は follow-up。同じ project のまま、
-    // npm bare import を `JS実行` から解決する entry で AOT runtime を検証する。
+    // --- AOT: ESM plugin 命令と npm bare import を生成物で確認する ---
+    // `main.nako3` は plugin 命令 `leftpad__整形` を直接呼ぶ（Issue #55）。
+    // plugin module は AOT runtime が評価し、命令は埋め込み interpreter の
+    // `__lnako_commands` に登録される。
     const binary = path.join(work, `lnako-plugin-npm-aot${executableSuffix}`);
     const sbomPath = path.join(work, "lnako-plugin-npm-aot.spdx.json");
     const beforeBuild = registry.requests.length;
-    await runChecked(options.compiler, ["build", "aot-main.nako3", "--compat-js", "--backend", "aot", "--offline", "-o", binary, "--sbom", sbomPath], { cwd: app, env }, "build --compat-js --backend aot --sbom");
+    await runChecked(options.compiler, ["build", "main.nako3", "--compat-js", "--backend", "aot", "--offline", "-o", binary, "--sbom", sbomPath], { cwd: app, env }, "build --compat-js --backend aot --sbom");
     if (registry.requests.length !== beforeBuild) {
       fail(`AOT build が registry へ要求しました: ${registry.requests.slice(beforeBuild).join(", ")}`);
     }
@@ -320,6 +320,12 @@ async function main() {
     const rejectedSbom = await run(options.compiler, ["build", "main.nako3", "--sbom", "rejected.spdx.json", "-o", binary], { cwd: app, env });
     if (rejectedSbom.status === 0 || !`${rejectedSbom.stdout}${rejectedSbom.stderr}`.includes("--compat-js")) {
       fail("--sbom が compat AOT 以外で拒否されません");
+    }
+    // plugin 命令が AOT 生成物から実際に動く（interpreter と同じ出力）。
+    const aotRun = await run(binary, [], { cwd: work, env });
+    if (aotRun.status !== 0) fail(`AOT 生成物の実行が失敗しました: ${aotRun.stdout}${aotRun.stderr}`);
+    if (aotRun.stdout !== expectedAotStdout) {
+      fail(`AOT 生成物の stdout が期待値と異なります:\n--- expected ---\n${expectedAotStdout}\n--- actual ---\n${aotRun.stdout}`);
     }
     // 生成物・入力 source を SBOM で上書きする指定は拒否する。
     const overwrittenSbom = await run(options.compiler, ["build", "aot-main.nako3", "--compat-js", "--backend", "aot", "-o", binary, "--sbom", binary], { cwd: app, env });
@@ -383,7 +389,7 @@ async function main() {
     if (!image.includes(Buffer.from('"license":"MIT"'))) {
       fail("AOT 生成物の ESM manifest に同梱 package の license が収録されていません");
     }
-    console.log("参照 plugin+npm E2E: AOT OK（npm bare import 解決・plugin source 収録。plugin 命令の AOT dispatch は follow-up）");
+    console.log("参照 plugin+npm E2E: AOT OK（plugin 命令の dispatch・npm bare import 解決・SBOM 収録）");
   } finally {
     await registry.close();
     fs.rmSync(work, { recursive: true, force: true });

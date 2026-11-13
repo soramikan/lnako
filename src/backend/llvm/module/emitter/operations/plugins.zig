@@ -602,6 +602,31 @@ pub fn writeRegexpCall(emitter: *Emitter, function: ir.Function, instruction: ir
 
 const DynamicCallTarget = union(enum) { name: []const u8, value: ir.ValueId };
 
+/// ESM plugin の命令呼出し。native plugin と同じ引数配置で、名前解決を
+/// runtime（評価済み module の `__lnako_commands`）へ委ねる。
+pub fn writeEsmPluginCall(emitter: *Emitter, function: ir.Function, instruction: ir.Instruction, scope: usize, aggregate_count: usize) !void {
+    const result = instruction.result orelse return error.MissingInstructionResult;
+    const name_index = emitter.esmPluginNameIndex(instruction.name) orelse return error.MissingPluginName;
+    const site_id = instruction.site_id orelse 0;
+    if (instruction.operands.len > aggregate_count) return error.InvalidCallScratch;
+    for (instruction.operands, 0..) |argument, index| {
+        try emitter.output.writer.print("  %esm-plugin.{d}.slot.{d} = getelementptr [{d} x %lnako.Value], ptr %aggregate.values, i64 0, i64 {d}", .{ result, index, aggregate_count, index });
+        try emitter.debugSuffix(instruction.span, scope);
+        try emitter.output.writer.writeAll("  store %lnako.Value ");
+        try constants_mod.writeValueRef(emitter, function, argument);
+        try emitter.output.writer.print(", ptr %esm-plugin.{d}.slot.{d}", .{ result, index });
+        try emitter.debugSuffix(instruction.span, scope);
+    }
+    try emitter.output.writer.print("  call void @lnako_aot_esm_plugin_call(ptr %root.slot.{d}, ptr ", .{result});
+    if (instruction.operands.len > 0) {
+        try emitter.output.writer.print("%esm-plugin.{d}.slot.0", .{result});
+    } else try emitter.output.writer.writeAll("null");
+    try emitter.output.writer.print(", i64 {d}, ptr @lnako.esm.plugin.name.{d}, i64 {d}, i64 {d})", .{ instruction.operands.len, name_index, instruction.name.len, site_id });
+    try emitter.debugSuffix(instruction.span, scope);
+    try emitter.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
+    try emitter.debugSuffix(instruction.span, scope);
+}
+
 pub fn writeNativePluginCall(emitter: *Emitter, function: ir.Function, instruction: ir.Instruction, scope: usize, aggregate_count: usize) !void {
     const result = instruction.result orelse return error.MissingInstructionResult;
     const name_index = emitter.nativePluginNameIndex(instruction.name) orelse return error.MissingNativePluginName;

@@ -29,6 +29,8 @@ pub const Emitter = struct {
     debug_paths: std.ArrayList(DebugPathConstant) = .empty,
     system_strings: std.ArrayList(SystemStringConstant) = .empty,
     native_plugin_names: std.ArrayList([]const u8) = .empty,
+    /// ESM plugin 命令の名前（runtime の module 評価で登録される）。
+    esm_plugin_names: std.ArrayList([]const u8) = .empty,
     system_arrays: std.ArrayList(usize) = .empty,
     system_dictionaries: std.ArrayList(usize) = .empty,
     system_era_data: std.ArrayList(usize) = .empty,
@@ -59,6 +61,7 @@ pub const Emitter = struct {
         for (self.system_strings.items) |constant| self.allocator.free(constant.units);
         self.system_strings.deinit(self.allocator);
         self.native_plugin_names.deinit(self.allocator);
+        self.esm_plugin_names.deinit(self.allocator);
         self.system_arrays.deinit(self.allocator);
         self.system_dictionaries.deinit(self.allocator);
         self.system_era_data.deinit(self.allocator);
@@ -149,6 +152,11 @@ pub const Emitter = struct {
 
     pub fn nativePluginNameIndex(self: Emitter, name: []const u8) ?usize {
         for (self.native_plugin_names.items, 0..) |candidate, index| if (std.mem.eql(u8, candidate, name)) return index;
+        return null;
+    }
+
+    pub fn esmPluginNameIndex(self: Emitter, name: []const u8) ?usize {
+        for (self.esm_plugin_names.items, 0..) |candidate, index| if (std.mem.eql(u8, candidate, name)) return index;
         return null;
     }
 

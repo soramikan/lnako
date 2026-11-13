@@ -121,6 +121,35 @@ pub const DynamicInterpreterState = struct {
             .namespace = try path_allocator.dupe(u8, package.namespace),
         };
         state.program.native_plugin_packages = packages;
+        // compat ESM manifest の module を埋め込み interpreter へ引き継ぐ。
+        // `Interpreter` の初期化時に `installModules` が走り、plugin 命令が
+        // この state の `__lnako_commands` に登録される。これが無いと
+        // `callExternalCommand` が `UnknownCommand` になる。
+        if (owner.esm_modules.items.len > 0) {
+            const modules = try path_allocator.alloc(dynamic_ir.JavaScriptModule, owner.esm_modules.items.len);
+            for (owner.esm_modules.items, modules) |module, *copy| {
+                copy.* = .{
+                    .path = try path_allocator.dupe(u8, module.path),
+                    .source = try path_allocator.dupe(u8, module.source),
+                    .is_plugin = module.is_plugin,
+                    .package_root = if (module.package_root) |root| try path_allocator.dupe(u8, root) else null,
+                    .namespaces = blk: {
+                        const list = try path_allocator.alloc([]const u8, module.namespaces.len);
+                        for (module.namespaces, list) |namespace, *slot| slot.* = try path_allocator.dupe(u8, namespace);
+                        break :blk list;
+                    },
+                    .bare_aliases = blk: {
+                        const list = try path_allocator.alloc([]const u8, module.bare_aliases.len);
+                        for (module.bare_aliases, list) |alias, *slot| slot.* = try path_allocator.dupe(u8, alias);
+                        break :blk list;
+                    },
+                };
+            }
+            state.program.javascript_modules = modules;
+            // `Interpreter` は `program.compat_js` で QuickJS state を有効化
+            // する。ESM module を持つなら compat 経路なので有効にする。
+            state.program.compat_js = true;
+        }
         state.host_context = .{ .owner = owner };
         state.interpreter = dynamic_interpreter.Interpreter.init(
             allocator,
@@ -561,4 +590,26 @@ pub fn concatAotValues(runtime: *Runtime, left: Value, right: Value) !Value {
     @memcpy(combined[0..left_view.units.len], left_view.units);
     @memcpy(combined[left_view.units.len..], right_view.units);
     return runtime.ownString(combined);
+}
+
+/// ESM plugin の命令を名前で呼ぶ（Issue #55）。
+///
+/// AOT の compat runtime は plugin module を評価して `__lnako_commands` へ
+/// 命令を登録する。呼出し側は命令名と実引数だけを渡し、解決は embedded
+/// interpreter の `callExternalCommand`（plugin 命令を含む dispatch 表）へ
+/// 委譲する。native plugin の `nativePluginBuiltin` と同じ変換経路を使う。
+pub fn esmPluginBuiltin(runtime: *Runtime, name: []const u8, arguments: []const Value) !Value {
+    const dynamic_state = try dynamicInterpreterState(runtime);
+    const dynamic_arguments = try runtime.allocator.alloc(dynamic_value.Value, arguments.len);
+    defer runtime.allocator.free(dynamic_arguments);
+    @memset(dynamic_arguments, .undefined);
+    var roots = dynamic_state.value_runtime.rootFrame();
+    defer roots.deinit();
+    for (arguments, dynamic_arguments) |argument, *converted| {
+        converted.* = try aotToDynamicValue(dynamic_state, argument);
+        try roots.protect(converted);
+    }
+    var result = try dynamic_state.interpreter.callExternalCommand(name, dynamic_arguments);
+    try roots.protect(&result);
+    return dynamicToAotValue(dynamic_state, result);
 }

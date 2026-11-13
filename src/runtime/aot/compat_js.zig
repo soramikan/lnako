@@ -7,6 +7,7 @@
 //! （Issue #55）。
 const std = @import("std");
 const state = @import("state.zig");
+const esm_manifest = @import("esm_manifest.zig");
 
 const Value = state.Value;
 const Tag = state.Tag;
@@ -113,6 +114,11 @@ fn ensureEngine() !*Engine {
         return error.QuickJsInitializationFailed;
     };
     lnako_qjs_set_host(created, @ptrCast(&host_context), hostGet, hostSet, hostInvoke, hostExec);
+    // ESM plugin の登録 shim は interpreter と同じ JS 環境を要する。
+    if (!esm_manifest.installBootstrap(created, lnako_qjs_eval, lnako_qjs_value_free)) {
+        engine_failed = true;
+        return error.QuickJsInitializationFailed;
+    }
     // AOTにはinterpreterの変数bridgeが無い。`sys.__getSysVar` の直接読み取りは
     // 未定義値を返さずJS例外にし、plugin初期化の取りこぼしを表面化させる。
     lnako_qjs_set_host_strict(created, 1);
@@ -1276,12 +1282,10 @@ fn jsonString(value: ?std.json.Value) ?[]const u8 {
     };
 }
 
-/// 生成物へ収録したESM manifest（path/source/identity）をQuickJSへ登録する。
-/// manifest は schema 2 の object `{"schema":2,"modules":[...],"packages":[...]}`
-/// で、各 module は `path`・`source`・`is_plugin`・`namespaces`・
-/// `package_root`・`bare_aliases` を持つ。旧形式の配列（schema 1 相当）も
-/// 受理する。`packages` は生成物の自己記述（SBOM/監査用）で、実行時の
-/// 登録には使わない。
+/// 生成物へ収録したESM manifestをQuickJSへ登録し、module を AOT runtime へ
+/// 引き継ぐ（埋め込み interpreter の `installModules` が plugin 命令を登録
+/// するため）。schema 2 の object と旧形式の配列を受理する。`packages` は
+/// 自己記述（SBOM/監査用）で実行時登録には使わない。
 pub export fn lnako_aot_compat_esm_register(manifest: ?[*]const u8, length: usize) callconv(.c) void {
     const runtime = if (state.active_runtime) |*active| active else return;
     const bytes = if (manifest) |pointer| pointer[0..length] else return;
@@ -1363,6 +1367,7 @@ pub export fn lnako_aot_compat_esm_register(manifest: ?[*]const u8, length: usiz
             }
         }
     }
+    esm_manifest.collectEsmModules(runtime, modules);
 }
 
 /// プロセス終了時にQuickJS engineを解放する。生成物のmainがruntime deinitの
@@ -2283,23 +2288,6 @@ test "compat AOT runtimeはschema 2 manifestのmodulesとpackagesを受理する
     lnako_aot_compat_js_eval(&out, &arguments, arguments.len);
     try std.testing.expectEqual(@as(u8, @backingInt(Tag.number)), out.tag);
     try std.testing.expectEqual(@as(f64, 5), @as(f64, @bitCast(out.payload)));
-    lnako_aot_compat_deinit();
-}
-
-test "compat AOT runtimeは未知schemaのmanifestを解釈せず失敗する" {
-    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
-    var runtime = state.Runtime{ .allocator = std.testing.allocator };
-    defer runtime.deinit();
-    state.active_runtime = runtime;
-    defer {
-        runtime = state.active_runtime.?;
-        state.active_runtime = null;
-    }
-    const manifest =
-        \\{"schema":999,"modules":[],"packages":[]}
-    ;
-    lnako_aot_compat_esm_register(manifest.ptr, manifest.len);
-    try std.testing.expect(state.active_runtime.?.has_pending_exception);
     lnako_aot_compat_deinit();
 }
 

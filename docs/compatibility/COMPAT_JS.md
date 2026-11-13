@@ -171,10 +171,7 @@ npm の ESM package は、lock と cache から解決した結果だけを使い
 - `--sbom` は `--compat-js --backend aot` 専用です（他の組み合わせ、および生成物・入力 source と同じパスの指定は usage エラー）。通常 AOT は manifest も SBOM も生成しません。
 - 同梱する package root の `package.json` / `nako.toml` が無い、または壊れている場合は、manifest と SBOM を不完全にせず build を失敗させます。
 - ESM plugin の命令 `{namespace}__{命令}` は AOT の codegen で plugin dispatch として分類されます（native plugin の `native_plugin_paths` が空でも、ESM plugin の namespace を見て判定します）。以前は「変数に入った関数の呼出し」と誤分類され、存在しない変数の代入先を探して `UnknownAssignmentTarget` で build が失敗していました。
-- **実行時の invoke は未対応**です。AOT 生成物から ESM plugin 命令を呼ぶと `UnknownCommand` になります。原因は 3 点で、いずれも `--backend aot` の runtime が `compat/quickjs.zig`（interpreter 側の `State`）をリンクせず、モジュール評価を再実装していないことから来ています。
-  1. AOT は module source を QuickJS へ登録するが、**plugin module を評価しない**。`installModules` 相当の「`__lnako_beginModuleEval` → `eval_module` → `__lnako_registerPlugin` → `__lnako_reregisterEvalPlugins`」が無いため `__lnako_commands` が空のままになる。
-  2. `hostInvoke` が null を返す。AOT には JS 関数 id → nako 関数値のレジストリが無い。`lnako_aot_function_call` で関数値自体は呼べるため、レジストリと `callResultFromRaw`/`shallowArgumentRaw` を組み合わせれば実装可能（未着手）。
-  3. 命令名から `__lnako_commands` の entry を引く ABI が無い。
+- **実行時の invoke も対応しました**（Issue #55）。AOT の compat runtime は plugin module を評価して `__lnako_commands` を作り、同じ manifest の module を埋め込み interpreter の `program.javascript_modules` へ引き継ぎます。interpreter は初期化時に `installModules` を実行するため、`{ns}__{命令}` の呼出しは `lnako_aot_esm_plugin_call` → `callExternalCommand` → 登録済み plugin 命令へ解決されます。dispatch trace の route は `esm-plugin` です。
 - 参考: plugin モジュール内部の bare import は起動時の bare alias 登録で解決され、`JS実行`・`JS関数実行` から plugin の関数を呼ぶ経路は動作します。参照 fixture は `tests/fixtures/package-plugin-npm/`（`aot-main.nako3`）。
 - ESM-only の path 依存（`esm` だけを宣言したパッケージ）を lock で解決するには、`compat-js = true` を宣言した profile を置きます。lock と sync は、`default` が無ければ唯一の profile を自動で選びます。
 

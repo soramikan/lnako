@@ -144,7 +144,7 @@ Project [#2](https://github.com/users/soramikan/projects/2)、label `package-sys
 | 命令 metadata の静的検査（#52） | 完了 | なし（declared command 接続・OS 条件の照合表示・名前空間 check・`check --load-plugins` の JS/native 実登録照合は #211/#227/#251/#259 で実装済み） |
 | npm 取得（#53） | 部分実装 | Node lifecycle script は対象外（cache 欠落時の sync 側 tarball 取得は実装済み） |
 | QuickJS ESM（#54） | 部分実装 | 下記の npm ESM 境界。QuickJS ESM の実行は `--compat-js` のみ。lock context 別の複数 version 解決・importer scope・cache miss の instance 単位診断は #258 で実装済み |
-| AOT + QuickJS（#55） | 部分実装 | `JSメソッド実行`/`JSオブジェクト取得` の AOT は #256、AOT dispatch trace（compat JS 4命令）は #263、ESM plugin 命令の AOT codegen は #271 で実装済み。残りは値・callback・GC の完全接続と、ESM plugin 命令の実行時 invoke（AOT は plugin module を評価せず `hostInvoke` も null。COMPAT_JS.md に 3 点の原因を記載） |
+| AOT + QuickJS（#55） | 部分実装 | `JSメソッド実行`/`JSオブジェクト取得` の AOT は #256、AOT dispatch trace（compat JS 4命令）は #263、ESM plugin 命令の AOT codegen は #271 で実装済み。ESM plugin 命令の実行時 invoke は本変更で実装済み（AOT が plugin module を評価し、埋め込み interpreter の `installModules` が命令を登録）。残りは値・callback・GC の完全接続 |
 | 依存同梱（#56） | 完了 | なし（payload・移動可能 loader・SBOM 一致・source-only 依存・推移的動的 library 依存の検出/複製/`bundle.json` 記録/先読み、in-place 書換は #260/#268/#269 と本変更で実装済み） |
 | publish（#57） | 部分実装 | dry-run と static registry への冪等 PUT は #252、publish→取得 E2E は #257、実 registry backend への upload と `index.json` 登録は本変更で実装済み。target 適合の要求範囲は PUBLISHING.md §4.1 で確定。version record の `artifacts` に収録実装（source/native/ESM）を記録するよう本変更で修正済み。残りは中央 publication API（認証付き一括登録） |
 | 3 OS E2E・文書（#58） | 完了 | なし（参照パッケージの publish→取得 E2E は #257、3 OS 結合は CI の `Package publish E2E check` が macOS/Linux/Windows でフル CI 時に実行、文書は #253） |
