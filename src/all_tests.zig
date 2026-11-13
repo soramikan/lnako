@@ -30,6 +30,7 @@ test {
     _ = @import("cli/commands/package.zig");
 
     _ = @import("lnako").package.diagnostics;
+    _ = @import("lnako").package.publish;
     _ = @import("lnako").package.toml;
     _ = @import("lnako").package.semver;
     _ = @import("lnako").package.marker;

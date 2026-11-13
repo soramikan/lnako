@@ -427,6 +427,9 @@ async function main() {
     const leftpadRecord = registry.publishedRecord("leftpad");
     if (!leftpadRecord || leftpadRecord.version !== "1.0.0") fail("leftpad の version record が不正です");
     if (!leftpadRecord.artifacts.source.sha256.startsWith("sha256:")) fail("leftpad record の artifact hash がありません");
+    // `.npkg` に収録される実装の種類を record へ書く（consumer が実装を選ぶ
+    // 唯一の情報）。ESM export を宣言した package は `ESM` を持つ。
+    if (!leftpadRecord.artifacts.ESM) fail("leftpad record に ESM artifact がありません（宣言した実装が記録されていません）");
     console.log("参照 publish E2E: leftpad publish OK（ESM plugin、compat-js profile で検証）");
 
     // greeting の lock は fixture registry から leftpad を解決する。

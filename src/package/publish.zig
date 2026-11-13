@@ -817,12 +817,48 @@ fn buildVersionRecord(
         if (index > 0) try writer.writeByte(',');
         try std.json.Stringify.value(name, .{}, writer);
     }
-    try writer.writeAll("],\"artifacts\":{\"source\":{\"kind\":\"source\",\"type\":\".npkg\",\"sha256\":");
-    try std.json.Stringify.value(artifact_sha, .{}, writer);
-    try writer.writeAll(",\"url\":");
-    try std.json.Stringify.value(artifact_url, .{}, writer);
-    try writer.writeAll("}}}");
+    // `.npkg` には manifest が宣言した source/native/ESM artifact が全て
+    // 収録される。registry の `artifacts` は「その版にどの実装があるか」を
+    // consumer へ伝える唯一の情報なので、収録物に対応する kind を全て書く。
+    // source だけを書くと、native/ESM を持つ package でも consumer が
+    // `has_native`/`has_esm` を false と判断し、実装を選べない。
+    const kinds = try artifactKinds(a, manifest);
+    defer a.free(kinds);
+    try writer.writeAll("],\"artifacts\":{");
+    for (kinds, 0..) |kind, index| {
+        if (index > 0) try writer.writeByte(',');
+        try writer.writeAll("\"");
+        try writer.writeAll(kind);
+        try writer.writeAll("\":{\"kind\":\"");
+        try writer.writeAll(kind);
+        try writer.writeAll("\",\"type\":\".npkg\",\"sha256\":");
+        try std.json.Stringify.value(artifact_sha, .{}, writer);
+        try writer.writeAll(",\"url\":");
+        try std.json.Stringify.value(artifact_url, .{}, writer);
+        try writer.writeAll("}");
+    }
+    // 各 artifact を閉じた後の `}`（artifacts）と、record 全体の `}`。
+    try writer.writeAll("}}");
     return out.toOwnedSlice() catch return error.OutOfMemory;
+}
+
+/// `.npkg` に収録される実装の種類。manifest の exports が宣言した
+/// source（`path`）・native・ESM artifact を重複なく並べる。
+/// source は常に 1 つ目の要素にする（registry の `source` key を安定させる）。
+fn artifactKinds(a: Allocator, manifest: *const manifest_mod.Manifest) ![]const []const u8 {
+    // `.npkg` は常に source（`.nako3` と manifest metadata）を含む。
+    var kinds: std.ArrayListUnmanaged([]const u8) = .empty;
+    errdefer kinds.deinit(a);
+    try kinds.append(a, "source");
+    var has_native = false;
+    var has_esm = false;
+    for (manifest.exports) |export_entry| {
+        if (export_entry.native.len > 0) has_native = true;
+        if (export_entry.esm.len > 0) has_esm = true;
+    }
+    if (has_native) try kinds.append(a, "native");
+    if (has_esm) try kinds.append(a, "ESM");
+    return kinds.toOwnedSlice(a);
 }
 
 fn stringLessThan(_: void, left: []const u8, right: []const u8) bool {
@@ -1075,4 +1111,28 @@ fn jsonStringOf(value: ?std.json.Value) ?[]const u8 {
     const item = value orelse return null;
     if (item != .string) return null;
     return item.string;
+}
+
+test "artifactKindsは宣言された実装だけを列挙する" {
+    const a = std.testing.allocator;
+    // source のみ。
+    var source_only = manifest_mod.Manifest{};
+    source_only.exports = &.{.{ .name = "core", .path = "src/index.nako3" }};
+    const plain = try artifactKinds(a, &source_only);
+    defer a.free(plain);
+    try std.testing.expectEqual(@as(usize, 1), plain.len);
+    try std.testing.expectEqualStrings("source", plain[0]);
+
+    // native と ESM を宣言。
+    var with_artifacts = manifest_mod.Manifest{};
+    with_artifacts.exports = &.{
+        .{ .name = "native", .native = &.{.{ .path = "libplug.so" }} },
+        .{ .name = "web", .esm = &.{.{ .path = "plugin.mjs" }} },
+    };
+    const kinds = try artifactKinds(a, &with_artifacts);
+    defer a.free(kinds);
+    try std.testing.expectEqual(@as(usize, 3), kinds.len);
+    try std.testing.expectEqualStrings("source", kinds[0]);
+    try std.testing.expectEqualStrings("native", kinds[1]);
+    try std.testing.expectEqualStrings("ESM", kinds[2]);
 }

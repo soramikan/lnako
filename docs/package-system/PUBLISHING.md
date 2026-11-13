@@ -80,6 +80,7 @@ lnako package publish . --no-dry-run --registry https://registry.example --owner
 - dry-run は外部を変更せず、検証結果だけを返します。
 - 再実行は冪等です。同じ版・同じ内容の再実行は成功し（artifact の再 PUT をスキップ）、異なる内容による同版の上書きは拒否します。
 - 認証情報は CLI 引数へ直接書かず、環境変数 `LNAKO_REGISTRY_TOKEN` などから渡します。loopback 以外の平文 `http` registry は `--allow-plaintext-http` を明示した場合だけ許可します。
+- **version record の `artifacts` には、`.npkg` に収録した実装を全て記録します**。`source` は常に、`native`/`ESM` は manifest の exports が宣言した場合に加えます。registry の `artifacts.kind` は consumer が「その版にどの実装があるか」を知る唯一の情報で、`source` だけを書くと native/ESM を持つ package でも実装を選べません。
 - **`index.json` へも登録します**。順序は「artifact → version record → index」で固定し、version record が存在しないと consumer の解決が失敗するため、この順で PUT します。索引の登録は冪等です（同じ版は追加しない）。索引が未作成の registry では空の索引を作ります。
 - 索引の package record は Public ID（`pkg:` + 32 hex）で識別します。manifest に `id` の宣言が無い場合は `registry:<url>` の identity から導出します（consumer の lock と同じ規則）。
 - 失敗経路は fails-closed です。誤った token は 401 で拒否し version record を登録しません。npm/git/http 依存を持つ package は公開を拒否します（静的 registry の version record で表現できず、consumer の provider も解決しないため）。path 依存は `.npkg` へ同梱して自己完結させます。
