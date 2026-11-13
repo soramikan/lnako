@@ -164,63 +164,7 @@ pub const State = struct {
         const engine = lnako_qjs_new() orelse return error.QuickJsInitializationFailed;
         self.engine = engine;
         lnako_qjs_set_host(engine, self, hostGet, hostSet, hostInvoke, hostExec);
-        const bootstrap =
-            \\globalThis.sys = globalThis.sys || Object.create(null);
-            \\sys.__findFunc = function(name, parent) { const f = sys.__findVar(name, undefined); if (typeof f === 'function') return f; throw new Error(`『${parent}』に実行できない関数が指定されました。`); };
-            \\sys.__exec = function(name, params) { return globalThis.__lnako_hostExec(name, ...(Array.isArray(params) ? params : [params])); };
-            \\sys.__setSore = function(value) { sys.__setSysVar('それ', value); return value; };
-            \\sys.__getSore = function() { return sys.__getSysVar('それ'); };
-            \\sys.pathSeparator = '/';
-            \\sys.tags = Object.create(null);
-            \\globalThis.__lnako_commands = Object.create(null);
-            \\globalThis.__lnako_plugins = new WeakSet();
-            \\globalThis.__lnako_plugin_registrations = new Map();
-            \\globalThis.__lnako_qualified_keys = new Set();
-            \\globalThis.__lnako_active_namespace = undefined;
-            \\globalThis.__lnako_eval_plugins = [];
-            \\globalThis.__lnako_registerPlugin = function(plugin, namespace) {
-            \\  if (!plugin || (typeof plugin !== 'object' && typeof plugin !== 'function')) return;
-            \\  const prefix = (typeof namespace === 'string' && namespace.length > 0) ? namespace + '__' : '';
-            \\  let registrations = globalThis.__lnako_plugin_registrations.get(plugin);
-            \\  if (!registrations) {
-            \\    registrations = new Set();
-            \\    globalThis.__lnako_plugin_registrations.set(plugin, registrations);
-            \\  }
-            \\  if (!registrations.has(prefix)) {
-            \\    registrations.add(prefix);
-            \\    for (const name of Object.keys(plugin || {})) {
-            \\      if (name === 'meta' || name === '初期化') continue;
-            \\      if (prefix.length > 0 && name.indexOf('__') >= 0) continue;
-            \\      const key = prefix + name;
-            \\      // 無修飾登録がpackage修飾keyを上書きしないよう、修飾済みkeyは
-            \\      // raw export による再代入を拒否する。逆方向（修飾がrawを
-            \\      // 上書き）は許容し、登録順序に依らず修飾側を優先させる。
-            \\      if (prefix.length === 0 && globalThis.__lnako_qualified_keys.has(key)) continue;
-            \\      globalThis.__lnako_commands[key] = plugin[name];
-            \\      if (prefix.length > 0) globalThis.__lnako_qualified_keys.add(key);
-            \\    }
-            \\  }
-            \\  if (!globalThis.__lnako_plugins.has(plugin)) {
-            \\    globalThis.__lnako_plugins.add(plugin);
-            \\    const initializer = plugin['初期化'];
-            \\    if (typeof initializer === 'function') initializer(sys);
-            \\    else if (initializer && typeof initializer.fn === 'function') initializer.fn(sys);
-            \\  }
-            \\};
-            \\globalThis.__lnako_beginModuleEval = function(namespace) {
-            \\  globalThis.__lnako_active_namespace = namespace;
-            \\  globalThis.__lnako_eval_plugins = [];
-            \\};
-            \\globalThis.__lnako_reregisterEvalPlugins = function(namespacesJson) {
-            \\  const pending = globalThis.__lnako_eval_plugins;
-            \\  globalThis.__lnako_eval_plugins = [];
-            \\  for (const plugin of pending) {
-            \\    for (const ns of JSON.parse(namespacesJson)) globalThis.__lnako_registerPlugin(plugin, ns);
-            \\  }
-            \\};
-            \\globalThis.navigator = globalThis.navigator || { nako3: { addPluginObject: function(_name, plugin) { globalThis.__lnako_eval_plugins.push(plugin); globalThis.__lnako_registerPlugin(plugin, globalThis.__lnako_active_namespace); } } };
-            \\globalThis.console = globalThis.console || { log: function(){}, error: function(){}, warn: function(){} };
-        ;
+        const bootstrap = bootstrapSource;
         const result = lnako_qjs_eval(engine, bootstrap, bootstrap.len, "<lnako-bootstrap>") orelse return quickJsError(engine);
         lnako_qjs_value_free(result);
         return engine;
@@ -2113,3 +2057,63 @@ test "JS関数実行の戻り値配列は疎配列の巨大lengthで一括変換
         evalCallResult(&runtime, engine, "(()=>{const a=new Array();a.length=1000001;return a;})()"),
     );
 }
+
+/// ESM plugin の登録 shim を含む bootstrap。AOT runtime（`runtime/aot/compat_js.zig`）
+/// も同じ JS 環境を必要とするため、source を公開して共有する。
+pub const bootstrapSource =
+    \\globalThis.sys = globalThis.sys || Object.create(null);
+    \\sys.__findFunc = function(name, parent) { const f = sys.__findVar(name, undefined); if (typeof f === 'function') return f; throw new Error(`『${parent}』に実行できない関数が指定されました。`); };
+    \\sys.__exec = function(name, params) { return globalThis.__lnako_hostExec(name, ...(Array.isArray(params) ? params : [params])); };
+    \\sys.__setSore = function(value) { sys.__setSysVar('それ', value); return value; };
+    \\sys.__getSore = function() { return sys.__getSysVar('それ'); };
+    \\sys.pathSeparator = '/';
+    \\sys.tags = Object.create(null);
+    \\globalThis.__lnako_commands = Object.create(null);
+    \\globalThis.__lnako_plugins = new WeakSet();
+    \\globalThis.__lnako_plugin_registrations = new Map();
+    \\globalThis.__lnako_qualified_keys = new Set();
+    \\globalThis.__lnako_active_namespace = undefined;
+    \\globalThis.__lnako_eval_plugins = [];
+    \\globalThis.__lnako_registerPlugin = function(plugin, namespace) {
+    \\  if (!plugin || (typeof plugin !== 'object' && typeof plugin !== 'function')) return;
+    \\  const prefix = (typeof namespace === 'string' && namespace.length > 0) ? namespace + '__' : '';
+    \\  let registrations = globalThis.__lnako_plugin_registrations.get(plugin);
+    \\  if (!registrations) {
+    \\    registrations = new Set();
+    \\    globalThis.__lnako_plugin_registrations.set(plugin, registrations);
+    \\  }
+    \\  if (!registrations.has(prefix)) {
+    \\    registrations.add(prefix);
+    \\    for (const name of Object.keys(plugin || {})) {
+    \\      if (name === 'meta' || name === '初期化') continue;
+    \\      if (prefix.length > 0 && name.indexOf('__') >= 0) continue;
+    \\      const key = prefix + name;
+    \\      // 無修飾登録がpackage修飾keyを上書きしないよう、修飾済みkeyは
+    \\      // raw export による再代入を拒否する。逆方向（修飾がrawを
+    \\      // 上書き）は許容し、登録順序に依らず修飾側を優先させる。
+    \\      if (prefix.length === 0 && globalThis.__lnako_qualified_keys.has(key)) continue;
+    \\      globalThis.__lnako_commands[key] = plugin[name];
+    \\      if (prefix.length > 0) globalThis.__lnako_qualified_keys.add(key);
+    \\    }
+    \\  }
+    \\  if (!globalThis.__lnako_plugins.has(plugin)) {
+    \\    globalThis.__lnako_plugins.add(plugin);
+    \\    const initializer = plugin['初期化'];
+    \\    if (typeof initializer === 'function') initializer(sys);
+    \\    else if (initializer && typeof initializer.fn === 'function') initializer.fn(sys);
+    \\  }
+    \\};
+    \\globalThis.__lnako_beginModuleEval = function(namespace) {
+    \\  globalThis.__lnako_active_namespace = namespace;
+    \\  globalThis.__lnako_eval_plugins = [];
+    \\};
+    \\globalThis.__lnako_reregisterEvalPlugins = function(namespacesJson) {
+    \\  const pending = globalThis.__lnako_eval_plugins;
+    \\  globalThis.__lnako_eval_plugins = [];
+    \\  for (const plugin of pending) {
+    \\    for (const ns of JSON.parse(namespacesJson)) globalThis.__lnako_registerPlugin(plugin, ns);
+    \\  }
+    \\};
+    \\globalThis.navigator = globalThis.navigator || { nako3: { addPluginObject: function(_name, plugin) { globalThis.__lnako_eval_plugins.push(plugin); globalThis.__lnako_registerPlugin(plugin, globalThis.__lnako_active_namespace); } } };
+    \\globalThis.console = globalThis.console || { log: function(){}, error: function(){}, warn: function(){} };
+;

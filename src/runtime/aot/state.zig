@@ -111,6 +111,7 @@ pub const prepareDynamic = dynamic_module.prepareDynamic;
 pub const syncDynamicGlobals = dynamic_module.syncDynamicGlobals;
 pub const dynamicInterpreterState = dynamic_module.dynamicInterpreterState;
 pub const nativePluginBuiltin = dynamic_module.nativePluginBuiltin;
+pub const esmPluginBuiltin = dynamic_module.esmPluginBuiltin;
 pub const dynamicBuiltin = dynamic_module.dynamicBuiltin;
 pub const concatAotValues = dynamic_module.concatAotValues;
 

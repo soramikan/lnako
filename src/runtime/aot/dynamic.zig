@@ -121,6 +121,35 @@ pub const DynamicInterpreterState = struct {
             .namespace = try path_allocator.dupe(u8, package.namespace),
         };
         state.program.native_plugin_packages = packages;
+        // compat ESM manifest の module を埋め込み interpreter へ引き継ぐ。
+        // `Interpreter` の初期化時に `installModules` が走り、plugin 命令が
+        // この state の `__lnako_commands` に登録される。これが無いと
+        // `callExternalCommand` が `UnknownCommand` になる。
+        if (owner.esm_modules.items.len > 0) {
+            const modules = try path_allocator.alloc(dynamic_ir.JavaScriptModule, owner.esm_modules.items.len);
+            for (owner.esm_modules.items, modules) |module, *copy| {
+                copy.* = .{
+                    .path = try path_allocator.dupe(u8, module.path),
+                    .source = try path_allocator.dupe(u8, module.source),
+                    .is_plugin = module.is_plugin,
+                    .package_root = if (module.package_root) |root| try path_allocator.dupe(u8, root) else null,
+                    .namespaces = blk: {
+                        const list = try path_allocator.alloc([]const u8, module.namespaces.len);
+                        for (module.namespaces, list) |namespace, *slot| slot.* = try path_allocator.dupe(u8, namespace);
+                        break :blk list;
+                    },
+                    .bare_aliases = blk: {
+                        const list = try path_allocator.alloc([]const u8, module.bare_aliases.len);
+                        for (module.bare_aliases, list) |alias, *slot| slot.* = try path_allocator.dupe(u8, alias);
+                        break :blk list;
+                    },
+                };
+            }
+            state.program.javascript_modules = modules;
+            // `Interpreter` は `program.compat_js` で QuickJS state を有効化
+            // する。ESM module を持つなら compat 経路なので有効にする。
+            state.program.compat_js = true;
+        }
         state.host_context = .{ .owner = owner };
         state.interpreter = dynamic_interpreter.Interpreter.init(
             allocator,
@@ -328,7 +357,16 @@ pub fn aotToDynamicValue(state: *DynamicInterpreterState, value: Value) anyerror
     }
 }
 
+/// 変換中の循環を検出する深さ上限。配列/辞書の自己参照は有限の深さで
+/// 打ち切り、スタック枯渇ではなく明示エラーにする。
+const max_conversion_depth: usize = 256;
+
 pub fn dynamicToAotValue(state: *DynamicInterpreterState, value: dynamic_value.Value) anyerror!Value {
+    return dynamicToAotValueDepth(state, value, 0);
+}
+
+fn dynamicToAotValueDepth(state: *DynamicInterpreterState, value: dynamic_value.Value, depth: usize) anyerror!Value {
+    if (depth > max_conversion_depth) return error.ValueNestingTooDeep;
     const owner = state.owner;
     return switch (value) {
         .undefined => .{},
@@ -351,14 +389,14 @@ pub fn dynamicToAotValue(state: *DynamicInterpreterState, value: dynamic_value.V
             var roots = RootFrame{};
             owner.pushRoots(&roots, @ptrCast(&result), 1);
             defer owner.popRoots(&roots);
-            result.object().?.prototype = try dynamicToAotValue(state, array.prototype);
-            for (array.items.items) |item| try result.object().?.payload.array.append(owner.allocator, try dynamicToAotValue(state, item));
+            result.object().?.prototype = try dynamicToAotValueDepth(state, array.prototype, depth + 1);
+            for (array.items.items) |item| try result.object().?.payload.array.append(owner.allocator, try dynamicToAotValueDepth(state, item, depth + 1));
             for (array.properties.items) |property| {
                 var converted_key = try owner.createString(property.key.units);
                 var key_roots = RootFrame{};
                 owner.pushRoots(&key_roots, @ptrCast(&converted_key), 1);
                 defer owner.popRoots(&key_roots);
-                var converted_item = try dynamicToAotValue(state, property.value);
+                var converted_item = try dynamicToAotValueDepth(state, property.value, depth + 1);
                 var item_roots = RootFrame{};
                 owner.pushRoots(&item_roots, @ptrCast(&converted_item), 1);
                 defer owner.popRoots(&item_roots);
@@ -389,7 +427,7 @@ pub fn dynamicToAotValue(state: *DynamicInterpreterState, value: dynamic_value.V
                 var key_roots = RootFrame{};
                 owner.pushRoots(&key_roots, @ptrCast(&converted_key), 1);
                 defer owner.popRoots(&key_roots);
-                var converted_item = try dynamicToAotValue(state, item);
+                var converted_item = try dynamicToAotValueDepth(state, item, depth + 1);
                 var item_roots = RootFrame{};
                 owner.pushRoots(&item_roots, @ptrCast(&converted_item), 1);
                 defer owner.popRoots(&item_roots);
@@ -507,7 +545,45 @@ pub fn nativePluginBuiltin(runtime: *Runtime, name: []const u8, arguments: []con
     }
     var result = try state.interpreter.callExternalCommand(name, dynamic_arguments);
     try roots.protect(&result);
+    // plugin が配列・辞書の引数を書き換えた場合、その変更は複製側にしか
+    // 無い。呼出し後に AOT 側の実引数へ書き戻す（interpreter と同じ観測）。
+    for (arguments, dynamic_arguments) |argument, converted| {
+        switch (converted) {
+            .array, .dictionary => writeBackMutation(state, argument, converted) catch {},
+            else => {},
+        }
+    }
     return dynamicToAotValue(state, result);
+}
+
+/// `dynamic` 側の配列/辞書の中身を AOT 側の値へ書き戻す。
+fn writeBackMutation(state: *DynamicInterpreterState, target: Value, source: dynamic_value.Value) !void {
+    const owner = state.owner;
+    switch (source) {
+        .array => |array| {
+            if (@as(Tag, @fromBackingInt(@intCast(target.tag))) != .array) return;
+            const object = target.object() orelse return;
+            object.payload.array.clearRetainingCapacity();
+            for (array.items.items) |item| try object.payload.array.append(owner.allocator, try dynamicToAotValue(state, item));
+        },
+        .dictionary => |dictionary| {
+            if (@as(Tag, @fromBackingInt(@intCast(target.tag))) != .dictionary) return;
+            const object = target.object() orelse return;
+            var iterator = dictionary.map.iterator();
+            while (iterator.next()) |entry| {
+                var key = try owner.createString(entry.key_ptr.*.units);
+                var key_roots = RootFrame{};
+                owner.pushRoots(&key_roots, @ptrCast(&key), 1);
+                defer owner.popRoots(&key_roots);
+                var value = try dynamicToAotValue(state, entry.value_ptr.*);
+                var value_roots = RootFrame{};
+                owner.pushRoots(&value_roots, @ptrCast(&value), 1);
+                defer owner.popRoots(&value_roots);
+                try owner.setDictionary(&object.payload.dictionary, key, value);
+            }
+        },
+        else => {},
+    }
 }
 
 pub fn dynamicBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
@@ -561,4 +637,26 @@ pub fn concatAotValues(runtime: *Runtime, left: Value, right: Value) !Value {
     @memcpy(combined[0..left_view.units.len], left_view.units);
     @memcpy(combined[left_view.units.len..], right_view.units);
     return runtime.ownString(combined);
+}
+
+/// ESM plugin の命令を名前で呼ぶ（Issue #55）。
+///
+/// AOT の compat runtime は plugin module を評価して `__lnako_commands` へ
+/// 命令を登録する。呼出し側は命令名と実引数だけを渡し、解決は embedded
+/// interpreter の `callExternalCommand`（plugin 命令を含む dispatch 表）へ
+/// 委譲する。native plugin の `nativePluginBuiltin` と同じ変換経路を使う。
+pub fn esmPluginBuiltin(runtime: *Runtime, name: []const u8, arguments: []const Value) !Value {
+    const dynamic_state = try dynamicInterpreterState(runtime);
+    const dynamic_arguments = try runtime.allocator.alloc(dynamic_value.Value, arguments.len);
+    defer runtime.allocator.free(dynamic_arguments);
+    @memset(dynamic_arguments, .undefined);
+    var roots = dynamic_state.value_runtime.rootFrame();
+    defer roots.deinit();
+    for (arguments, dynamic_arguments) |argument, *converted| {
+        converted.* = try aotToDynamicValue(dynamic_state, argument);
+        try roots.protect(converted);
+    }
+    var result = try dynamic_state.interpreter.callExternalCommand(name, dynamic_arguments);
+    try roots.protect(&result);
+    return dynamicToAotValue(dynamic_state, result);
 }

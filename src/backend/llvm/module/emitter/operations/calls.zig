@@ -19,6 +19,7 @@ const DebugLocation = shared.DebugLocation;
 const arithmeticOpcode = shared.arithmeticOpcode;
 const isDisplayCall = shared.isDisplayCall;
 const isNativePluginCall = shared.isNativePluginCall;
+const isEsmPluginCommand = shared.isEsmPluginCommandName;
 const lookupFunction = shared.lookupFunction;
 const shiftOpcode = shared.shiftOpcode;
 const valueType = shared.valueType;
@@ -132,7 +133,14 @@ pub fn writeCall(emitter: *Emitter, function: ir.Function, locals: []const []con
             try emitter.findFunction(instruction.name);
     if (callee == null) {
         if (isNativePluginCall(emitter.program, function, instruction)) {
-            try plugins_mod.writeNativePluginCall(emitter, function, instruction, scope, aggregate_count);
+            // ESM plugin の命令は compat 生成物の runtime が module 評価で
+            // 登録する。native plugin の ABI ではなく、名前解決を runtime へ
+            // 委ねる ESM 用 ABI へ流す（Issue #55）。
+            if (isEsmPluginCommand(emitter.program, instruction.name)) {
+                try plugins_mod.writeEsmPluginCall(emitter, function, instruction, scope, aggregate_count);
+            } else {
+                try plugins_mod.writeNativePluginCall(emitter, function, instruction, scope, aggregate_count);
+            }
         } else {
             try writeDynamicCall(emitter, function, locals, instruction, .{ .name = instruction.name }, instruction.operands, scope, aggregate_count);
         }

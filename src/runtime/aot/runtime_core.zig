@@ -1,6 +1,7 @@
 const std = @import("std");
 const aot_state = @import("state.zig");
 const shared = @import("shared.zig");
+const lnako_ir = @import("../../ir/nako_ir.zig");
 const environment = @import("../environment.zig");
 const counters = @import("../counters.zig");
 const allocator_telemetry = @import("../allocator_telemetry.zig");
@@ -413,6 +414,10 @@ pub const Runtime = struct {
     process_io: std.Io.Threaded = .init_single_threaded,
     process_io_initialized: bool = false,
     native_plugin_paths: std.ArrayList([]u8) = .empty,
+    /// compat ESM manifest から読んだ JS module。埋め込み interpreter の
+    /// `installModules` へ渡し、plugin 命令をその state に登録する
+    /// （`esmPluginBuiltin` の `callExternalCommand` が解決できるようにする）。
+    esm_modules: std.ArrayList(lnako_ir.JavaScriptModule) = .empty,
     /// `pkg:` import経由のnative plugin。命令を `{namespace}__{命令}` の
     /// 修飾名だけで公開するためのpath→namespace対応表。
     native_plugin_packages: std.ArrayList(NativePluginPackage) = .empty,
@@ -488,6 +493,17 @@ pub const Runtime = struct {
         self.literal_values.deinit(self.allocator);
         for (self.native_plugin_paths.items) |path| self.allocator.free(path);
         self.native_plugin_paths.deinit(self.allocator);
+        // `collectEsmModules` が確保した path/source/namespace/alias を解放する。
+        for (self.esm_modules.items) |module| {
+            self.allocator.free(module.path);
+            self.allocator.free(module.source);
+            if (module.package_root) |root| self.allocator.free(root);
+            for (module.namespaces) |namespace| self.allocator.free(namespace);
+            self.allocator.free(module.namespaces);
+            for (module.bare_aliases) |alias| self.allocator.free(alias);
+            self.allocator.free(module.bare_aliases);
+        }
+        self.esm_modules.deinit(self.allocator);
         for (self.native_plugin_packages.items) |package| {
             self.allocator.free(package.path);
             self.allocator.free(package.namespace);
