@@ -357,7 +357,16 @@ pub fn aotToDynamicValue(state: *DynamicInterpreterState, value: Value) anyerror
     }
 }
 
+/// 変換中の循環を検出する深さ上限。配列/辞書の自己参照は有限の深さで
+/// 打ち切り、スタック枯渇ではなく明示エラーにする。
+const max_conversion_depth: usize = 256;
+
 pub fn dynamicToAotValue(state: *DynamicInterpreterState, value: dynamic_value.Value) anyerror!Value {
+    return dynamicToAotValueDepth(state, value, 0);
+}
+
+fn dynamicToAotValueDepth(state: *DynamicInterpreterState, value: dynamic_value.Value, depth: usize) anyerror!Value {
+    if (depth > max_conversion_depth) return error.ValueNestingTooDeep;
     const owner = state.owner;
     return switch (value) {
         .undefined => .{},
@@ -380,14 +389,14 @@ pub fn dynamicToAotValue(state: *DynamicInterpreterState, value: dynamic_value.V
             var roots = RootFrame{};
             owner.pushRoots(&roots, @ptrCast(&result), 1);
             defer owner.popRoots(&roots);
-            result.object().?.prototype = try dynamicToAotValue(state, array.prototype);
-            for (array.items.items) |item| try result.object().?.payload.array.append(owner.allocator, try dynamicToAotValue(state, item));
+            result.object().?.prototype = try dynamicToAotValueDepth(state, array.prototype, depth + 1);
+            for (array.items.items) |item| try result.object().?.payload.array.append(owner.allocator, try dynamicToAotValueDepth(state, item, depth + 1));
             for (array.properties.items) |property| {
                 var converted_key = try owner.createString(property.key.units);
                 var key_roots = RootFrame{};
                 owner.pushRoots(&key_roots, @ptrCast(&converted_key), 1);
                 defer owner.popRoots(&key_roots);
-                var converted_item = try dynamicToAotValue(state, property.value);
+                var converted_item = try dynamicToAotValueDepth(state, property.value, depth + 1);
                 var item_roots = RootFrame{};
                 owner.pushRoots(&item_roots, @ptrCast(&converted_item), 1);
                 defer owner.popRoots(&item_roots);
@@ -418,7 +427,7 @@ pub fn dynamicToAotValue(state: *DynamicInterpreterState, value: dynamic_value.V
                 var key_roots = RootFrame{};
                 owner.pushRoots(&key_roots, @ptrCast(&converted_key), 1);
                 defer owner.popRoots(&key_roots);
-                var converted_item = try dynamicToAotValue(state, item);
+                var converted_item = try dynamicToAotValueDepth(state, item, depth + 1);
                 var item_roots = RootFrame{};
                 owner.pushRoots(&item_roots, @ptrCast(&converted_item), 1);
                 defer owner.popRoots(&item_roots);
@@ -536,7 +545,45 @@ pub fn nativePluginBuiltin(runtime: *Runtime, name: []const u8, arguments: []con
     }
     var result = try state.interpreter.callExternalCommand(name, dynamic_arguments);
     try roots.protect(&result);
+    // plugin が配列・辞書の引数を書き換えた場合、その変更は複製側にしか
+    // 無い。呼出し後に AOT 側の実引数へ書き戻す（interpreter と同じ観測）。
+    for (arguments, dynamic_arguments) |argument, converted| {
+        switch (converted) {
+            .array, .dictionary => writeBackMutation(state, argument, converted) catch {},
+            else => {},
+        }
+    }
     return dynamicToAotValue(state, result);
+}
+
+/// `dynamic` 側の配列/辞書の中身を AOT 側の値へ書き戻す。
+fn writeBackMutation(state: *DynamicInterpreterState, target: Value, source: dynamic_value.Value) !void {
+    const owner = state.owner;
+    switch (source) {
+        .array => |array| {
+            if (@as(Tag, @fromBackingInt(@intCast(target.tag))) != .array) return;
+            const object = target.object() orelse return;
+            object.payload.array.clearRetainingCapacity();
+            for (array.items.items) |item| try object.payload.array.append(owner.allocator, try dynamicToAotValue(state, item));
+        },
+        .dictionary => |dictionary| {
+            if (@as(Tag, @fromBackingInt(@intCast(target.tag))) != .dictionary) return;
+            const object = target.object() orelse return;
+            var iterator = dictionary.map.iterator();
+            while (iterator.next()) |entry| {
+                var key = try owner.createString(entry.key_ptr.*.units);
+                var key_roots = RootFrame{};
+                owner.pushRoots(&key_roots, @ptrCast(&key), 1);
+                defer owner.popRoots(&key_roots);
+                var value = try dynamicToAotValue(state, entry.value_ptr.*);
+                var value_roots = RootFrame{};
+                owner.pushRoots(&value_roots, @ptrCast(&value), 1);
+                defer owner.popRoots(&value_roots);
+                try owner.setDictionary(&object.payload.dictionary, key, value);
+            }
+        },
+        else => {},
+    }
 }
 
 pub fn dynamicBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {

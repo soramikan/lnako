@@ -48,23 +48,53 @@ pub fn collectEsmModules(runtime: *state.Runtime, modules: []const std.json.Valu
             .array => |array| array.items,
             else => continue,
         };
-        const namespaces = allocator.alloc([]const u8, namespace_list.len) catch return;
-        for (namespace_list, namespaces) |item, *slot| slot.* = allocator.dupe(u8, jsonString(item) orelse "") catch return;
+        // 確保失敗は黙って切り詰めず、登録自体を失敗させる（不完全な
+        // module 一覧で interpreter を初期化しない）。
+        const namespaces = allocator.alloc([]const u8, namespace_list.len) catch {
+            runtime.setFailure(error.OutOfMemory);
+            return;
+        };
+        for (namespace_list, namespaces) |item, *slot| {
+            slot.* = allocator.dupe(u8, jsonString(item) orelse "") catch {
+                runtime.setFailure(error.OutOfMemory);
+                return;
+            };
+        }
         const alias_list = switch (object.get("bare_aliases") orelse continue) {
             .array => |array| array.items,
             else => continue,
         };
-        const aliases = allocator.alloc([]const u8, alias_list.len) catch return;
-        for (alias_list, aliases) |item, *slot| slot.* = allocator.dupe(u8, jsonString(item) orelse "") catch return;
+        const aliases = allocator.alloc([]const u8, alias_list.len) catch {
+            runtime.setFailure(error.OutOfMemory);
+            return;
+        };
+        for (alias_list, aliases) |item, *slot| {
+            slot.* = allocator.dupe(u8, jsonString(item) orelse "") catch {
+                runtime.setFailure(error.OutOfMemory);
+                return;
+            };
+        }
         const package_root = jsonString(object.get("package_root"));
         runtime.esm_modules.append(allocator, .{
-            .path = allocator.dupe(u8, path) catch return,
-            .source = allocator.dupe(u8, source) catch return,
+            .path = allocator.dupe(u8, path) catch {
+                runtime.setFailure(error.OutOfMemory);
+                return;
+            },
+            .source = allocator.dupe(u8, source) catch {
+                runtime.setFailure(error.OutOfMemory);
+                return;
+            },
             .is_plugin = is_plugin,
-            .package_root = if (package_root) |root| allocator.dupe(u8, root) catch return else null,
+            .package_root = if (package_root) |root| allocator.dupe(u8, root) catch {
+                runtime.setFailure(error.OutOfMemory);
+                return;
+            } else null,
             .namespaces = namespaces,
             .bare_aliases = aliases,
-        }) catch return;
+        }) catch {
+            runtime.setFailure(error.OutOfMemory);
+            return;
+        };
     }
 }
 
