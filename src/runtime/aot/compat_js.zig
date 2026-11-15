@@ -195,6 +195,11 @@ fn compatDeinit(rt: *state.Runtime) void {
     }
 }
 
+/// 登録済み host 関数スロット数（テスト・診断用）。
+pub fn registeredHostFunctionCount() usize {
+    return host_functions.items.len;
+}
+
 /// Nako 関数・クロージャを QuickJS の C 関数値へ変換する。同じ
 /// `*state.Object` は同じ関数 ID を再利用し、別 Object（クロージャ）は別 ID
 /// として登録する。
@@ -212,12 +217,22 @@ pub fn hostFunction(runtime: *state.Runtime, engine_value: *Engine, value: Value
         const candidate = host_functions.items[function_id];
         if (@as(Tag, @fromBackingInt(candidate.tag)) == .function and candidate.object() == object) break;
     }
-    if (function_id == host_functions.items.len) try host_functions.append(runtime.allocator, value);
     // QuickJS の C 関数名は NUL 終端。NUL を含む名前はそこで切って安全に渡す。
+    // 名前の確保は append より先に行い、名前確保の失敗で新規エントリを残さない。
     const source_name = object.payload.function.name;
     const name = if (std.mem.indexOfScalar(u8, source_name, 0)) |end| source_name[0..end] else source_name;
     const name_z = try runtime.allocator.dupeSentinel(u8, name, 0);
     defer runtime.allocator.free(name_z);
+    var appended = false;
+    if (function_id == host_functions.items.len) {
+        try host_functions.append(runtime.allocator, value);
+        appended = true;
+    }
+    // C 関数値の生成に失敗した場合、この呼出しで追加したスロットを残さない。
+    // 既存スロットの再利用時は pop しない。
+    errdefer if (appended) {
+        _ = host_functions.pop();
+    };
     return lnako_qjs_host_function(engine_value, function_id, name_z.ptr) orelse error.OutOfMemory;
 }
 

@@ -2067,6 +2067,56 @@ test "compat AOT runtimeはNako callback例外をJSのtry/catchで捕捉し未�
     try std.testing.expect(state.active_runtime.?.has_pending_exception);
 }
 
+test "compat AOT runtimeはhostFunctionの登録失敗をロールバックする" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    // セットアップ中は失敗させず、hostFunction 内の Zig 割当てだけを順に
+    // 失敗させて、追加済みスロットが残らないことを確認する。
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = std.math.maxInt(usize) });
+    var runtime = state.Runtime{ .allocator = failing.allocator() };
+    defer {
+        failing.fail_index = std.math.maxInt(usize);
+        lnako_aot_compat_deinit();
+        runtime.deinit();
+    }
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const engine = try ensureEngine();
+    var roots = [_]Value{.{}};
+    var frame: state.RootFrame = .{};
+    pushTestRoots(&state.active_runtime.?, &frame, &roots);
+    defer state.active_runtime.?.popRoots(&frame);
+    roots[0] = try state.active_runtime.?.createFunction(noopFunction, 0, &.{});
+    try std.testing.expectEqual(@as(usize, 0), compat.registeredHostFunctionCount());
+
+    var saw_failure = false;
+    var succeeded = false;
+    var fail_index: usize = 0;
+    while (fail_index < 4) : (fail_index += 1) {
+        failing.alloc_index = 0;
+        failing.fail_index = fail_index;
+        const registered = compat.hostFunction(&state.active_runtime.?, engine, roots[0]);
+        if (registered) |raw| {
+            lnako_qjs_value_free(raw);
+            succeeded = true;
+            // 正常に返却できた登録だけがスロットを1個持つ。
+            try std.testing.expectEqual(@as(usize, 1), compat.registeredHostFunctionCount());
+            break;
+        } else |failure| {
+            saw_failure = true;
+            try std.testing.expectEqual(error.OutOfMemory, failure);
+            // 名前確保・append・C 関数生成のどこで失敗しても未返却スロットを
+            // 残さない（append 後の失敗で pop する）。
+            try std.testing.expectEqual(@as(usize, 0), compat.registeredHostFunctionCount());
+        }
+    }
+    failing.fail_index = std.math.maxInt(usize);
+    try std.testing.expect(saw_failure);
+    try std.testing.expect(succeeded);
+}
+
 test "compat AOT runtimeはJSへ渡したNakoクロージャとcaptureをGC traceで保持する" {
     if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
     var runtime = state.Runtime{ .allocator = std.testing.allocator };
