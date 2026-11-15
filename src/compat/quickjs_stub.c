@@ -2,6 +2,7 @@
 
 LnakoQuickJs *lnako_qjs_new(void) { return 0; }
 void lnako_qjs_set_host(LnakoQuickJs *engine, void *opaque, LnakoQuickJsHostGet get, LnakoQuickJsHostSet set, LnakoQuickJsHostInvoke invoke, LnakoQuickJsHostExec exec) { (void)engine; (void)opaque; (void)get; (void)set; (void)invoke; (void)exec; }
+void lnako_qjs_set_host_release(LnakoQuickJs *engine, LnakoQuickJsHostRelease release) { (void)engine; (void)release; }
 int lnako_qjs_add_module_source(LnakoQuickJs *engine, const char *name, const char *source, size_t length, const char *package_root) { (void)engine; (void)name; (void)source; (void)length; (void)package_root; return -1; }
 int lnako_qjs_add_module_alias(LnakoQuickJs *engine, const char *alias, const char *target) { (void)engine; (void)alias; (void)target; return -1; }
 void lnako_qjs_retain(LnakoQuickJs *engine) { (void)engine; }
@@ -23,7 +24,9 @@ LnakoQuickJsValue *lnako_qjs_string(LnakoQuickJs *engine, const char *value, siz
 LnakoQuickJsValue *lnako_qjs_bigint(LnakoQuickJs *engine, const char *decimal, size_t length) { (void)engine; (void)decimal; (void)length; return 0; }
 LnakoQuickJsValue *lnako_qjs_array(LnakoQuickJs *engine) { (void)engine; return 0; }
 LnakoQuickJsValue *lnako_qjs_object(LnakoQuickJs *engine) { (void)engine; return 0; }
-LnakoQuickJsValue *lnako_qjs_host_function(LnakoQuickJs *engine, uintptr_t function_id, const char *name) { (void)engine; (void)function_id; (void)name; return 0; }
+LnakoQuickJsValue *lnako_qjs_host_function(LnakoQuickJs *engine, uintptr_t function_id, uint64_t generation, const char *name) { (void)engine; (void)function_id; (void)generation; (void)name; return 0; }
+void lnako_qjs_run_gc(LnakoQuickJs *engine) { (void)engine; }
+void lnako_qjs_set_memory_limit(LnakoQuickJs *engine, size_t limit) { (void)engine; (void)limit; }
 LnakoQuickJsValue *lnako_qjs_dup(const LnakoQuickJsValue *value) { (void)value; return 0; }
 LnakoQuickJs *lnako_qjs_value_engine(const LnakoQuickJsValue *value) { (void)value; return 0; }
 void lnako_qjs_value_free(LnakoQuickJsValue *value) { (void)value; }

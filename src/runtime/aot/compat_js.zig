@@ -20,6 +20,7 @@ const SyncState = compat_js_result.SyncState;
 
 const Value = state.Value;
 const Tag = state.Tag;
+const HostFunctionTable = @import("../../compat/host_functions.zig").Table(Value);
 
 pub const Engine = opaque {};
 pub const RawValue = opaque {};
@@ -40,11 +41,13 @@ pub const Kind = enum(c_int) {
 
 const HostGetFn = *const fn (*anyopaque, [*:0]const u8, c_int) callconv(.c) ?*RawValue;
 const HostSetFn = *const fn (*anyopaque, [*:0]const u8, *const RawValue) callconv(.c) c_int;
-const HostInvokeFn = *const fn (*anyopaque, usize, [*c]const *const RawValue, usize) callconv(.c) ?*RawValue;
+const HostInvokeFn = *const fn (*anyopaque, usize, u64, [*c]const *const RawValue, usize) callconv(.c) ?*RawValue;
+const HostReleaseFn = *const fn (*anyopaque, usize, u64) callconv(.c) void;
 const HostExecFn = *const fn (*anyopaque, [*:0]const u8, [*c]const *const RawValue, usize) callconv(.c) ?*RawValue;
 
 pub extern fn lnako_qjs_new() ?*Engine;
 pub extern fn lnako_qjs_set_host(engine: *Engine, context: *anyopaque, get: HostGetFn, set: HostSetFn, invoke: HostInvokeFn, exec: HostExecFn) void;
+pub extern fn lnako_qjs_set_host_release(engine: *Engine, release: ?HostReleaseFn) void;
 pub extern fn lnako_qjs_set_host_strict(engine: *Engine, strict: c_int) void;
 pub extern fn lnako_qjs_add_module_source(engine: *Engine, name: [*:0]const u8, source: [*]const u8, length: usize, package_root: ?[*:0]const u8) c_int;
 pub extern fn lnako_qjs_add_module_alias(engine: *Engine, alias: [*:0]const u8, target: [*:0]const u8) c_int;
@@ -63,7 +66,9 @@ pub extern fn lnako_qjs_boolean(engine: *Engine, value: c_int) ?*RawValue;
 pub extern fn lnako_qjs_number(engine: *Engine, value: f64) ?*RawValue;
 pub extern fn lnako_qjs_string(engine: *Engine, value: [*]const u8, length: usize) ?*RawValue;
 pub extern fn lnako_qjs_bigint(engine: *Engine, decimal: [*]const u8, length: usize) ?*RawValue;
-pub extern fn lnako_qjs_host_function(engine: *Engine, function_id: usize, name: [*:0]const u8) ?*RawValue;
+pub extern fn lnako_qjs_host_function(engine: *Engine, function_id: usize, generation: u64, name: [*:0]const u8) ?*RawValue;
+pub extern fn lnako_qjs_run_gc(engine: *Engine) void;
+pub extern fn lnako_qjs_set_memory_limit(engine: *Engine, limit: usize) void;
 pub extern fn lnako_qjs_array(engine: *Engine) ?*RawValue;
 pub extern fn lnako_qjs_object(engine: *Engine) ?*RawValue;
 pub extern fn lnako_qjs_set_index(value: *RawValue, index: u32, item: *const RawValue) c_int;
@@ -106,13 +111,14 @@ fn hostSet(_: *anyopaque, _: [*:0]const u8, _: *const RawValue) callconv(.c) c_i
     return -1;
 }
 
-fn hostInvoke(_: *anyopaque, function_id: usize, raw_arguments: [*c]const *const RawValue, count: usize) callconv(.c) ?*RawValue {
+fn hostInvoke(_: *anyopaque, function_id: usize, generation: u64, raw_arguments: [*c]const *const RawValue, count: usize) callconv(.c) ?*RawValue {
     const runtime = if (state.active_runtime) |*active| active else return null;
-    if (host_runtime != runtime or function_id >= host_functions.items.len) return null;
+    if (host_runtime != runtime) return null;
+    const callable = host_functions.lookup(function_id, generation) orelse return null;
     const engine_value = engine orelse return null;
     if (count != 0 and raw_arguments == null) return null;
     const had_pending = runtime.has_pending_exception;
-    var result_roots = [_]Value{ host_functions.items[function_id], .{} };
+    var result_roots = [_]Value{ callable, .{} };
     var result_frame: state.RootFrame = .{};
     runtime.pushRoots(&result_frame, &result_roots, result_roots.len);
     defer runtime.popRoots(&result_frame);
@@ -168,23 +174,40 @@ fn hostInvoke(_: *anyopaque, function_id: usize, raw_arguments: [*c]const *const
 }
 
 // Nako→JS callback の host 関数テーブル。`hostFunction` が JS へ渡した Nako
-// 関数を ID で保持し、QuickJS の C 関数から `hostInvoke` で呼び戻す。capture を
-// 含む Value は runtime の GC root ではないため `compatTrace` で mark し、
-// runtime 終了時（`compatDeinit`）と `lnako_aot_compat_deinit` の両方から
-// テーブルを解除する（どちらが先でもリーク・二重解放しない）。
-var host_functions: std.ArrayListUnmanaged(Value) = .empty;
+// 関数を世代付き ID で保持し、QuickJS の call class から `hostInvoke` で呼び
+// 戻す。capture を含む Value は runtime の GC root ではないため `compatTrace`
+// で mark する。
+//
+// 解放は QuickJS の finalizer が `hostRelease` へ1インスタンス1回通知し、
+// 最後のインスタンスが消えたスロットだけを無効化する。`hostRelease` から
+// QuickJS や Nako GC を再入させないため、この通知は参照カウント減算と
+// free list への連結だけを行う。
+var host_functions: HostFunctionTable = .{};
 var host_runtime: ?*state.Runtime = null;
 var host_allocator: ?std.mem.Allocator = null;
 
 fn deinitHostFunctions() void {
-    if (host_allocator) |allocator| host_functions.deinit(allocator);
-    host_functions = .empty;
+    // stale な finalizer が破棄済みテーブルへ触れないよう、通知を先に解除する。
+    if (engine) |value| lnako_qjs_set_host_release(value, null);
+    // `host_runtime` が差し替わった場合に、古い runtime の GC hook が
+    // 破棄済みテーブルを参照しないよう先に外す（`compatDeinit` との二重クリアは
+    // 無害）。
+    if (host_runtime) |rt| {
+        rt.compat_trace = null;
+        rt.compat_deinit = null;
+    }
+    host_functions.deinit(host_allocator orelse std.heap.page_allocator);
     host_runtime = null;
     host_allocator = null;
 }
 
 fn compatTrace(rt: *state.Runtime) void {
-    if (host_runtime == rt) for (host_functions.items) |value| rt.markValue(value);
+    if (host_runtime != rt) return;
+    host_functions.trace(rt, struct {
+        fn mark(runtime: *state.Runtime, value: Value) anyerror!void {
+            runtime.markValue(value);
+        }
+    }.mark) catch {};
 }
 
 fn compatDeinit(rt: *state.Runtime) void {
@@ -195,16 +218,42 @@ fn compatDeinit(rt: *state.Runtime) void {
     }
 }
 
-/// 登録済み host 関数スロット数（テスト・診断用）。
-pub fn registeredHostFunctionCount() usize {
-    return host_functions.items.len;
+fn hostRelease(_: *anyopaque, function_id: usize, generation: u64) callconv(.c) void {
+    host_functions.release(function_id, generation);
 }
 
-/// Nako 関数・クロージャを QuickJS の C 関数値へ変換する。同じ
-/// `*state.Object` は同じ関数 ID を再利用し、別 Object（クロージャ）は別 ID
-/// として登録する。
+fn sameHostFunction(left: Value, right: Value) bool {
+    if (@as(Tag, @fromBackingInt(left.tag)) != .function) return false;
+    if (@as(Tag, @fromBackingInt(right.tag)) != .function) return false;
+    return left.object() == right.object();
+}
+
+/// 登録済み host 関数スロット数（テスト・診断用）。tombstone は含まない。
+pub fn registeredHostFunctionCount() usize {
+    return host_functions.occupiedCount();
+}
+
+/// 登録済み JS 関数インスタンス数（テスト・診断用）。
+pub fn hostFunctionInstanceCount(value: Value) usize {
+    const handle = host_functions.handleForValue(value, sameHostFunction) orelse return 0;
+    return host_functions.instanceCount(handle);
+}
+
+/// 値に対応する host 関数スロットの (index, generation)（テスト・診断用）。
+pub fn hostFunctionHandle(value: Value) ?HostFunctionTable.Handle {
+    return host_functions.handleForValue(value, sameHostFunction);
+}
+
+/// Nako 関数・クロージャを QuickJS の JS 関数値へ変換する。同じ
+/// `*state.Object` は同じスロットを再利用し、別 Object（クロージャ）は別
+/// スロットとして登録する。1回の呼出しは JS 関数インスタンス1個に対応し、
+/// その finalizer が来るまでスロットと capture を保持する。
 pub fn hostFunction(runtime: *state.Runtime, engine_value: *Engine, value: Value) !*RawValue {
     if (@as(Tag, @fromBackingInt(value.tag)) != .function) return error.QuickJsUnsupportedArgument;
+    // 単一 engine 所有モデル。解放通知は生成先 engine に設定する必要があるため、
+    // モジュール変数 `engine` と一致しない engine は拒否する。
+    const active_engine = engine orelse return error.QuickJsHostUnavailable;
+    if (active_engine != engine_value) return error.QuickJsHostUnavailable;
     const object = value.object() orelse return error.QuickJsUnsupportedArgument;
     // 別 runtime の残留エントリは前の runtime の Object を指すため、登録前に破棄する。
     if (host_runtime != null and host_runtime != runtime) deinitHostFunctions();
@@ -212,28 +261,26 @@ pub fn hostFunction(runtime: *state.Runtime, engine_value: *Engine, value: Value
     host_allocator = runtime.allocator;
     runtime.compat_trace = compatTrace;
     runtime.compat_deinit = compatDeinit;
-    var function_id: usize = 0;
-    while (function_id < host_functions.items.len) : (function_id += 1) {
-        const candidate = host_functions.items[function_id];
-        if (@as(Tag, @fromBackingInt(candidate.tag)) == .function and candidate.object() == object) break;
+    lnako_qjs_set_host_release(active_engine, hostRelease);
+    var handle: HostFunctionTable.Handle = undefined;
+    if (host_functions.handleForValue(value, sameHostFunction)) |existing| {
+        handle = existing;
+    } else {
+        handle = try host_functions.insert(runtime.allocator, value);
     }
+    // C 側の関数生成中に QuickJS の GC やプロパティ操作で既存インスタンスの
+    // finalizer が走ってもスロットが解放されないよう、生成前に参照カウントを
+    // 予約する。失敗時は予約分だけを戻す（新規なら 1 -> 0 で即解放、既存なら
+    // N+1 -> N で既存インスタンスを保護する）。
+    host_functions.acquire(handle);
+    errdefer host_functions.release(handle.index, handle.generation);
     // QuickJS の C 関数名は NUL 終端。NUL を含む名前はそこで切って安全に渡す。
-    // 名前の確保は append より先に行い、名前確保の失敗で新規エントリを残さない。
     const source_name = object.payload.function.name;
     const name = if (std.mem.indexOfScalar(u8, source_name, 0)) |end| source_name[0..end] else source_name;
     const name_z = try runtime.allocator.dupeSentinel(u8, name, 0);
     defer runtime.allocator.free(name_z);
-    var appended = false;
-    if (function_id == host_functions.items.len) {
-        try host_functions.append(runtime.allocator, value);
-        appended = true;
-    }
-    // C 関数値の生成に失敗した場合、この呼出しで追加したスロットを残さない。
-    // 既存スロットの再利用時は pop しない。
-    errdefer if (appended) {
-        _ = host_functions.pop();
-    };
-    return lnako_qjs_host_function(engine_value, function_id, name_z.ptr) orelse error.OutOfMemory;
+    const raw = lnako_qjs_host_function(engine_value, handle.index, handle.generation, name_z.ptr) orelse return error.OutOfMemory;
+    return raw;
 }
 
 fn clearNewPendingException(runtime: *state.Runtime, had_pending: bool) void {
@@ -271,6 +318,9 @@ pub fn ensureEngine() !*Engine {
     // AOTにはinterpreterの変数bridgeが無い。`sys.__getSysVar` の直接読み取りは
     // 未定義値を返さずJS例外にし、plugin初期化の取りこぼしを表面化させる。
     lnako_qjs_set_host_strict(created, 1);
+    // `hostFunction` を経由せずに engine を生成した場合も、finalizer の解放
+    // 通知先をこのモジュールへ揃えておく（テーブルが空なら no-op）。
+    lnako_qjs_set_host_release(created, hostRelease);
     engine = created;
     return created;
 }

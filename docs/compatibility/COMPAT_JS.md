@@ -119,20 +119,109 @@ JS参照のプロパティ、そうでなければ同期変換で作ったJSコ�
 
 Nako の関数・クロージャを JS へ渡す経路（JS 関数値の呼出し引数、`{cb: fn}` /
 `[fn]` のような入れ子、`JS実行` が返した JS 関数のコールバック引数）では、
-`compat_js.zig` の `host_functions` が Nako 関数を ID で保持し、
-`lnako_qjs_host_function` で QuickJS の C 関数値を生成します。同じ
-`*state.Object` は同じ ID を再利用し、クロージャは別 Object なので別 ID に
-なります。JS からの呼出しは `hostInvoke` が実引数を full 変換して Nako 関数を
-呼び、呼出し後の実引数（Nako 側で変更した配列・辞書）を JS へ書き戻してから
-戻り値を変換します。
+`compat_js.zig` の `host_functions` が Nako 関数を世代付き ID で保持し、
+`lnako_qjs_host_function` で QuickJS の JS 関数値を生成します。同じ
+`*state.Object` は同じスロットを再利用し、クロージャは別 Object なので別
+スロットになります。JS からの呼出しは `hostInvoke` が実引数を full 変換して
+Nako 関数を呼び、呼出し後の実引数（Nako 側で変更した配列・辞書）を JS へ
+書き戻してから戻り値を変換します。
+
+#### インスタンス参照カウントと世代付き ID（Issue #278）
+
+`lnako_qjs_host_function` は同じスロットから複数の JS 関数オブジェクトを
+生成できます。`src/compat/quickjs_bridge.c` は各 JS 関数を `JSClassDef` の
+`call` + `finalizer` を持つ callable として生成し、finalizer から
+`LnakoQuickJsHostRelease(opaque, function_id, generation)` を1インスタンス
+1回通知します。`src/compat/host_functions.zig` のテーブルは、成功した生成
+ごとに `instances` を加算し、通知ごとに減算します。最後のインスタンスが
+消えたスロットだけを tombstone として解放し、保持していた Nako 値
+（クロージャと capture）を手放します。これにより、JS 側の参照が消えた
+callback の capture は次の Nako GC で回収できます。
+
+参照カウントの予約は C 関数生成より先に行います。スロット確保・検索の直後に
+`acquire` して `instances` を +1 し、`lnako_qjs_host_function` が失敗した
+場合だけ `errdefer` で同じ `(index, generation)` を `release` します。C 側の
+関数生成中に QuickJS の GC やプロパティ操作で既存インスタンスの finalizer が
+走っても、予約分の 1 がスロットを保護するため、直後の `acquire` が空振りして
+無効な handle を返すことはありません。新規スロットなら失敗時の `1 -> 0` で
+即解放され、既存スロットなら `N+1 -> N` へ戻ります。C 側の `committed` は
+wrapper を返せたインスタンスだけ 1 になり、生成途中の `JS_FreeValue` から
+重複した解放通知を送りません。
+
+host 関数 class の `JSClassID` はプロセス共通の `static` 変数で採番します。
+`JS_NewClassID` はポインタ先が非0なら同じ ID を返すため、engine の生成・破棄を
+繰り返しても `js_class_id_alloc` を消費しません。各 runtime へは
+`JS_IsRegisteredClass` を確認してから `JS_NewClass` し、`JS_NewContext` が
+その時点の `rt->class_count` で `class_proto` を確保するため、class 登録は
+`JS_NewRuntime` の後・`JS_NewContext` の前に済ませます。
+
+スロット ID は密な配列 index ではなく `(index, generation)` の組です。
+`function_id` は `uintptr_t`、`generation` は別の `uint64_t` として ABI に
+渡すため、32bit 環境でも世代を index に詰めて切り捨てることがありません。
+世代は 0 と `maxInt(u64)` を使わず単調増加し、尽きたら新規登録を失敗させます
+（wrap しない）。解放後のスロットを再利用しても、古い世代の JS 関数は
+`hostInvoke` の lookup に一致せず、新しいエントリを呼んだり解放したりしません。
+生成途中で失敗したインスタンスは C 側の `committed` フラグが立たないため解放
+通知を送らず、呼出し側は先予約した参照カウントを `errdefer` で戻すので、
+既存インスタンスのカウントを汚しません。
+
+`Function` 意味論を保つため、生成した関数は intrinsic な `Function.prototype`
+を proto に持ち、own の `name` / `length` を定義します。`Function.prototype` は
+`JS_NewContext` 直後（ユーザーコードや `install_host_bridge` より前）に
+`JS_NewCFunction` の probe から `JS_GetPrototype` で一度だけ取得して engine に
+保持し、`JS_FreeContext` の前に解放します。生成時に `globalThis.Function` を
+名前引きしないため、ユーザーJSが `globalThis.Function = 0` にしたり getter を
+仕込んだりしても、`typeof f === 'function'`、`f.call` / `f.apply` / `f.bind`、
+`f.name` は通常の関数と同じです（`f instanceof Function` はグローバル
+`Function` 自体を壊した場合はその限りではありません）。
+
+#### GC 境界と teardown
 
 `host_functions` は runtime の GC root ではないため、`Runtime.collect` の
-`compat_trace` フックが毎回 mark します。`Runtime.deinit` と
-`lnako_aot_compat_deinit` のどちらが先に呼ばれても、`compat_deinit` フックと
-`deinitHostFunctions` がテーブルと GC フックを解除します。通常 AOT では
-`compat_trace` / `compat_deinit` が null のままで、`runtime_core.zig` は
-`compat_js.zig` を静的に参照しません（`check_aot_quickjs_separation.mjs` が
-通常 AOT 成果物の QuickJS 非依存を検査します）。
+`compat_trace` フックが生存スロットを毎回 mark します。`compatTrace` は Nako
+GC の mark 中に走るため、そこで `WeakRef.deref` や `JS_RunGC` を呼びません。
+QuickJS の finalizer から呼ばれる `hostRelease` も、スロットの参照カウント
+減算と free list への連結だけを行い、QuickJS API や Nako GC を再入させません。
+テスト・診断用に `lnako_qjs_run_gc(engine)` で QuickJS GC を明示実行できます。
+
+`Runtime.deinit` と `lnako_aot_compat_deinit` のどちらが先に呼ばれても安全
+です。テーブルを解放する前に `lnako_qjs_set_host_release(engine, NULL)` で
+通知を解除するため、`JS_FreeContext` / `JS_FreeRuntime` の中で未解放 JS 関数の
+finalizer が走っても、破棄済みのテーブルや runtime へ触れません。interpreter
+側（`src/compat/quickjs.zig`）の `State` も同じ C bridge ABI と table を使い、
+`State.deinit` で通知を解除してから engine 参照を落とします。
+
+#### クロス GC の循環参照ポリシー
+
+Nako クロージャが JS 値（external binding）を capture し、JS 側がその Nako
+callback を保持する場合、参照の向きによって回収可能性が変わります。Nako GC は
+JS→Nako 辺を見ず、QuickJS GC は Nako 側の external binding が持つ JS 参照を
+root として扱うため、クロス GC の cycle collector は持ちません。
+
+- **一方向（JS→Nako のみ）**: JS 側の最後の参照を落として QuickJS GC を実行
+  すると finalizer が登録を解除し、続く Nako GC で closure・capture・
+  external JS 値が回収されます。
+- **真の双方向循環**: Nako closure が capture した JS オブジェクト `box` に、
+  生成した同じ Nako callback を `box.cb = cb` として格納すると、
+  `Nako closure → capture(external box) → box.cb(JS host function) →
+  host_functions → Nako closure` の循環になります。Nako 側が external binding
+  を保持している限り QuickJS は `box` を回収できず、`box.cb` も生存するため
+  host 関数テーブルは closure を root し続けます。したがって `globalThis` から
+  `box` を落として `lnako_qjs_run_gc` を実行しても循環は teardown まで保持され、
+  `runtime.deinit` と `lnako_aot_compat_deinit`（どちらが先でも）で安全に
+  解放・回収されます。
+- **循環の一辺を切る**: `box.cb = null` などで JS→Nako 辺を明示的に切れば、
+  QuickJS GC の finalizer が登録を解除し、続く Nako GC で closure と capture
+  （external JS 値）を実行中に回収できます。JS 側を弱参照にする場合も同じです。
+
+この方針は AOT の「真のクロスGC循環をteardownまで保持する」テストと
+「クロスGC循環の辺を切ると実行中に回収する」テストで固定しています。従来の
+「JSとNakoの循環参照をteardownまで保持する」テストは capture が `()=>7` で
+JS→Nako の戻り辺がなく一方向だったため、真の循環は上記のテストで検証します。
+通常 AOT では `compat_trace` / `compat_deinit` が null のままで、
+`runtime_core.zig` は `compat_js.zig` を静的に参照しません
+（`check_aot_quickjs_separation.mjs` が通常 AOT 成果物の QuickJS 非依存を
+検査します）。
 
 callback 経路は `SyncState.full_values = true` のため、BigInt と ByteBuffer
 （0..255 の JS 配列）も Nako↔JS で往復します。Nako callback が失敗した場合、
