@@ -173,7 +173,11 @@ try {
   // AOT/interpreterが同じ文言で明示エラーになること。
   const unsupportedObjectCases = [
     ["JSオブジェクト取得の関数レシーバ", "F=関数(A)それはA;ここまで\nJSオブジェクト取得(F,\"x\")を表示\n", "JSオブジェクト取得 does not support"],
-    ["JSオブジェクト取得のネスト配列", "JSオブジェクト取得([[1]],\"0\")を表示\n", "JSオブジェクト取得 does not support"],
+    ["JSオブジェクト取得のBigIntレシーバ", 'JSオブジェクト取得(JS実行("1n"),"x")を表示\n', "JSオブジェクト取得 does not support"],
+    ["JSオブジェクト取得のbytesレシーバ", 'B=3のランダム配列生成\nJSオブジェクト取得(B,"0")を表示\n', "JSオブジェクト取得 does not support"],
+    ["JSオブジェクト取得のコンテナ内bytes", 'B=3のランダム配列生成\nJSオブジェクト取得([B],"0")を表示\n', "JSオブジェクト取得 does not support"],
+    ["JSオブジェクト取得のコンテナ内BigInt", 'JSオブジェクト取得(JS実行("[1n]"),"0")を表示\n', "JSオブジェクト取得 does not support"],
+    ["JSメソッド実行のBigIntレシーバ", 'JSメソッド実行(JS実行("1n"),"toString",[])を表示\n', "JSメソッド実行 does not support"],
     ["JSメソッド実行の関数レシーバ", "F=関数(A)それはA;ここまで\nJSメソッド実行(F,\"x\",[])を表示\n", "JSメソッド実行 does not support"],
     ["JSメソッド実行の関数実引数", 'JSメソッド実行("[1,2]","join",[関数(A)それはA;ここまで])を表示\n', "JSメソッド実行 does not support"],
     ["JSオブジェクト取得の3引数", 'JSオブジェクト取得("[1,2]","0","x")を表示\n', "JSオブジェクト取得 accepts a value and a property name only"],
@@ -182,6 +186,7 @@ try {
     ["JSメソッド実行のPromise戻り値", 'JSメソッド実行(『({f(){return Promise.resolve(1)}})』,"f",[])を表示\n', "JSメソッド実行 does not support"],
     ["JSメソッド実行の巨大length戻り値", 'JSメソッド実行(『({f(){const a=[];a.length=10000000;return a}})』,"f",[])を表示\n', "QuickJsCollectionTooLarge"],
     ["JSメソッド実行のbytesレシーバ", 'B=3のランダム配列生成\nA=JS関数実行("()=>[1]",[])\nA[0]=B\nJSメソッド実行(A,"join",["-"])を表示\n', "JSメソッド実行 does not support"],
+    ["JSメソッド実行のコンテナ内bytes", 'B=3のランダム配列生成\nJSメソッド実行("[1,2]","join",[[B]])を表示\n', "JSメソッド実行 does not support"],
     ["JSメソッド実行の深い戻り値", 'JSメソッド実行(『({deep(){let o={};for(let i=0;i<70;i++)o={a:o};return o}})』,"deep",[])を表示\n', "QuickJsNestingTooDeep"],
   ];
   for (const [index, [label, source, expected]] of unsupportedObjectCases.entries()) {
@@ -210,71 +215,40 @@ try {
     fail(`JSオブジェクト取得の1引数形がAOTで明示エラーになりません: ${namedObject.stdout}${namedObject.stderr}`);
   }
 
-  // 浅い配列・辞書だけを引数に許可する。ネストした配列/辞書・関数値・
-  // バイト列は、QuickJSへ渡す前に AOT/インタプリタが同じ文言で明示エラーに
-  // すること。BigIntはAOT側に値の生成経路がまだ無いためinterpreterだけで
-  // 確認し、AOT側の判定は src/runtime/aot/compat_js.zig の単体テストで固定する。
-  const unsupportedArgumentCases = [
-    ["ネストした配列", 'JS関数実行("x => x", [[[1,2]]])を表示\n'],
-    ["配列要素の辞書", 'JS関数実行("x => x", [[{x:1}]])を表示\n'],
-    ["辞書の値の配列", 'JS関数実行("x => x", {x:[1,2]})を表示\n'],
-    ["辞書の値の辞書", 'JS関数実行("x => x", {x:{y:1}})を表示\n'],
-    ["関数値", "F=関数(A)それはA;ここまで\nJS関数実行(\"x => x\", F)を表示\n"],
-    ["bytes", "B=3のランダム配列生成\nJS関数実行(\"x => x\", B)を表示\n"],
+  // `JS関数実行` の full 変換（ネスト配列・辞書、関数値、BigInt、bytes、循環、
+  // 疎配列、Promise解決値）と、`JSオブジェクト取得` / `JSメソッド実行` の
+  // 制限付き結果変換（ネスト配列・辞書、関数値、bytes、循環）を
+  // AOT/interpreter の完全一致で固定する。
+  const fullConversionFixtures = [
+    [
+      "JS関数実行のfull変換",
+      "compat-js-full-conversion.nako3",
+      "6\n42\nfunction\n2\n3\ntrue\n3:false\n1,2,[object Object]\n1\n42\n2\ntrue\n1,,3",
+    ],
+    [
+      "JSオブジェクト取得/JSメソッド実行のfull変換",
+      "compat-js-object-full.nako3",
+      "1\n5\nfunction\n43\ntrue\n12",
+    ],
   ];
-  const unsupportedArgumentMessage =
-    "JS関数実行 does not support nested arrays or dictionaries, functions, bigint, or bytes arguments yet";
-  for (const [index, [label, source]] of unsupportedArgumentCases.entries()) {
-    const unsupportedArgumentSource = join(work, `compat-js-unsupported-argument-${index}.nako3`);
-    writeFileSync(unsupportedArgumentSource, source);
-    const unsupportedArgumentBinary = join(work, `compat-js-unsupported-argument-${index}`);
-    runCompiler(unsupportedArgumentSource, unsupportedArgumentBinary, ["--compat-js", "--backend", "aot"]);
-    const aot = spawnSync(unsupportedArgumentBinary, [], { encoding: "utf8" });
-    const interpreter = spawnSync(compiler, ["run", unsupportedArgumentSource, "--compat-js"], { encoding: "utf8" });
-    for (const [kind, result] of [["AOT", aot], ["インタプリタ", interpreter]]) {
-      const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
-      if (result.status === 0 || !output.includes(unsupportedArgumentMessage)) {
-        fail(`${label}の未対応引数が${kind}で明示エラーになりません: status=${result.status}\n${output}`);
-      }
+  for (const [index, [label, fixture, expected]] of fullConversionFixtures.entries()) {
+    const fixturePath = join(root, "tests", "fixtures", fixture);
+    const interpreter = spawnSync(compiler, ["run", fixturePath, "--compat-js"], { encoding: "utf8" });
+    if (interpreter.status !== 0) {
+      fail(`${label}fixtureのインタプリタ実行が失敗しました: ${interpreter.stdout}${interpreter.stderr}`);
     }
-  }
-
-  // 戻り値もプリミティブと浅い配列・辞書だけを許可する。ネストした配列/辞書・
-  // 関数・BigInt・bytesは、QuickJSへ渡す前ではなく戻り値変換時に
-  // AOT/interpreterが同じ文言で明示エラーにすること。
-  const unsupportedResultCases = [
-    ["ネストした配列の戻り値", 'JS関数実行("()=>[1,[2]]", [])を表示\n'],
-    ["ネストした辞書の戻り値", 'JS関数実行(『()=>({x:{y:1}})』, [])を表示\n'],
-    ["関数の戻り値", 'JS関数実行("()=>()=>1", [])を表示\n'],
-    ["Promise解決値のBigInt", 'JS関数実行("()=>Promise.resolve(1n)", [])を表示\n'],
-    ["Promise解決値のネスト配列", 'JS関数実行("()=>Promise.resolve([1,[2]])", [])を表示\n'],
-    ["BigIntの戻り値", 'JS関数実行("()=>1n", [])を表示\n'],
-    ["bytesの戻り値（TypedArray）", 'JS関数実行("()=>new Uint8Array([1,2])", [])を表示\n'],
-    ["bytesの戻り値（ArrayBuffer）", 'JS関数実行("()=>new ArrayBuffer(4)", [])を表示\n'],
-    ["bytesの戻り値（SharedArrayBuffer）", 'JS関数実行("()=>new SharedArrayBuffer(4)", [])を表示\n'],
-    ["bytesの戻り値（DataView）", 'JS関数実行("()=>new DataView(new ArrayBuffer(4))", [])を表示\n'],
-    ["配列要素のbytes", 'JS関数実行("()=>[new Uint8Array([1])]", [])を表示\n'],
-    ["辞書値のbytes", 'JS関数実行(『()=>({x:new Uint8Array([1])})』, [])を表示\n'],
-  ];
-  const unsupportedResultMessage =
-    "JS関数実行 does not support nested arrays or dictionaries, functions, bigint, or bytes results yet";
-  for (const [index, [label, source]] of unsupportedResultCases.entries()) {
-    const unsupportedResultSource = join(work, `compat-js-unsupported-result-${index}.nako3`);
-    writeFileSync(unsupportedResultSource, source);
-    const unsupportedResultBinary = join(work, `compat-js-unsupported-result-${index}`);
-    runCompiler(unsupportedResultSource, unsupportedResultBinary, ["--compat-js", "--backend", "aot"]);
-    const aot = spawnSync(unsupportedResultBinary, [], { encoding: "utf8" });
-    const interpreter = spawnSync(compiler, ["run", unsupportedResultSource, "--compat-js"], { encoding: "utf8" });
-    for (const [kind, result] of [["AOT", aot], ["インタプリタ", interpreter]]) {
-      const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
-      if (result.status === 0 || !output.includes(unsupportedResultMessage)) {
-        fail(`${label}の未対応戻り値が${kind}で明示エラーになりません: status=${result.status}\n${output}`);
-      }
-    }
+    const binary = join(work, `compat-js-full-${index}`);
+    runCompiler(fixturePath, binary, ["--compat-js", "--backend", "aot"]);
+    const output = runBinary(binary);
+    expectEqual(output, interpreter.stdout.trim(), `${label}のAOT/インタプリタ一致`);
+    expectEqual(output, expected, `${label}の期待出力`);
   }
 
   // Promise戻り値は解決値をawaitする。rejectはreject理由、pendingはbridgeの
   // 文言で、AOT/interpreterが同じ明示エラーになること（無限待機しない）。
+  // Nako Promiseを実引数に渡す経路はNakoスクリプトからPromise値を直接
+  // 構築できないため、AOT/interpreter双方の単体テスト
+  // （compat_js_test.zig / quickjs_test.zig）で固定する。
   const promiseFailureCases = [
     ["Promiseのreject", 'JS関数実行(『()=>Promise.reject(new Error("x"))』, [])を表示\n', "Error: x"],
     ["pendingのPromise", 'JS関数実行(『()=>new Promise(()=>{})』, [])を表示\n', "QuickJS promise is still pending"],
@@ -291,22 +265,6 @@ try {
       if (result.status === 0 || !output.includes(expected)) {
         fail(`${label}が${kind}で明示エラーになりません: status=${result.status}\n${output}`);
       }
-    }
-  }
-
-  // BigInt: `JS実行` が返したBigIntはAOTでも値として保持できるため、
-  // `JS関数実行` の浅い引数規則でAOT/interpreterが同じ文言で失敗することを固定する。
-  const bigintSource = join(work, "compat-js-unsupported-argument-bigint.nako3");
-  writeFileSync(bigintSource, 'B=JS実行("1n")\nJS関数実行("x => x", B)を表示\n');
-  const bigintBinary = join(work, "compat-js-unsupported-argument-bigint");
-  runCompiler(bigintSource, bigintBinary, ["--compat-js", "--backend", "aot"]);
-  for (const [kind, result] of [
-    ["AOT", spawnSync(bigintBinary, [], { encoding: "utf8" })],
-    ["インタプリタ", spawnSync(compiler, ["run", bigintSource, "--compat-js"], { encoding: "utf8" })],
-  ]) {
-    const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
-    if (result.status === 0 || !output.includes(unsupportedArgumentMessage)) {
-      fail(`BigIntの未対応引数が${kind}で明示エラーになりません: status=${result.status}\n${output}`);
     }
   }
 

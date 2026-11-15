@@ -14,7 +14,6 @@ const lnako_aot_compat_js_method_call = compat.lnako_aot_compat_js_method_call;
 const lnako_aot_compat_js_object_get = compat.lnako_aot_compat_js_object_get;
 const lnako_qjs_eval = compat.lnako_qjs_eval;
 const lnako_qjs_value_free = compat.lnako_qjs_value_free;
-const shallowDictionaryFromRaw = compat_result.shallowDictionaryFromRaw;
 
 const Value = state.Value;
 const Tag = state.Tag;
@@ -240,74 +239,138 @@ test "compat AOT runtimeはJS関数実行の空配列・空辞書を渡す" {
     lnako_aot_compat_deinit();
 }
 
-test "compat AOT runtimeはJS関数実行の未対応引数を明示エラーにする" {
+test "compat AOT runtimeはJS関数実行の実引数をfull変換する" {
     if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
     var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
     defer runtime.deinit();
     state.active_runtime = runtime;
     defer {
         runtime = state.active_runtime.?;
         state.active_runtime = null;
     }
-    const source_units = try std.unicode.utf8ToUtf16LeAlloc(std.testing.allocator, "x => 1");
-    defer std.testing.allocator.free(source_units);
-    const x_units = try std.unicode.utf8ToUtf16LeAlloc(std.testing.allocator, "x");
-    defer std.testing.allocator.free(x_units);
+    var roots: [8]Value = @splat(.{});
+    var frame: state.RootFrame = .{};
+    state.active_runtime.?.pushRoots(&frame, &roots, roots.len);
+    defer state.active_runtime.?.popRoots(&frame);
     var arguments = [_]Value{ .{}, .{} };
-    var scratch = [_]Value{ .{}, .{}, .{}, .{} };
     var arguments_frame: state.RootFrame = .{};
-    var scratch_frame: state.RootFrame = .{};
     state.active_runtime.?.pushRoots(&arguments_frame, &arguments, arguments.len);
-    state.active_runtime.?.pushRoots(&scratch_frame, &scratch, scratch.len);
-    defer {
-        state.active_runtime.?.popRoots(&scratch_frame);
-        state.active_runtime.?.popRoots(&arguments_frame);
-    }
-    arguments[0] = try state.active_runtime.?.createString(source_units);
-    scratch[3] = try state.active_runtime.?.createString(x_units);
+    defer state.active_runtime.?.popRoots(&arguments_frame);
     var out: Value = .{};
-
-    // ネストした配列: コンテナの要素が配列で、その要素も配列。
-    var nested_inner = [_]Value{ state.numberValue(1), state.numberValue(2) };
-    state.lnako_aot_array_new(&scratch[0], &nested_inner, nested_inner.len);
-    var nested_middle = [_]Value{scratch[0]};
-    state.lnako_aot_array_new(&scratch[1], &nested_middle, nested_middle.len);
-    var nested_container = [_]Value{scratch[1]};
-    state.lnako_aot_array_new(&arguments[1], &nested_container, nested_container.len);
+    // ネストした配列・辞書は同じfull変換でJSへ渡る。
+    arguments[0] = try testString(&state.active_runtime.?, "(a, b, c) => a[0][0] + b.x + c.y.z");
+    var numbers = [_]Value{ state.numberValue(1), state.numberValue(2) };
+    state.lnako_aot_array_new(&roots[0], &numbers, numbers.len);
+    var numbers_container = [_]Value{roots[0]};
+    state.lnako_aot_array_new(&roots[1], &numbers_container, numbers_container.len);
+    const x_key = try testString(&state.active_runtime.?, "x");
+    var x_pair = [_]Value{ x_key, state.numberValue(5) };
+    state.lnako_aot_dictionary_new(&roots[2], &x_pair, x_pair.len);
+    const y_key = try testString(&state.active_runtime.?, "y");
+    const z_key = try testString(&state.active_runtime.?, "z");
+    var z_pair = [_]Value{ z_key, state.numberValue(10) };
+    state.lnako_aot_dictionary_new(&roots[3], &z_pair, z_pair.len);
+    var y_pair = [_]Value{ y_key, roots[3] };
+    state.lnako_aot_dictionary_new(&roots[4], &y_pair, y_pair.len);
+    var container = [_]Value{ roots[1], roots[2], roots[4] };
+    state.lnako_aot_array_new(&roots[5], &container, container.len);
+    arguments[1] = roots[5];
     lnako_aot_compat_js_call(&out, &arguments, 2);
-    try expectPendingFailureContains(&state.active_runtime.?, "JS関数実行 does not support nested arrays or dictionaries");
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    try std.testing.expectEqual(@as(f64, 16), @as(f64, @bitCast(out.payload)));
 
-    // 辞書の値が配列（ネスト）。
-    var nested_value_array = [_]Value{state.numberValue(1)};
-    state.lnako_aot_array_new(&scratch[0], &nested_value_array, nested_value_array.len);
-    var value_pairs = [_]Value{ scratch[3], scratch[0] };
-    state.lnako_aot_dictionary_new(&arguments[1], &value_pairs, value_pairs.len);
+    // BigIntは10進文字列経由で往復する。
+    arguments[0] = try testString(&state.active_runtime.?, "(v)=>v+1n");
+    arguments[1] = try state.active_runtime.?.createBigInt("9007199254740993");
     lnako_aot_compat_js_call(&out, &arguments, 2);
-    try expectPendingFailureContains(&state.active_runtime.?, "JS関数実行 does not support nested arrays or dictionaries");
 
-    // 辞書の値が辞書（ネスト）。
-    var inner_pairs = [_]Value{ scratch[3], state.numberValue(1) };
-    state.lnako_aot_dictionary_new(&scratch[0], &inner_pairs, inner_pairs.len);
-    var outer_pairs = [_]Value{ scratch[3], scratch[0] };
-    state.lnako_aot_dictionary_new(&arguments[1], &outer_pairs, outer_pairs.len);
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    try expectBigIntText(out, "9007199254740994");
+
+    // ByteBufferは0..255の数値配列としてJSへ渡る。
+    arguments[0] = try testString(&state.active_runtime.?, "(a)=>a[0]+a[2]");
+    arguments[1] = try state.active_runtime.?.createByteBuffer(&.{ 1, 2, 255 }, .uint8_array);
     lnako_aot_compat_js_call(&out, &arguments, 2);
-    try expectPendingFailureContains(&state.active_runtime.?, "JS関数実行 does not support nested arrays or dictionaries");
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    try std.testing.expectEqual(@as(f64, 256), @as(f64, @bitCast(out.payload)));
 
-    // 関数値。
+    // Nako関数値はcallbackとしてJSへ渡る。
+    arguments[0] = try testString(&state.active_runtime.?, "(f)=>typeof f");
     arguments[1] = try state.active_runtime.?.createFunction(noopFunction, 0, &.{});
     lnako_aot_compat_js_call(&out, &arguments, 2);
-    try expectPendingFailureContains(&state.active_runtime.?, "JS関数実行 does not support nested arrays or dictionaries");
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    {
+        const units = try state.valueUtf16Alloc(&state.active_runtime.?, out);
+        defer std.testing.allocator.free(units);
+        try std.testing.expectEqualSlices(u16, &[_]u16{ 'f', 'u', 'n', 'c', 't', 'i', 'o', 'n' }, units);
+    }
 
-    // BigInt。
-    arguments[1] = try state.active_runtime.?.createBigInt("1");
+    // JS関数値は同じJS参照のまま実引数へ渡り、JSから直接呼べる。
+    roots[6] = try evalCompatJs(&state.active_runtime.?, "x=>x+1");
+    arguments[0] = try testString(&state.active_runtime.?, "(f)=>f(41)");
+    arguments[1] = roots[6];
     lnako_aot_compat_js_call(&out, &arguments, 2);
-    try expectPendingFailureContains(&state.active_runtime.?, "JS関数実行 does not support nested arrays or dictionaries");
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    try std.testing.expectEqual(@as(f64, 42), @as(f64, @bitCast(out.payload)));
 
-    // bytes（Uint8Array互換のbyte_buffer）。
-    arguments[1] = try state.active_runtime.?.createByteBuffer("ab", .array_buffer);
+    // Nako側の自己参照配列は同じJS参照の循環として渡る。
+    state.lnako_aot_array_new(&roots[7], &[_]Value{.{}}, 1);
+    roots[7].object().?.payload.array.items[0] = roots[7];
+    arguments[0] = try testString(&state.active_runtime.?, "a => a === a[0]");
+    arguments[1] = roots[7];
     lnako_aot_compat_js_call(&out, &arguments, 2);
-    try expectPendingFailureContains(&state.active_runtime.?, "JS関数実行 does not support nested arrays or dictionaries");
-    lnako_aot_compat_deinit();
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.boolean)), out.tag);
+    try std.testing.expect(out.payload != 0);
+
+    // 疎配列の穴はJSでも穴のまま渡る。
+    var sparse_items = [_]Value{ state.numberValue(1), .{}, state.numberValue(3) };
+    state.lnako_aot_array_new(&roots[7], &sparse_items, sparse_items.len);
+    roots[7].object().?.array_presence.items[1] = false;
+    // 第2引数が配列だと要素がspreadされるため、単一の配列引数は外側で包む。
+    var sparse_container = [_]Value{roots[7]};
+    state.lnako_aot_array_new(&roots[3], &sparse_container, sparse_container.len);
+    arguments[0] = try testString(&state.active_runtime.?, "a => (1 in a) ? 0 : (a.length === 3 ? 1 : 2)");
+    arguments[1] = roots[3];
+    lnako_aot_compat_js_call(&out, &arguments, 2);
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    try std.testing.expectEqual(@as(f64, 1), @as(f64, @bitCast(out.payload)));
+
+    // WTF-8の孤立サロゲートは文字列・辞書キーの両方で保持される。
+    const surrogate_units = [_]u16{0xD800};
+    arguments[0] = try testString(&state.active_runtime.?, "(s,o)=>s.charCodeAt(0) + o['\\uD800']");
+    roots[1] = try state.active_runtime.?.createString(&surrogate_units);
+    roots[2] = try state.active_runtime.?.createString(&surrogate_units);
+    var surrogate_pair = [_]Value{ roots[2], state.numberValue(1) };
+    state.lnako_aot_dictionary_new(&roots[0], &surrogate_pair, surrogate_pair.len);
+    var surrogate_values = [_]Value{ roots[1], roots[0] };
+    state.lnako_aot_array_new(&roots[3], &surrogate_values, surrogate_values.len);
+    var surrogate_arguments = [_]Value{ arguments[0], roots[3] };
+    lnako_aot_compat_js_call(&out, &surrogate_arguments, surrogate_arguments.len);
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    try std.testing.expectEqual(@as(f64, 55297), @as(f64, @bitCast(out.payload)));
+}
+
+test "compat AOT runtimeはJS関数実行のNako Promise引数を明示エラーにする" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    var arguments = [_]Value{ .{}, .{} };
+    var frame: state.RootFrame = .{};
+    state.active_runtime.?.pushRoots(&frame, &arguments, arguments.len);
+    defer state.active_runtime.?.popRoots(&frame);
+    arguments[0] = try testString(&state.active_runtime.?, "x => x");
+    arguments[1] = try @import("async.zig").createAotPromise(&state.active_runtime.?);
+    var out: Value = .{};
+    lnako_aot_compat_js_call(&out, &arguments, 2);
+    try expectPendingFailureContains(&state.active_runtime.?, "does not support promises or unsupported argument types");
 }
 
 test "compat AOT runtimeはJS関数実行の非配列引数を単一実引数として渡す" {
@@ -400,7 +463,7 @@ fn callCompatJs(runtime: *state.Runtime, source: []const u8) !Value {
     return out;
 }
 
-test "compat AOT runtimeはJS関数実行の配列・辞書戻り値をNako値へ浅く変換する" {
+test "compat AOT runtimeはJS関数実行の戻り値をJS実行と同じfull変換にする" {
     if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
     var runtime = state.Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
@@ -409,6 +472,10 @@ test "compat AOT runtimeはJS関数実行の配列・辞書戻り値をNako値�
         runtime = state.active_runtime.?;
         state.active_runtime = null;
     }
+    var roots = [_]Value{.{}};
+    var frame: state.RootFrame = .{};
+    pushTestRoots(&state.active_runtime.?, &frame, &roots);
+    defer state.active_runtime.?.popRoots(&frame);
 
     const array_value = try callCompatJs(&state.active_runtime.?, "()=>[1,2]");
     try std.testing.expect(!state.active_runtime.?.has_pending_exception);
@@ -417,6 +484,8 @@ test "compat AOT runtimeはJS関数実行の配列・辞書戻り値をNako値�
     try std.testing.expectEqual(@as(usize, 2), array_items.len);
     try std.testing.expectEqual(@as(f64, 1), @as(f64, @bitCast(array_items[0].payload)));
     try std.testing.expectEqual(@as(f64, 2), @as(f64, @bitCast(array_items[1].payload)));
+    // full変換でもJS参照（external binding）は保持する。
+    try std.testing.expect(array_value.object().?.external != null);
 
     const empty_array_value = try callCompatJs(&state.active_runtime.?, "()=>[]");
     try std.testing.expect(!state.active_runtime.?.has_pending_exception);
@@ -455,15 +524,61 @@ test "compat AOT runtimeはJS関数実行の配列・辞書戻り値をNako値�
     try std.testing.expectEqual(@as(u8, @backingInt(Tag.undefined)), mixed[3].tag);
     try std.testing.expectEqual(@as(f64, 3.5), @as(f64, @bitCast(mixed[4].payload)));
 
-    // 孤立サロゲートはinterpreterと同じくWTF-8可逆で保持する。
-    const surrogate_value = try callCompatJs(&state.active_runtime.?, "()=>['\\uD800']");
+    // ネストした配列・辞書は再帰変換する。
+    roots[0] = try callCompatJs(&state.active_runtime.?, "()=>({a:[1,{b:2}]})");
     try std.testing.expect(!state.active_runtime.?.has_pending_exception);
-    const surrogate_items = surrogate_value.object().?.payload.array.items;
-    try std.testing.expectEqual(@as(usize, 1), surrogate_items.len);
-    const surrogate_units = surrogate_items[0].object().?.payload.utf16_string;
-    try std.testing.expectEqualSlices(u16, &[_]u16{0xD800}, surrogate_units);
+    const nested_entries = roots[0].object().?.payload.dictionary.entries.items;
+    try std.testing.expectEqual(@as(usize, 1), nested_entries.len);
+    const nested_array = nested_entries[0].value.object().?;
+    try std.testing.expectEqual(@as(usize, 2), nested_array.payload.array.items.len);
+    const nested_dictionary = nested_array.payload.array.items[1].object().?;
+    try std.testing.expectEqual(@as(usize, 1), nested_dictionary.payload.dictionary.entries.items.len);
+    try std.testing.expectEqual(
+        @as(f64, 2),
+        @as(f64, @bitCast(nested_dictionary.payload.dictionary.entries.items[0].value.payload)),
+    );
 
-    lnako_aot_compat_deinit();
+    // BigInt・bytes（TypedArray/ArrayBuffer）もfull変換で保持する。
+    roots[0] = try callCompatJs(&state.active_runtime.?, "()=>1n");
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    try expectBigIntText(roots[0], "1");
+    roots[0] = try callCompatJs(&state.active_runtime.?, "()=>new Uint8Array([1,2])");
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.dictionary)), roots[0].tag);
+
+    // 関数値はAOTのexternal関数値として保持する。
+    roots[0] = try callCompatJs(&state.active_runtime.?, "()=>(x)=>x+1");
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.function)), roots[0].tag);
+    try std.testing.expect(roots[0].object().?.external != null);
+
+    // 自己参照・疎配列も同じfull変換で保持する。
+    roots[0] = try callCompatJs(&state.active_runtime.?, "()=>{const a=[1];a.push(a);return a;}");
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    const cyclic = roots[0].object().?;
+    try std.testing.expect(cyclic.payload.array.items[1].object().? == cyclic);
+    roots[0] = try callCompatJs(&state.active_runtime.?, "()=>[1,,3]");
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    const sparse = roots[0].object().?;
+    try std.testing.expectEqual(@as(usize, 3), sparse.array_presence.items.len);
+    try std.testing.expect(!sparse.array_presence.items[1]);
+
+    // 孤立サロゲートは配列要素・辞書キーの両方で保持する。
+    roots[0] = try callCompatJs(&state.active_runtime.?, "()=>['\\uD800']");
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    {
+        const surrogate_units = try state.valueUtf16Alloc(&state.active_runtime.?, roots[0].object().?.payload.array.items[0]);
+        defer std.testing.allocator.free(surrogate_units);
+        try std.testing.expectEqualSlices(u16, &[_]u16{0xD800}, surrogate_units);
+    }
+    roots[0] = try callCompatJs(&state.active_runtime.?, "()=>({'\\uD800':1})");
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    {
+        const entry = roots[0].object().?.payload.dictionary.entries.items[0];
+        const key_units = try state.valueUtf16Alloc(&state.active_runtime.?, entry.key);
+        defer std.testing.allocator.free(key_units);
+        try std.testing.expectEqualSlices(u16, &[_]u16{0xD800}, key_units);
+    }
 }
 
 var test_external_releases: usize = 0;
@@ -638,6 +753,130 @@ test "compat AOT runtimeはJSメソッド実行をexternal binding経由でdispa
     try expectPendingFailureContains(&state.active_runtime.?, "JSメソッド実行 does not support");
 }
 
+test "compat AOT runtimeはJSオブジェクト取得とJSメソッド実行で非externalコンテナをfull変換する" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    var roots: [8]Value = @splat(.{});
+    var frame: state.RootFrame = .{};
+    state.active_runtime.?.pushRoots(&frame, &roots, roots.len);
+    defer state.active_runtime.?.popRoots(&frame);
+    var out: Value = .{};
+
+    // JSオブジェクト取得([[1]], "0") は非externalのネスト配列をJSへコピーし、
+    // 取得した配列にexternal bindingを付与する。
+    var inner_numbers = [_]Value{state.numberValue(1)};
+    state.lnako_aot_array_new(&roots[0], &inner_numbers, inner_numbers.len);
+    var inner_array = [_]Value{roots[0]};
+    state.lnako_aot_array_new(&roots[1], &inner_array, inner_array.len);
+    var object_get_args = [_]Value{ roots[1], try testString(&state.active_runtime.?, "0") };
+    lnako_aot_compat_js_object_get(&out, &object_get_args, object_get_args.len);
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.array)), out.tag);
+    try std.testing.expectEqual(@as(f64, 1), @as(f64, @bitCast(out.object().?.payload.array.items[0].payload)));
+    try std.testing.expect(out.object().?.external != null);
+
+    // ネストした辞書も同じ規則で取得できる。
+    const a_key = try testString(&state.active_runtime.?, "a");
+    const b_key = try testString(&state.active_runtime.?, "b");
+    var b_pair = [_]Value{ b_key, state.numberValue(5) };
+    state.lnako_aot_dictionary_new(&roots[2], &b_pair, b_pair.len);
+    var a_pair = [_]Value{ a_key, roots[2] };
+    state.lnako_aot_dictionary_new(&roots[3], &a_pair, a_pair.len);
+    var nested_get_args = [_]Value{ roots[3], a_key };
+    lnako_aot_compat_js_object_get(&out, &nested_get_args, nested_get_args.len);
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.dictionary)), out.tag);
+
+    // コンテナ内のBigIntも、制限付き結果変換（`convertResult`）では
+    // interpreterの`interop_result`と同じく拒否する。呼出し後のrefreshは
+    // `convertFull`を使うため、refresh時のBigInt保持は変わらない。
+    roots[4] = try evalCompatJs(&state.active_runtime.?, "[1n]");
+    var bigint_get_args = [_]Value{ roots[4], try testString(&state.active_runtime.?, "0") };
+    lnako_aot_compat_js_object_get(&out, &bigint_get_args, bigint_get_args.len);
+    try expectPendingFailureContains(&state.active_runtime.?, "JSオブジェクト取得 does not support promises, functions, bigint, or bytes yet");
+
+    // JSメソッド実行: 非externalのネスト配列・辞書・Nako callback・BigInt・
+    // 循環配列を同じfull変換で渡す。
+    roots[5] = try state.active_runtime.?.createFunction(noopFunction, 0, &.{});
+    var callback_container = [_]Value{roots[5]};
+    state.lnako_aot_array_new(&roots[6], &callback_container, callback_container.len);
+    var x_pair = [_]Value{ try testString(&state.active_runtime.?, "x"), state.numberValue(5) };
+    state.lnako_aot_dictionary_new(&roots[0], &x_pair, x_pair.len);
+    var dict_container = [_]Value{roots[0]};
+    state.lnako_aot_array_new(&roots[0], &dict_container, dict_container.len);
+    var n_pair = [_]Value{ try testString(&state.active_runtime.?, "n"), try state.active_runtime.?.createBigInt("42") };
+    state.lnako_aot_dictionary_new(&roots[1], &n_pair, n_pair.len);
+    state.lnako_aot_array_new(&roots[2], &[_]Value{.{}}, 1);
+    roots[2].object().?.payload.array.items[0] = roots[2];
+    var method_values = [_]Value{ roots[0], roots[6], roots[1], roots[2] };
+    state.lnako_aot_array_new(&roots[3], &method_values, method_values.len);
+    var method_arg_roots: [2]Value = @splat(.{});
+    var method_frame: state.RootFrame = .{};
+    state.active_runtime.?.pushRoots(&method_frame, &method_arg_roots, method_arg_roots.len);
+    defer state.active_runtime.?.popRoots(&method_frame);
+    method_arg_roots[0] = try testString(&state.active_runtime.?, "({m(...a){return String(a[0][0].x) + typeof a[1][0] + typeof a[2].n + (a[3] === a[3][0])}})");
+    method_arg_roots[1] = try testString(&state.active_runtime.?, "m");
+    var method_args = [_]Value{ method_arg_roots[0], method_arg_roots[1], roots[3] };
+    lnako_aot_compat_js_method_call(&out, &method_args, method_args.len);
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    {
+        const actual = try state.stringUtf8Alloc(&state.active_runtime.?, out);
+        defer std.testing.allocator.free(actual);
+        try std.testing.expectEqualStrings("5functionbiginttrue", actual);
+    }
+
+    // コンテナ内のbytesはAOTでも従来どおり明示エラーにする。
+    const bytes = try state.active_runtime.?.createByteBuffer(&.{1}, .uint8_array);
+    var bytes_container = [_]Value{bytes};
+    state.lnako_aot_array_new(&roots[0], &bytes_container, bytes_container.len);
+    var bytes_get_args = [_]Value{ roots[0], try testString(&state.active_runtime.?, "0") };
+    lnako_aot_compat_js_object_get(&out, &bytes_get_args, bytes_get_args.len);
+    try expectPendingFailureContains(&state.active_runtime.?, "JSオブジェクト取得 does not support");
+    var bytes_method_values = [_]Value{bytes};
+    state.lnako_aot_array_new(&roots[1], &bytes_method_values, bytes_method_values.len);
+    var bytes_method_arg_roots: [2]Value = @splat(.{});
+    var bytes_method_frame: state.RootFrame = .{};
+    state.active_runtime.?.pushRoots(&bytes_method_frame, &bytes_method_arg_roots, bytes_method_arg_roots.len);
+    defer state.active_runtime.?.popRoots(&bytes_method_frame);
+    bytes_method_arg_roots[0] = try testString(&state.active_runtime.?, "({m(a){return a.length}})");
+    bytes_method_arg_roots[1] = try testString(&state.active_runtime.?, "m");
+    var bytes_method_args = [_]Value{ bytes_method_arg_roots[0], bytes_method_arg_roots[1], roots[1] };
+    lnako_aot_compat_js_method_call(&out, &bytes_method_args, bytes_method_args.len);
+    try expectPendingFailureContains(&state.active_runtime.?, "JSメソッド実行 does not support");
+
+    // トップレベルの関数・BigInt・bytes・Promiseは引き続き拒否する。
+    var rejected_receivers: [4]Value = @splat(.{});
+    var rejected_frame: state.RootFrame = .{};
+    state.active_runtime.?.pushRoots(&rejected_frame, &rejected_receivers, rejected_receivers.len);
+    defer state.active_runtime.?.popRoots(&rejected_frame);
+    rejected_receivers[0] = roots[5];
+    rejected_receivers[1] = try state.active_runtime.?.createBigInt("1");
+    rejected_receivers[2] = bytes;
+    rejected_receivers[3] = try @import("async.zig").createAotPromise(&state.active_runtime.?);
+    for (rejected_receivers) |receiver| {
+        var rejected_args = [_]Value{ receiver, try testString(&state.active_runtime.?, "x") };
+        lnako_aot_compat_js_object_get(&out, &rejected_args, rejected_args.len);
+        try expectPendingFailureContains(&state.active_runtime.?, "JSオブジェクト取得 does not support");
+    }
+    // JSメソッド実行のトップレベル関数実引数も拒否する。
+    var top_level_fn_arg_roots: [2]Value = @splat(.{});
+    var top_level_frame: state.RootFrame = .{};
+    state.active_runtime.?.pushRoots(&top_level_frame, &top_level_fn_arg_roots, top_level_fn_arg_roots.len);
+    defer state.active_runtime.?.popRoots(&top_level_frame);
+    top_level_fn_arg_roots[0] = try testString(&state.active_runtime.?, "[1,2]");
+    top_level_fn_arg_roots[1] = try testString(&state.active_runtime.?, "join");
+    var top_level_fn_args = [_]Value{ top_level_fn_arg_roots[0], top_level_fn_arg_roots[1], roots[5] };
+    lnako_aot_compat_js_method_call(&out, &top_level_fn_args, top_level_fn_args.len);
+    try expectPendingFailureContains(&state.active_runtime.?, "JSメソッド実行 does not support");
+}
+
 test "compat AOT runtimeは深いJS結果の変換を深度上限で明示エラーにする" {
     if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
     var runtime = state.Runtime{ .allocator = std.testing.allocator };
@@ -732,9 +971,8 @@ test "compat AOT runtimeは辞書戻り値の変換中GCで要素値を失わな
     }
     try std.testing.expect(index > 0);
     // 要素値の文字列生成→キー文字列生成の間にcollectが入っても、
-    // 要素値はpairs（root frame）経由で保持される。
-    const dictionary = try shallowDictionaryFromRaw(&state.active_runtime.?, raw);
-    lnako_qjs_value_free(raw);
+    // 要素値はroot frame経由で保持される（`resultFromRaw` はrawを消費する）。
+    const dictionary = try compat_result.resultFromRaw(&state.active_runtime.?, raw);
     try std.testing.expect(!state.active_runtime.?.has_pending_exception);
     const entries = dictionary.object().?.payload.dictionary.entries.items;
     try std.testing.expectEqual(@as(usize, 1), entries.len);
@@ -866,7 +1104,8 @@ test "compat AOT runtimeはキー列挙中のJS例外文言を保持する" {
     _ = try evalCompatJs(&state.active_runtime.?, proxy_source);
     try expectPendingFailureContains(&state.active_runtime.?, "keys-boom");
 
-    // `JS関数実行` の浅い辞書変換（shallowDictionaryFromRaw）も同じ文言を残す。
+    // `JS関数実行` の戻り値も #280 以降は full 変換（convertFullObject）を通るが、
+    // ownKeys 例外の文言は同じく保持される。
     _ = try callCompatJs(
         &state.active_runtime.?,
         "()=>new Proxy({}, {ownKeys(){throw new Error('keys-boom');}})",
@@ -944,21 +1183,21 @@ test "compat AOT runtimeはJSオブジェクト取得とJSメソッド実行でB
     try std.testing.expect(!state.active_runtime.?.has_pending_exception);
     roots[1] = try testString(&state.active_runtime.?, "n");
     lnako_aot_compat_js_object_get(&out, roots[0..2].ptr, 2);
-    try expectPendingFailureContains(&state.active_runtime.?, "JSオブジェクト取得 does not support promises, functions, bigint, bytes, or nested arrays or dictionaries yet");
+    try expectPendingFailureContains(&state.active_runtime.?, "JSオブジェクト取得 does not support promises, functions, bigint, or bytes yet");
 
     // 入れ子の辞書直下でも同じ文言で拒否する。
     roots[0] = try evalCompatJs(&state.active_runtime.?, "({nested:{n:1n}})");
     try std.testing.expect(!state.active_runtime.?.has_pending_exception);
     roots[1] = try testString(&state.active_runtime.?, "nested");
     lnako_aot_compat_js_object_get(&out, roots[0..2].ptr, 2);
-    try expectPendingFailureContains(&state.active_runtime.?, "JSオブジェクト取得 does not support promises, functions, bigint, bytes, or nested arrays or dictionaries yet");
+    try expectPendingFailureContains(&state.active_runtime.?, "JSオブジェクト取得 does not support promises, functions, bigint, or bytes yet");
 
     // `JSメソッド実行` が返したBigIntも同じ文言で拒否する。
     roots[0] = try testString(&state.active_runtime.?, "({get(){return 1n}})");
     roots[1] = try testString(&state.active_runtime.?, "get");
     state.lnako_aot_array_new(&roots[2], null, 0);
     lnako_aot_compat_js_method_call(&out, &roots, 3);
-    try expectPendingFailureContains(&state.active_runtime.?, "JSメソッド実行 does not support promises, functions, bigint, bytes, or nested arrays or dictionaries yet");
+    try expectPendingFailureContains(&state.active_runtime.?, "JSメソッド実行 does not support promises, functions, bigint, or bytes yet");
 
     // 呼出し後のrefreshは`convertFull`を使うため、結果変換が拒否するBigIntでも
     // Nako側の辞書値としては保持される。
@@ -968,34 +1207,6 @@ test "compat AOT runtimeはJSオブジェクト取得とJSメソッド実行でB
     lnako_aot_compat_js_method_call(&out, &roots, 3);
     try std.testing.expect(!state.active_runtime.?.has_pending_exception);
     try expectBigIntText((try dictionaryValueByKey(&state.active_runtime.?, roots[0], "n")).?, "1");
-}
-
-test "compat AOT runtimeはJS関数実行の未対応戻り値を同じ文言で明示エラーにする" {
-    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
-    var runtime = state.Runtime{ .allocator = std.testing.allocator };
-    defer runtime.deinit();
-    state.active_runtime = runtime;
-    defer {
-        runtime = state.active_runtime.?;
-        state.active_runtime = null;
-    }
-    const cases = [_][]const u8{
-        "()=>[1,[2]]",
-        "()=>({x:{y:1}})",
-        "()=>()=>1",
-        "()=>1n",
-        "()=>new Uint8Array([1,2])",
-        "()=>new ArrayBuffer(4)",
-        "()=>new DataView(new ArrayBuffer(4))",
-        "()=>new SharedArrayBuffer(4)",
-        "()=>[new Uint8Array([1])]",
-        "()=>({x:new Uint8Array([1])})",
-    };
-    for (cases) |source| {
-        _ = try callCompatJs(&state.active_runtime.?, source);
-        try expectPendingFailureContains(&state.active_runtime.?, "does not support nested arrays or dictionaries, functions, bigint, or bytes results yet");
-    }
-    lnako_aot_compat_deinit();
 }
 
 test "compat AOT runtimeはJS関数実行のPromise戻り値をawaitして変換する" {
@@ -1046,11 +1257,14 @@ test "compat AOT runtimeはJS関数実行のPromise戻り値をawaitして変換
     try std.testing.expectEqual(@as(usize, 1), entries.len);
     try std.testing.expectEqual(@as(f64, 10), @as(f64, @bitCast(entries[0].value.payload)));
 
-    // 解決値が未対応型なら、await後の変換で既存の未対応エラーになる。
-    _ = try callCompatJs(&state.active_runtime.?, "()=>Promise.resolve(1n)");
-    try expectPendingFailureContains(&state.active_runtime.?, "does not support nested arrays or dictionaries, functions, bigint, or bytes results yet");
-    _ = try callCompatJs(&state.active_runtime.?, "()=>Promise.resolve([1,[2]])");
-    try expectPendingFailureContains(&state.active_runtime.?, "does not support nested arrays or dictionaries, functions, bigint, or bytes results yet");
+    // 解決値もfull変換する（BigInt・ネスト配列）。
+    const bigint_value = try callCompatJs(&state.active_runtime.?, "()=>Promise.resolve(1n)");
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    try expectBigIntText(bigint_value, "1");
+    const nested_value = try callCompatJs(&state.active_runtime.?, "()=>Promise.resolve([1,[2]])");
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.array)), nested_value.tag);
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.array)), nested_value.object().?.payload.array.items[1].tag);
 
     // rejectはreject理由を、pendingはbridgeの文言を明示エラーにする。
     _ = try callCompatJs(&state.active_runtime.?, "()=>Promise.reject(new Error('x'))");
@@ -1704,7 +1918,7 @@ test "compat AOT runtimeはJS関数値callbackへBigIntとbytesを直接・入�
     try expectPendingFailureContains(&state.active_runtime.?, "JSメソッド実行 does not support");
 }
 
-test "compat AOT runtimeはexternalコンテナ内のBigIntをJS関数実行へ同期し浅いコンテナ内のJS関数は拒否する" {
+test "compat AOT runtimeはexternalコンテナ内のBigIntと非externalコンテナ内のJS関数をJS関数実行へ同期する" {
     if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
     var runtime = state.Runtime{ .allocator = std.testing.allocator };
     defer lnako_aot_compat_deinit();
@@ -1722,10 +1936,12 @@ test "compat AOT runtimeはexternalコンテナ内のBigIntをJS関数実行へ�
 
     // external辞書内のBigIntは `JS関数実行` でも書き戻されて読み取れる。
     roots[0] = try evalCompatJs(&state.active_runtime.?, "({n: 1n})");
-    var call_args = [_]Value{
-        try testString(&state.active_runtime.?, "o => String(o.n)"),
-        roots[0],
-    };
+    var call_arg_strings: [1]Value = @splat(.{});
+    var call_arg_frame: state.RootFrame = .{};
+    state.active_runtime.?.pushRoots(&call_arg_frame, &call_arg_strings, call_arg_strings.len);
+    defer state.active_runtime.?.popRoots(&call_arg_frame);
+    call_arg_strings[0] = try testString(&state.active_runtime.?, "o => String(o.n)");
+    var call_args = [_]Value{ call_arg_strings[0], roots[0] };
     lnako_aot_compat_js_call(&out, &call_args, call_args.len);
     try std.testing.expect(!state.active_runtime.?.has_pending_exception);
     {
@@ -1735,9 +1951,13 @@ test "compat AOT runtimeはexternalコンテナ内のBigIntをJS関数実行へ�
     }
 
     // Nako側でexternalコンテナのBigIntを変更しても `JS関数実行` へ同期される。
-    const n_key = try testString(&state.active_runtime.?, "n");
-    const big_42 = try state.active_runtime.?.createBigInt("42");
-    try state.active_runtime.?.setDictionary(&roots[0].object().?.payload.dictionary, n_key, big_42);
+    var update_roots: [2]Value = @splat(.{});
+    var update_frame: state.RootFrame = .{};
+    state.active_runtime.?.pushRoots(&update_frame, &update_roots, update_roots.len);
+    defer state.active_runtime.?.popRoots(&update_frame);
+    update_roots[0] = try testString(&state.active_runtime.?, "n");
+    update_roots[1] = try state.active_runtime.?.createBigInt("42");
+    try state.active_runtime.?.setDictionary(&roots[0].object().?.payload.dictionary, update_roots[0], update_roots[1]);
     lnako_aot_compat_js_call(&out, &call_args, call_args.len);
     try std.testing.expect(!state.active_runtime.?.has_pending_exception);
     {
@@ -1746,30 +1966,39 @@ test "compat AOT runtimeはexternalコンテナ内のBigIntをJS関数実行へ�
         try std.testing.expectEqualStrings("42", actual);
     }
 
-    // 浅い引数コンテナ内に置いたJS関数値やexternal配列は型制限を迂回せず拒否する。
+    // 非externalコンテナの入れ子に置いたJS関数値も、full変換で同じJS参照のまま
+    // 渡り、JSから直接呼べる。
     roots[1] = try evalCompatJs(&state.active_runtime.?, "()=>1");
     var wrapped_fn = [_]Value{roots[1]};
     state.lnako_aot_array_new(&roots[2], &wrapped_fn, wrapped_fn.len);
     var wrapped_outer = [_]Value{roots[2]};
     state.lnako_aot_array_new(&roots[2], &wrapped_outer, wrapped_outer.len);
-    var bad_call_args = [_]Value{
-        try testString(&state.active_runtime.?, "a => a[0]()"),
-        roots[2],
-    };
-    lnako_aot_compat_js_call(&out, &bad_call_args, bad_call_args.len);
-    try expectPendingFailureContains(&state.active_runtime.?, "JS関数実行 does not support");
+    var nested_fn_strings: [1]Value = @splat(.{});
+    var nested_fn_frame: state.RootFrame = .{};
+    state.active_runtime.?.pushRoots(&nested_fn_frame, &nested_fn_strings, nested_fn_strings.len);
+    defer state.active_runtime.?.popRoots(&nested_fn_frame);
+    nested_fn_strings[0] = try testString(&state.active_runtime.?, "a => a[0]()");
+    var nested_fn_args = [_]Value{ nested_fn_strings[0], roots[2] };
+    lnako_aot_compat_js_call(&out, &nested_fn_args, nested_fn_args.len);
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    try std.testing.expectEqual(@as(f64, 1), @as(f64, @bitCast(out.payload)));
 
-    // `roots[0]` (external辞書) 自体も非external浅い配列の要素に置かれた場合は拒否する。
+    // external辞書を非external配列の要素に置いても、同じJS参照へ同期される。
     var wrapped_ext = [_]Value{roots[0]};
     state.lnako_aot_array_new(&roots[2], &wrapped_ext, wrapped_ext.len);
-    var bad_ext_outer = [_]Value{roots[2]};
-    state.lnako_aot_array_new(&roots[2], &bad_ext_outer, bad_ext_outer.len);
-    var bad_ext_args = [_]Value{
-        try testString(&state.active_runtime.?, "o => o.n"),
-        roots[2],
-    };
-    lnako_aot_compat_js_call(&out, &bad_ext_args, bad_ext_args.len);
-    try expectPendingFailureContains(&state.active_runtime.?, "JS関数実行 does not support");
+    var nested_ext_strings: [1]Value = @splat(.{});
+    var nested_ext_frame: state.RootFrame = .{};
+    state.active_runtime.?.pushRoots(&nested_ext_frame, &nested_ext_strings, nested_ext_strings.len);
+    defer state.active_runtime.?.popRoots(&nested_ext_frame);
+    nested_ext_strings[0] = try testString(&state.active_runtime.?, "o => String(o.n)");
+    var nested_ext_args = [_]Value{ nested_ext_strings[0], roots[2] };
+    lnako_aot_compat_js_call(&out, &nested_ext_args, nested_ext_args.len);
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    {
+        const actual = try state.stringUtf8Alloc(&state.active_runtime.?, out);
+        defer std.testing.allocator.free(actual);
+        try std.testing.expectEqualStrings("42", actual);
+    }
 }
 
 // --- Issue #55 Unit 2: Nako→JS callback / GC trace ---
@@ -2365,4 +2594,85 @@ test "compat AOT runtimeはcompat deinitをruntimeより先に呼んでもリー
     // binding は runtime.deinit が解放する（engine は参照カウントで保持）。
     lnako_aot_compat_deinit();
     try std.testing.expect(compat.activeEngine() == null);
+}
+
+test "compat AOT runtimeは孤立サロゲート名・name getter例外の関数戻り値と巨大ByteBuffer上限を扱う" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{} };
+    var frame: state.RootFrame = .{};
+    pushTestRoots(&state.active_runtime.?, &frame, &roots);
+    defer state.active_runtime.?.popRoots(&frame);
+
+    roots[0] = try callCompatJs(
+        &state.active_runtime.?,
+        "()=>{const f=()=>7;Object.defineProperty(f,'name',{value:'\\uD800'});return f;}",
+    );
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.function)), roots[0].tag);
+
+    roots[0] = try callCompatJs(
+        &state.active_runtime.?,
+        "()=>{const f=()=>8;Object.defineProperty(f,'name',{get(){throw new Error('boom')}});return f;}",
+    );
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    var out: Value = .{};
+    state.lnako_aot_function_call(&out, &roots[0], null, 0);
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    try std.testing.expectEqual(@as(f64, 8), @as(f64, @bitCast(out.payload)));
+
+    const large = try std.testing.allocator.alloc(u8, 1_000_001);
+    defer std.testing.allocator.free(large);
+    @memset(large, 0);
+    roots[1] = try state.active_runtime.?.createByteBuffer(large, .uint8_array);
+    var call_args = [_]Value{ try testString(&state.active_runtime.?, "b => b.length"), roots[1] };
+    var call_frame: state.RootFrame = .{};
+    pushTestRoots(&state.active_runtime.?, &call_frame, &call_args);
+    defer state.active_runtime.?.popRoots(&call_frame);
+    lnako_aot_compat_js_call(&out, &call_args, call_args.len);
+    try expectPendingFailureContains(&state.active_runtime.?, "QuickJsCollectionTooLarge");
+}
+
+test "compat AOT runtimeはJS関数実行の巨大配列引数をJS呼出し前に拒否する" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{} };
+    var frame: state.RootFrame = .{};
+    pushTestRoots(&state.active_runtime.?, &frame, &roots);
+    defer state.active_runtime.?.popRoots(&frame);
+
+    const items = try std.testing.allocator.alloc(Value, 1_000_001);
+    defer std.testing.allocator.free(items);
+    @memset(items, state.numberValue(1));
+    state.lnako_aot_array_new(&roots[0], items.ptr, items.len);
+    var wrapped = [_]Value{roots[0]};
+    state.lnako_aot_array_new(&roots[1], &wrapped, wrapped.len);
+
+    var call_args = [_]Value{
+        try testString(&state.active_runtime.?, "a => { globalThis.__lnako_aot_called = 1; return a.length; }"),
+        roots[1],
+    };
+    var call_frame: state.RootFrame = .{};
+    pushTestRoots(&state.active_runtime.?, &call_frame, &call_args);
+    defer state.active_runtime.?.popRoots(&call_frame);
+    var out: Value = .{};
+    lnako_aot_compat_js_call(&out, &call_args, call_args.len);
+    try expectPendingFailureContains(&state.active_runtime.?, "QuickJsCollectionTooLarge");
+
+    const called = try evalCompatJs(&state.active_runtime.?, "globalThis.__lnako_aot_called || 0");
+    try std.testing.expectEqual(@as(f64, 0), @as(f64, @bitCast(called.payload)));
 }

@@ -367,12 +367,18 @@ fn configureQuickJs(b: *std.Build, module: *std.Build.Module, os: std.Target.Os.
     // container_of and signed shifts. ReleaseSafe's C instrumentation traps
     // those upstream techniques, so disable it only for QuickJS itself. The
     // local bridge is compiled with all normal safety instrumentation.
+    // Windows (x86_64-windows-gnu) は QuickJS が参照する MinGW 固有の
+    // math/pthread/stdio シンボルを MSVC 静的 CRT へ解決できるよう、
+    // quickjs_win32_shim.h を先頭投入して Win32 API 実装へ置き換える。
+    // `-include` は Zig の C キャッシュ検査が build root 相対で解決するため、
+    // 絶対パスを渡す。
+    const win32_shim_include = b.pathResolve(&.{ "src", "compat", "quickjs_win32_shim.h" });
     const quickjs_flags: []const []const u8 = if (os == .windows)
-        &.{ "-std=gnu11", "-fwrapv", "-fno-sanitize=undefined", "-fno-sanitize=function", "-D_GNU_SOURCE", "-D__USE_MINGW_ANSI_STDIO", "-DCONFIG_VERSION=\"2026-06-04\"" }
+        &.{ "-std=gnu11", "-fwrapv", "-fno-sanitize=undefined", "-fno-sanitize=function", "-D_GNU_SOURCE", "-D__USE_MINGW_ANSI_STDIO=0", "-D_CRTIMP=", "-include", win32_shim_include, "-DCONFIG_VERSION=\"2026-06-04\"" }
     else
         &.{ "-std=gnu11", "-fwrapv", "-fno-sanitize=undefined", "-fno-sanitize=function", "-D_GNU_SOURCE", "-DCONFIG_VERSION=\"2026-06-04\"" };
     const bridge_flags: []const []const u8 = if (os == .windows)
-        &.{ "-std=gnu11", "-fwrapv", "-D_GNU_SOURCE", "-D__USE_MINGW_ANSI_STDIO", "-DCONFIG_VERSION=\"2026-06-04\"" }
+        &.{ "-std=gnu11", "-fwrapv", "-D_GNU_SOURCE", "-D__USE_MINGW_ANSI_STDIO=0", "-D_CRTIMP=", "-include", win32_shim_include, "-DCONFIG_VERSION=\"2026-06-04\"" }
     else
         &.{ "-std=gnu11", "-fwrapv", "-D_GNU_SOURCE", "-DCONFIG_VERSION=\"2026-06-04\"" };
     module.addIncludePath(.{ .cwd_relative = directory });
@@ -387,7 +393,13 @@ fn configureQuickJs(b: *std.Build, module: *std.Build.Module, os: std.Target.Os.
         .files = &.{"quickjs_bridge.c"},
         .flags = bridge_flags,
     });
-    if (os != .windows) {
+    if (os == .windows) {
+        module.addCSourceFiles(.{
+            .root = b.path("src/compat"),
+            .files = &.{"quickjs_win32_shim.c"},
+            .flags = bridge_flags,
+        });
+    } else {
         module.linkSystemLibrary("m", .{});
         module.linkSystemLibrary("pthread", .{});
         module.linkSystemLibrary("dl", .{});

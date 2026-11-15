@@ -5,8 +5,8 @@
 //! 再帰的に Nako 値へ写す。JS 関数値は AOT の関数オブジェクトとして保持し、
 //! `external` binding の QuickJS 参照を GC sweep で解放する。
 //!
-//! `JS関数実行` の浅い戻り値、`JSオブジェクト取得` / `JSメソッド実行` の再帰
-//! 変換、呼出し後の再同期も、同じ JS→Nako 変換規則としてこの module に集約する。
+//! `JS関数実行` の戻り値、`JSオブジェクト取得` / `JSメソッド実行` の再帰変換、
+//! 呼出し後の再同期も、同じ JS→Nako 変換規則としてこの module に集約する。
 //! ABI（`pub export fn lnako_aot_compat_*`）は `compat_js.zig` に残し、通常 AOT へ
 //! QuickJS を混入させない分離を維持する。
 const std = @import("std");
@@ -23,10 +23,10 @@ const RawValue = compat.RawValue;
 /// （interpreterの同名上限と同値）。
 pub const max_interop_conversion_depth: usize = 64;
 
-/// `SyncState.full_values` のcallback経路だけで使うNako→JS変換。
-/// interpreterの`toRaw`と同じく、BigIntは10進文字列、bytesは0..255の数値配列に
-/// する。通常の`JS関数実行` / `JSオブジェクト取得` / `JSメソッド実行` は
-/// このhelperを呼ばず、従来どおりBigIntとbytesを明示エラーにする。
+/// `SyncState.full_values` が真の経路（JS関数値のcallbackと`JS関数実行`）で
+/// 使うNako→JS変換。interpreterの`toRaw`と同じく、BigIntは10進文字列、bytesは
+/// 0..255の数値配列にする。`JSオブジェクト取得` / `JSメソッド実行` は
+/// `full_values` を偽のままにし、従来どおりBigIntとbytesを明示エラーにする。
 pub fn fullSyncValueRaw(runtime: *state.Runtime, engine_value: *Engine, value: Value) anyerror!*RawValue {
     const object = value.object() orelse return error.QuickJsUnsupportedArgument;
     return switch (@as(Tag, @fromBackingInt(value.tag))) {
@@ -68,9 +68,9 @@ pub fn fullSyncValueRaw(runtime: *state.Runtime, engine_value: *Engine, value: V
 pub const SyncState = struct {
     in_progress: std.AutoHashMapUnmanaged(usize, *RawValue) = .empty,
     completed: std.AutoHashMapUnmanaged(usize, *RawValue) = .empty,
-    /// JS関数値のcallbackだけが真にする。トップレベルでも入れ子でもBigIntと
-    /// bytesを変換し、それ以外の経路（JS関数実行・JSオブジェクト取得・
-    /// JSメソッド実行）は従来どおり明示的な未対応エラーにする。
+    /// JS関数値のcallbackと`JS関数実行`が真にする。トップレベルでも入れ子でも
+    /// BigIntとbytesを変換する。`JSオブジェクト取得` / `JSメソッド実行` は偽の
+    /// ままにし、従来どおり明示的な未対応エラーにする。
     full_values: bool = false,
 
     pub fn deinit(self: *SyncState, allocator: std.mem.Allocator) void {
@@ -163,10 +163,10 @@ fn syncContents(runtime: *state.Runtime, engine_value: *Engine, value: Value, ra
             for (entries) |entry| {
                 const name = try dictionaryKeyNameZ(runtime, entry.key);
                 defer runtime.allocator.free(name);
-                // 比較・削除はJSのkeys()と同じlossy UTF-8、定義/取得はWTF-8で行う。
-                const name_lossy = try dictionaryKeyNameLossyZ(runtime, entry.key);
-                defer runtime.allocator.free(name_lossy);
-                const owned_name = try runtime.allocator.dupe(u8, name_lossy);
+                // 定義/取得/削除判定はすべてWTF-8で揃える。`lnako_qjs_key` も
+                // 孤立サロゲートをWTF-8で返すため、lossy UTF-8で比較すると
+                // 孤立サロゲートのキーが直後の削除ループで消える。
+                const owned_name = try runtime.allocator.dupe(u8, name);
                 names.append(runtime.allocator, owned_name) catch |failure| {
                     runtime.allocator.free(owned_name);
                     return failure;
@@ -231,8 +231,8 @@ fn syncContents(runtime: *state.Runtime, engine_value: *Engine, value: Value, ra
 /// 配列・辞書はexternal bindingの有無にかかわらず同じ変換経路で中身を同期する
 /// （ネストしたexternalコンテナのNako側変更もJSへ書き戻す）。Nako関数・
 /// クロージャは `compat.hostFunction` でQuickJSのC関数値へ登録し、JSから
-/// 同期呼出しできるようにする。BigIntは常に、bytesは `sync.full_values` の
-/// callback経路だけ変換する。
+/// 同期呼出しできるようにする。BigIntは常に、bytesは `sync.full_values` が
+/// 真の経路（JS関数値のcallbackと`JS関数実行`）だけ変換する。
 pub fn syncValueRaw(runtime: *state.Runtime, engine_value: *Engine, value: Value, sync: *SyncState, depth: usize) anyerror!*RawValue {
     if (depth >= max_interop_conversion_depth) return error.QuickJsNestingTooDeep;
     const tag = @as(Tag, @fromBackingInt(value.tag));
@@ -286,12 +286,6 @@ pub fn dictionaryKeyNameZ(runtime: *state.Runtime, key: Value) ![:0]u8 {
     const units = try state.valueUtf16Alloc(runtime, key);
     defer runtime.allocator.free(units);
     const text = try std.unicode.wtf16LeToWtf8Alloc(runtime.allocator, units);
-    defer runtime.allocator.free(text);
-    return runtime.allocator.dupeSentinel(u8, text, 0);
-}
-
-fn dictionaryKeyNameLossyZ(runtime: *state.Runtime, key: Value) ![:0]u8 {
-    const text = try state.stringUtf8Alloc(runtime, key);
     defer runtime.allocator.free(text);
     return runtime.allocator.dupeSentinel(u8, text, 0);
 }
@@ -425,16 +419,26 @@ fn convertFullObject(
 /// JS 関数値を AOT の関数オブジェクトへ変換する。`JS実行` の full 変換と、
 /// 呼出し後の再同期（`setRefreshedEntry`）の両方から呼ばれる。
 ///
-/// `raw` は必ず消費する（`convertResult` / `callResultFromRaw` と同じ所有権
+/// `raw` は必ず消費する（`jsEvalResult` / `convertResult` と同じ所有権
 /// 規則）。external binding には dup した参照を渡すため、GC sweep の
 /// `releaseExternal` が1回だけ元の参照を解放する。
 pub fn jsFunctionValue(runtime: *state.Runtime, raw: *RawValue) anyerror!Value {
     defer compat.lnako_qjs_value_free(raw);
     const name_value = compat.lnako_qjs_get_property(raw, "name");
     defer if (name_value) |value| compat.lnako_qjs_value_free(value);
+    if (name_value == null) {
+        if (compat.lnako_qjs_value_engine(raw)) |engine_value| {
+            if (compat.lnako_qjs_take_error(engine_value)) |text| compat.lnako_qjs_free_string(text);
+        }
+    }
     var name_length: usize = 0;
     const name_text = if (name_value) |value| compat.lnako_qjs_to_string(value, &name_length) else null;
     defer if (name_text) |text| compat.lnako_qjs_free_string(text);
+    if (name_value != null and name_text == null) {
+        if (compat.lnako_qjs_value_engine(raw)) |engine_value| {
+            if (compat.lnako_qjs_take_error(engine_value)) |text| compat.lnako_qjs_free_string(text);
+        }
+    }
     // 取得できない関数（無名関数・getter 例外）は interpreter と同じ `<js>` にする。
     const name: []const u8 = if (name_text) |text| text[0..name_length] else "<js>";
     // `register_global = false` のため無名関数が `named_functions` へ溜まらない。
@@ -538,102 +542,17 @@ pub fn jsFunctionCallback(out: *Value, context: *anyopaque, arguments: ?[*]const
     };
 }
 
-/// `JS関数実行` の戻り値変換。プリミティブに加えて、JS 配列→Nako 配列・
-/// JS オブジェクト→Nako 辞書の浅いコピーだけを許可する。要素/値は
-/// プリミティブに限り、ネストした配列/辞書・関数・BigInt・bytes は
-/// interpreter（compat/quickjs.zig）と同じ文言の明示的な未対応エラーにする。
-/// Promise は呼出し側（`lnako_aot_compat_js_call`）が await してから渡す。
-/// 配列/辞書には QuickJS 参照の external binding を結び付け、`JSオブジェクト取得`
-/// と`JSメソッド実行`が同じ JS オブジェクトを参照できるようにする。
-/// raw は成功・失敗にかかわらず消費して解放する。
-pub fn callResultFromRaw(runtime: *state.Runtime, raw: *RawValue) !Value {
-    defer compat.lnako_qjs_value_free(raw);
-    return switch (compat.lnako_qjs_kind(raw)) {
-        .undefined, .null_value, .boolean, .number, .string => compat.primitiveFromRaw(runtime, raw),
-        .array => blk: {
-            const value = try shallowArrayFromRaw(runtime, raw);
-            try compat.attachExternal(value, raw);
-            break :blk value;
-        },
-        .object => blk: {
-            if (compat.lnako_qjs_is_bytes(raw) != 0) return error.QuickJsUnsupportedResult;
-            const value = try shallowDictionaryFromRaw(runtime, raw);
-            try compat.attachExternal(value, raw);
-            break :blk value;
-        },
-        else => error.QuickJsUnsupportedResult,
-    };
-}
-
-/// 浅いコピーの要素/値。プリミティブ以外は明示的な未対応エラーにする。
-fn shallowResultElement(runtime: *state.Runtime, raw: *RawValue) !Value {
-    defer compat.lnako_qjs_value_free(raw);
-    return compat.primitiveFromRaw(runtime, raw) catch |failure| switch (failure) {
-        error.QuickJsUnsupportedValue => error.QuickJsUnsupportedResult,
-        else => failure,
-    };
-}
-
 fn wtf8Value(runtime: *state.Runtime, text: []const u8) !Value {
     const units = try std.unicode.wtf8ToWtf16LeAlloc(runtime.allocator, text);
     defer runtime.allocator.free(units);
     return runtime.createString(units);
 }
 
-pub fn shallowArrayFromRaw(runtime: *state.Runtime, raw: *const RawValue) !Value {
-    const length = compat.lnako_qjs_array_length(raw);
-    // `length = 0xFFFFFFFF` のような疎配列で数十GBを一括確保しないよう、
-    // AOTの配列上限と同じ制限を浅いコピーにも適用する。
-    if (length > state.safe_array_element_limit) return error.QuickJsCollectionTooLarge;
-    const items = try runtime.allocator.alloc(Value, length);
-    defer runtime.allocator.free(items);
-    @memset(items, .{});
-    // 変換中の要素をGC rootへ載せる。空配列はalloc(0)のptrをrootへ渡さない。
-    var frame: state.RootFrame = .{};
-    runtime.pushRoots(&frame, if (length == 0) null else items.ptr, length);
-    defer runtime.popRoots(&frame);
-    for (0..length) |index| {
-        const item = compat.lnako_qjs_get_index(raw, @intCast(index)) orelse return conversionFailure(runtime, raw);
-        items[index] = try shallowResultElement(runtime, item);
-    }
-    return runtime.createArray(items);
-}
-
-pub fn shallowDictionaryFromRaw(runtime: *state.Runtime, raw: *const RawValue) !Value {
-    const keys = compat.lnako_qjs_keys(raw) orelse return conversionFailure(runtime, raw);
-    defer compat.lnako_qjs_keys_free(keys);
-    const count = compat.lnako_qjs_keys_length(keys);
-    if (count > state.safe_array_element_limit) return error.QuickJsCollectionTooLarge;
-    const pair_length = std.math.mul(usize, count, 2) catch return error.QuickJsCollectionTooLarge;
-    const pairs = try runtime.allocator.alloc(Value, pair_length);
-    defer runtime.allocator.free(pairs);
-    @memset(pairs, .{});
-    var frame: state.RootFrame = .{};
-    runtime.pushRoots(&frame, if (pair_length == 0) null else pairs.ptr, pair_length);
-    defer runtime.popRoots(&frame);
-    var initialized: usize = 0;
-    for (0..count) |index| {
-        var name_length: usize = 0;
-        const name_pointer = compat.lnako_qjs_key(keys, index, &name_length) orelse continue;
-        const name = name_pointer[0..name_length];
-        const name_z = try runtime.allocator.dupeSentinel(u8, name, 0);
-        defer runtime.allocator.free(name_z);
-        const item = compat.lnako_qjs_get_property(raw, name_z.ptr) orelse return conversionFailure(runtime, raw);
-        // 要素値を先に作ってpairs（root frame）へ載せ、その後キー文字列を作る。
-        // 逆順だとキー生成中のGCで要素値が未rootのまま回収され得る。
-        pairs[initialized + 1] = try shallowResultElement(runtime, item);
-        pairs[initialized] = try wtf8Value(runtime, name);
-        initialized += 2;
-    }
-    return runtime.createDictionary(pairs[0..initialized]);
-}
-
-/// `JSオブジェクト取得` / `JSメソッド実行` の戻り値変換。`JS関数実行` の浅い
-/// 規則（`callResultFromRaw`）と違い、配列/辞書は再帰的に変換し、各配列/辞書へ
-/// external bindingを付与する。関数とbytesはこの経路では明示的な未対応エラーに
-/// する。BigIntもinterpreterの`interop_result`と同じく`QuickJsUnsupportedResult`
-/// として拒否する（呼出し後の再同期（refresh）は`convertFull`を使うため、
-/// refreshのBigInt保持は変わらない）。rawは消費する。
+/// `JSオブジェクト取得` / `JSメソッド実行` の戻り値変換。配列/辞書は再帰的に
+/// 変換し、各配列/辞書へexternal bindingを付与する。関数とbytesはこの経路では
+/// 明示的な未対応エラーにする。BigIntもinterpreterの`interop_result`と同じく
+/// `QuickJsUnsupportedResult`として拒否する（呼出し後の再同期（refresh）は
+/// `convertFull`を使うため、refreshのBigInt保持は変わらない）。rawは消費する。
 pub fn resultFromRaw(runtime: *state.Runtime, raw: *RawValue) !Value {
     var seen: std.AutoHashMapUnmanaged(usize, Value) = .empty;
     defer seen.deinit(runtime.allocator);
