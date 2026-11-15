@@ -6,11 +6,11 @@ const common = @import("../plugins/system/common.zig");
 pub const Value = value_mod.Value;
 pub const Runtime = value_mod.Runtime;
 
-const Engine = opaque {};
-const RawValue = opaque {};
-const RawKeys = opaque {};
+pub const Engine = opaque {};
+pub const RawValue = opaque {};
+pub const RawKeys = opaque {};
 
-const Kind = enum(c_int) {
+pub const Kind = enum(c_int) {
     undefined,
     null_value,
     boolean,
@@ -23,7 +23,7 @@ const Kind = enum(c_int) {
     object,
 };
 
-extern fn lnako_qjs_new() ?*Engine;
+pub extern fn lnako_qjs_new() ?*Engine;
 const HostGetFn = *const fn (*anyopaque, [*:0]const u8, c_int) callconv(.c) ?*RawValue;
 const HostSetFn = *const fn (*anyopaque, [*:0]const u8, *const RawValue) callconv(.c) c_int;
 const HostInvokeFn = *const fn (*anyopaque, usize, [*c]const *const RawValue, usize) callconv(.c) ?*RawValue;
@@ -31,15 +31,15 @@ const HostExecFn = *const fn (*anyopaque, [*:0]const u8, [*c]const *const RawVal
 extern fn lnako_qjs_set_host(engine: *Engine, context: *anyopaque, get: HostGetFn, set: HostSetFn, invoke: HostInvokeFn, exec: HostExecFn) void;
 extern fn lnako_qjs_add_module_source(engine: *Engine, name: [*:0]const u8, source: [*]const u8, length: usize, package_root: ?[*:0]const u8) c_int;
 extern fn lnako_qjs_add_module_alias(engine: *Engine, alias: [*:0]const u8, target: [*:0]const u8) c_int;
-extern fn lnako_qjs_release(engine: *Engine) void;
+pub extern fn lnako_qjs_release(engine: *Engine) void;
 extern fn lnako_qjs_take_error(engine: *Engine) ?[*:0]u8;
 extern fn lnako_qjs_free_string(text: [*:0]u8) void;
-extern fn lnako_qjs_eval(engine: *Engine, source: [*]const u8, length: usize, filename: [*:0]const u8) ?*RawValue;
+pub extern fn lnako_qjs_eval(engine: *Engine, source: [*]const u8, length: usize, filename: [*:0]const u8) ?*RawValue;
 extern fn lnako_qjs_eval_module(engine: *Engine, source: [*]const u8, length: usize, filename: [*:0]const u8) ?*RawValue;
 extern fn lnako_qjs_global(engine: *Engine, name: [*:0]const u8) ?*RawValue;
 extern fn lnako_qjs_call(engine: *Engine, function: *const RawValue, arguments: [*]const *const RawValue, count: usize) ?*RawValue;
 extern fn lnako_qjs_call_method(engine: *Engine, object: *const RawValue, name: [*:0]const u8, arguments: [*]const *const RawValue, count: usize) ?*RawValue;
-extern fn lnako_qjs_drain_jobs(engine: *Engine) c_int;
+pub extern fn lnako_qjs_drain_jobs(engine: *Engine) c_int;
 extern fn lnako_qjs_await(engine: *Engine, promise: *const RawValue) ?*RawValue;
 extern fn lnako_qjs_undefined(engine: *Engine) ?*RawValue;
 extern fn lnako_qjs_null(engine: *Engine) ?*RawValue;
@@ -52,14 +52,14 @@ extern fn lnako_qjs_object(engine: *Engine) ?*RawValue;
 extern fn lnako_qjs_host_function(engine: *Engine, function_id: usize, name: [*:0]const u8) ?*RawValue;
 extern fn lnako_qjs_dup(value: *const RawValue) ?*RawValue;
 extern fn lnako_qjs_value_engine(value: *const RawValue) ?*Engine;
-extern fn lnako_qjs_value_free(value: *RawValue) void;
-extern fn lnako_qjs_kind(value: *const RawValue) Kind;
+pub extern fn lnako_qjs_value_free(value: *RawValue) void;
+pub extern fn lnako_qjs_kind(value: *const RawValue) Kind;
 extern fn lnako_qjs_identity(value: *const RawValue) usize;
 extern fn lnako_qjs_is_bytes(value: *const RawValue) c_int;
 extern fn lnako_qjs_to_boolean(value: *const RawValue) c_int;
-extern fn lnako_qjs_to_number(value: *const RawValue, result: *f64) c_int;
+pub extern fn lnako_qjs_to_number(value: *const RawValue, result: *f64) c_int;
 extern fn lnako_qjs_to_string(value: *const RawValue, length: *usize) ?[*:0]u8;
-extern fn lnako_qjs_array_length(value: *const RawValue) u32;
+pub extern fn lnako_qjs_array_length(value: *const RawValue) u32;
 extern fn lnako_qjs_get_index(value: *const RawValue, index: u32) ?*RawValue;
 extern fn lnako_qjs_set_index(value: *RawValue, index: u32, item: *const RawValue) c_int;
 extern fn lnako_qjs_set_array_length(value: *RawValue, length: u32) c_int;
@@ -242,75 +242,23 @@ pub fn available() bool {
     return build_options.quickjs_enabled;
 }
 
-/// `JS関数実行` の実引数として未対応の型をQuickJSへ渡したときの文言。
+/// `JS関数実行` の実引数として同期できない値（Promiseなど）の文言。
 /// AOT compat（`src/runtime/aot/compat_js.zig`）と同じ文言で失敗させる。
-pub const unsupported_call_argument_message = "JS関数実行 does not support nested arrays or dictionaries, functions, bigint, or bytes arguments yet";
-
-/// `JS関数実行` の戻り値が浅い配列/辞書へ変換できないときの文言。
-/// AOT compat（`src/runtime/aot/compat_js.zig`）と同じ文言で失敗させる。
-pub const unsupported_call_result_message = "JS関数実行 does not support nested arrays or dictionaries, functions, bigint, or bytes results yet";
-
-/// `JS関数実行` の戻り値（配列要素・辞書キー）を浅くコピーするときの上限。
-/// AOTの `safe_array_element_limit` と同じ値にして、疎配列の巨大lengthや
-/// 巨大なキー数で一括確保しないようにする。
-const call_result_collection_limit: usize = 1_000_000;
-
-/// 配列・辞書を浅く変換するときの要素として許可する値（プリミティブだけ）。
-fn isShallowCallElement(value: Value) bool {
-    return switch (value) {
-        .undefined, .null_value, .boolean, .number, .string => true,
-        else => false,
-    };
-}
-
-fn allShallowCallElements(values: []const Value) bool {
-    for (values) |value| {
-        if (!isShallowCallElement(value)) return false;
-    }
-    return true;
-}
-
-/// `JS関数実行` の実引数1個がQuickJSへ変換できるか。
-///
-/// プリミティブに加えてNako配列（JS配列）と辞書（JSオブジェクト）を許可する
-/// が、要素はプリミティブだけに限る（浅いコピーのみ）。ネストした配列/辞書と
-/// 関数・BigInt・bytes・Promiseは、QuickJSへ渡す前に明示的な未対応エラーに
-/// する。JS由来のexternal値（interpreterだけが持つ）も、syncExternalが
-/// Nako側の内容をJSへ書き戻すため、同じ要素規則で判定する。
-fn isSupportedCallArgument(value: Value) bool {
-    // external binding付きの配列/辞書は、要素を再構築せず同じJS参照を渡すため
-    // 要素の型を制限しない（interpreterのtoRaw/syncExternalが深く書き戻す）。
-    switch (value) {
-        .array => |array| if (array.external != null) return true,
-        .dictionary => |dictionary| if (dictionary.external != null) return true,
-        else => {},
-    }
-    return switch (value) {
-        .undefined, .null_value, .boolean, .number, .string => true,
-        .array => |array| allShallowCallElements(array.items.items),
-        .dictionary => |dictionary| allShallowCallElements(dictionary.values()),
-        else => false,
-    };
-}
-
-fn validateCallArguments(runtime: *Runtime, arguments: []const Value) !void {
-    for (arguments) |argument| {
-        if (!isSupportedCallArgument(argument)) {
-            try runtime.setFailureMessage(unsupported_call_argument_message);
-            return error.QuickJsUnsupportedArgument;
-        }
-    }
-}
+pub const unsupported_call_argument_message = "JS関数実行 does not support promises or unsupported argument types";
 
 /// `JSオブジェクト取得` / `JSメソッド実行` で、AOTと共有する未対応文言。
-const unsupported_object_get_message = "JSオブジェクト取得 does not support promises, functions, bigint, bytes, or nested arrays or dictionaries yet";
-const unsupported_method_message = "JSメソッド実行 does not support promises, functions, bigint, bytes, or nested arrays or dictionaries yet";
+pub const unsupported_object_get_message = "JSオブジェクト取得 does not support promises, functions, bigint, or bytes yet";
+pub const unsupported_method_message = "JSメソッド実行 does not support promises, functions, bigint, or bytes yet";
 
-/// `JSオブジェクト取得` / `JSメソッド実行` の値がAOTと同じ規則でJSへ渡せるか。
-/// external binding付きの配列/辞書は要素を再構築せずJS参照のまま渡すため、
-/// 要素の型を制限しない。それ以外は`JS関数実行`の実引数と同じ浅い規則。
-fn isSupportedInteropValue(value: Value) bool {
-    return isSupportedCallArgument(value);
+/// `JSオブジェクト取得` / `JSメソッド実行` のトップレベル値がAOTと同じ規則で
+/// JSへ渡せるか。プリミティブと配列・辞書だけを許可する（関数・BigInt・bytes・
+/// Promiseは明示エラー）。配列・辞書の中身は`toRaw`の同期変換に委ね、bytesだけは
+/// `containsBytesValue`でAOTのfull_values=falseと同じく拒否する。
+pub fn isSupportedInteropValue(value: Value) bool {
+    return switch (value) {
+        .undefined, .null_value, .boolean, .number, .string, .array, .dictionary => true,
+        else => false,
+    };
 }
 
 /// externalコンテナ内にNakoのbytesが含まれるか。AOTのsyncValueRawはbytesを
@@ -358,18 +306,25 @@ fn containsBytesInner(runtime: *Runtime, value: Value, visited: ?*std.AutoHashMa
 /// レシーバ/実引数をJS値へ変換する。`eval_string`が真（`JSメソッド実行`）の
 /// ときだけ文字列をJSソースとして評価する（既存経路）。external bindingは
 /// `toRaw`が同じJS参照をdupしてNako側の変更を書き戻す。
-fn interopValueRaw(state: *State, runtime: *Runtime, engine: *Engine, value: Value, message: []const u8, cache: *SyncCache) !*RawValue {
+pub fn interopValueRaw(state: *State, runtime: *Runtime, engine: *Engine, value: Value, message: []const u8, cache: *SyncCache) !*RawValue {
     if (!isSupportedInteropValue(value) or containsBytesValue(runtime, value)) {
         try runtime.setFailureMessage(message);
         return error.QuickJsUnsupportedArgument;
     }
-    return toRaw(state, runtime, engine, value, cache);
+    // コンテナ内のPromiseはAOTのsyncValueRawと同じく同期変換できない。
+    return toRaw(state, runtime, engine, value, cache) catch |failure| {
+        if (failure == error.QuickJsPromiseBridgePending) {
+            try runtime.setFailureMessage(message);
+            return error.QuickJsUnsupportedArgument;
+        }
+        return failure;
+    };
 }
 
 /// 2引数`JSオブジェクト取得`。external bindingのJS参照、または共有変換規則で
 /// 作ったJSコピーのプロパティを取得し、`JS実行`/`JSメソッド実行`と同じfull
 /// 変換（配列/辞書は再帰、external付き）でNako値へ戻す。
-fn lookupExternalProperty(state: *State, runtime: *Runtime, engine: *Engine, object: Value, key: Value) !Value {
+pub fn lookupExternalProperty(state: *State, runtime: *Runtime, engine: *Engine, object: Value, key: Value) !Value {
     var roots = runtime.rootFrame();
     defer roots.deinit();
     var rooted_object = object;
@@ -452,18 +407,11 @@ pub fn call(runtime: *Runtime, state: *State, effects: Effects, name: []const u8
         const call_arguments = common.argument(arguments, 1);
         const slice = if (call_arguments == .array) call_arguments.array.items.items else arguments[1..@min(arguments.len, 2)];
         // Nako関数値の呼出しはNako値のまま渡すため制限しない。JS関数へ渡す
-        // 実引数だけを、AOTと同じ規則（浅い配列/辞書＋プリミティブ）で検証する。
-        // 呼出し不能の判定は引数検証より先に行い、AOT（eval→関数判定→引数変換）
-        // と同じ優先順位にする。
+        // 実引数はAOTと同じfull変換（BigInt・関数値・ネスト/循環/疎配列・
+        // bytes）で同期する。呼出し不能の判定は引数変換より先に行い、AOT
+        // （eval→関数判定→引数変換）と同じ優先順位にする。
         if (callable == .function and callable.function.kind != .external) return @as(?Value, try effects.invoke(callable, slice));
         if (callable != .function or callable.function.kind != .external) return error.QuickJsValueNotCallable;
-        for (slice) |argument| {
-            if (containsBytesValue(runtime, argument)) {
-                try runtime.setFailureMessage(unsupported_call_argument_message);
-                return error.QuickJsUnsupportedArgument;
-            }
-        }
-        try validateCallArguments(runtime, slice);
         return @as(?Value, try callExternalCallResult(state, runtime, callable, slice));
     }
     if (std.mem.eql(u8, name, "JSメソッド実行")) {
@@ -477,9 +425,10 @@ pub fn call(runtime: *Runtime, state: *State, effects: Effects, name: []const u8
             const raw = lnako_qjs_eval(engine, source.ptr, source.len, "<JSメソッド実行>") orelse return quickJsError(engine);
             object = try fromRaw(state, runtime, raw);
         }
-        // AOTと同じく、レシーバと実引数は共有変換規則（プリミティブ＋external＋
-        // 浅い配列/辞書）でJSへ渡せる値に限る。関数/BigInt/bytes/ネストした
-        // 配列・辞書は明示エラーにして、AOTとの観測差を作らない。
+        // AOTと同じく、レシーバと実引数はトップレベルではプリミティブと配列・
+        // 辞書に限る（関数/BigInt/bytes/Promiseは明示エラー）。配列・辞書の
+        // 中身は同期変換（ネストした配列・辞書・関数値・BigInt）で扱い、bytesは
+        // AOTのfull_values=falseと同じく明示エラーにする。
         if (!isSupportedInteropValue(object) or containsBytesValue(runtime, object)) {
             try runtime.setFailureMessage(unsupported_method_message);
             return error.QuickJsUnsupportedArgument;
@@ -771,11 +720,11 @@ fn isCompatCommand(name: []const u8) bool {
     return std.mem.eql(u8, name, "JS実行") or std.mem.eql(u8, name, "JSオブジェクト取得") or std.mem.eql(u8, name, "JS関数実行") or std.mem.eql(u8, name, "JSメソッド実行");
 }
 
-/// `JS関数実行` のexternal関数呼出し。戻り値はプリミティブ＋浅い配列/辞書だけを
-/// 許可する（AOTと同じ変換規則・同じ文言）。戻り値がPromiseなら `JS実行` と同じ
-/// drain/await経路で解決値を待ち、reject/pendingはbridgeの文言で明示エラーにする。
-/// Nako関数値の呼出しはこの経路を通らないため制限しない。
-fn callExternalCallResult(state: *State, runtime: *Runtime, callable: Value, arguments: []const Value) !Value {
+/// `JS関数実行` のexternal関数呼出し。実引数と戻り値は `JS実行` と同じfull変換
+/// （BigInt・関数値・ネスト/循環/疎配列・bytes）で扱う。戻り値がPromiseなら
+/// `JS実行` と同じdrain/await経路で解決値を待ち、reject/pendingはbridgeの文言で
+/// 明示エラーにする。Nako関数値の呼出しはこの経路を通らないため制限しない。
+pub fn callExternalCallResult(state: *State, runtime: *Runtime, callable: Value, arguments: []const Value) !Value {
     if (callable != .function or callable.function.kind != .external) return error.QuickJsValueNotCallable;
     const external = callable.function.kind.external;
     if (external.binding.context != @as(*anyopaque, @ptrCast(state))) return error.QuickJsEngineMismatch;
@@ -788,7 +737,14 @@ fn callExternalCallResult(state: *State, runtime: *Runtime, callable: Value, arg
     var snapshot_frame = runtime.rootFrame();
     defer snapshot_frame.deinit();
     for (snapshot) |*value| try snapshot_frame.protect(value);
-    const raw_arguments = try rawArguments(state, runtime, engine, snapshot);
+    // Promiseは同期変換できないため、AOTと同じ共通文言の明示エラーにする。
+    const raw_arguments = rawArguments(state, runtime, engine, snapshot) catch |failure| {
+        if (failure == error.QuickJsPromiseBridgePending) {
+            try runtime.setFailureMessage(unsupported_call_argument_message);
+            return error.QuickJsUnsupportedArgument;
+        }
+        return failure;
+    };
     defer freeRawArguments(runtime.allocator(), raw_arguments);
     var result = lnako_qjs_call(engine, function, raw_arguments.ptr, raw_arguments.len) orelse {
         const saved = lnako_qjs_take_error(engine);
@@ -802,10 +758,6 @@ fn callExternalCallResult(state: *State, runtime: *Runtime, callable: Value, arg
         }
         return quickJsError(engine);
     };
-    if (lnako_qjs_drain_jobs(engine) < 0) {
-        lnako_qjs_value_free(result);
-        return quickJsError(engine);
-    }
     // `callPlugin` と同じく、Promiseは解決値を待ってから引数の書き戻しと
     // 戻り値変換を行う。rejectはreject理由、pendingは
     // "QuickJS promise is still pending" が `quickJsError` の文言になる。
@@ -827,15 +779,10 @@ fn callExternalCallResult(state: *State, runtime: *Runtime, callable: Value, arg
             return failure;
         };
     }
-    return fromCallResultRaw(state, runtime, result) catch |failure| {
-        if (failure == error.QuickJsUnsupportedCallResult) {
-            try runtime.setFailureMessage(unsupported_call_result_message);
-        }
-        return failure;
-    };
+    return fromRaw(state, runtime, result);
 }
 
-fn callExternalMethod(state: *State, runtime: *Runtime, engine: *Engine, object: Value, method: [:0]const u8, arguments: []const Value) !Value {
+pub fn callExternalMethod(state: *State, runtime: *Runtime, engine: *Engine, object: Value, method: [:0]const u8, arguments: []const Value) !Value {
     // refreshはレシーバ/実引数コンテナのpayloadを差し替え得るため、呼出し側の
     // 配列itemsバッファを直接指すsliceをrootedなローカルへ複製して使う。
     const snapshot = try snapshotArguments(runtime, arguments);
@@ -845,9 +792,21 @@ fn callExternalMethod(state: *State, runtime: *Runtime, engine: *Engine, object:
     for (snapshot) |*value| try snapshot_frame.protect(value);
     var cache = SyncCache{};
     defer cache.deinit(runtime.allocator());
-    const raw_object = try toRaw(state, runtime, engine, object, &cache);
+    const raw_object = toRaw(state, runtime, engine, object, &cache) catch |failure| {
+        if (failure == error.QuickJsPromiseBridgePending) {
+            try runtime.setFailureMessage(unsupported_method_message);
+            return error.QuickJsUnsupportedArgument;
+        }
+        return failure;
+    };
     defer lnako_qjs_value_free(raw_object);
-    const raw_arguments = try rawArgumentsWithCache(state, runtime, engine, snapshot, &cache);
+    const raw_arguments = rawArgumentsWithCache(state, runtime, engine, snapshot, &cache) catch |failure| {
+        if (failure == error.QuickJsPromiseBridgePending) {
+            try runtime.setFailureMessage(unsupported_method_message);
+            return error.QuickJsUnsupportedArgument;
+        }
+        return failure;
+    };
     defer freeRawArguments(runtime.allocator(), raw_arguments);
     const result = lnako_qjs_call_method(engine, raw_object, method.ptr, raw_arguments.ptr, raw_arguments.len) orelse {
         const saved = lnako_qjs_take_error(engine);
@@ -894,7 +853,14 @@ fn externalCall(context: *anyopaque, handle: *anyopaque, runtime: *Runtime, argu
     var snapshot_frame = runtime.rootFrame();
     defer snapshot_frame.deinit();
     for (snapshot) |*value| try snapshot_frame.protect(value);
-    const raw_arguments = try rawArguments(state, runtime, engine, snapshot);
+    // Promiseは同期変換できないため、AOTと同じ共通文言の明示エラーにする。
+    const raw_arguments = rawArguments(state, runtime, engine, snapshot) catch |failure| {
+        if (failure == error.QuickJsPromiseBridgePending) {
+            try runtime.setFailureMessage(unsupported_call_argument_message);
+            return error.QuickJsUnsupportedArgument;
+        }
+        return failure;
+    };
     defer freeRawArguments(runtime.allocator(), raw_arguments);
     const result = lnako_qjs_call(engine, function, raw_arguments.ptr, raw_arguments.len) orelse return quickJsError(engine);
     if (lnako_qjs_drain_jobs(engine) < 0) {
@@ -983,6 +949,9 @@ fn toRaw(state: *State, runtime: *Runtime, engine: *Engine, value: Value, cache:
             break :blk lnako_qjs_string(engine, text.ptr, text.len) orelse error.OutOfMemory;
         },
         .bytes => |bytes| blk: {
+            if (bytes.bytes.len > std.math.maxInt(u32) or bytes.bytes.len > interop_collection_limit) {
+                return error.QuickJsCollectionTooLarge;
+            }
             const result = lnako_qjs_array(engine) orelse return error.OutOfMemory;
             errdefer lnako_qjs_value_free(result);
             for (bytes.bytes, 0..) |byte, index| {
@@ -1075,7 +1044,7 @@ fn syncContents(state: *State, runtime: *Runtime, engine: *Engine, value: Value,
     defer _ = cache.syncing.remove(identity);
     switch (value) {
         .array => |array| {
-            if (array.items.items.len > std.math.maxInt(u32)) return error.QuickJsCollectionTooLarge;
+            if (array.items.items.len > std.math.maxInt(u32) or array.items.items.len > interop_collection_limit) return error.QuickJsCollectionTooLarge;
 
             if (lnako_qjs_set_array_length(raw, @intCast(array.items.items.len)) < 0) return quickJsError(engine);
             // getter/host callbackの再入で配列が再割当てされても安全なよう複製する。
@@ -1117,10 +1086,10 @@ fn syncContents(state: *State, runtime: *Runtime, engine: *Engine, value: Value,
                 const key = key_value.string;
                 const name = try std.unicode.wtf16LeToWtf8Alloc(runtime.allocator(), key.units);
                 defer runtime.allocator().free(name);
-                // 比較・削除はJSのkeys()と同じlossy UTF-8、定義/取得はWTF-8で行う。
-                const name_lossy = try key.toUtf8Lossy(runtime.allocator());
-                defer runtime.allocator().free(name_lossy);
-                const owned_name = try runtime.allocator().dupe(u8, name_lossy);
+                // 定義/取得/削除判定はすべてWTF-8で揃える。`lnako_qjs_key` も
+                // 孤立サロゲートをWTF-8で返すため、lossy UTF-8で比較すると
+                // 孤立サロゲートのキーが直後の削除ループで消える。
+                const owned_name = try runtime.allocator().dupe(u8, name);
                 names.append(runtime.allocator(), owned_name) catch |failure| {
                     runtime.allocator().free(owned_name);
                     return failure;
@@ -1142,7 +1111,8 @@ fn syncContents(state: *State, runtime: *Runtime, engine: *Engine, value: Value,
                 }
                 if (lnako_qjs_define_property(raw, name_z.ptr, item) < 0) return quickJsError(engine);
             }
-            const keys = lnako_qjs_keys(raw) orelse return error.QuickJsConversionFailed;
+            // ProxyのownKeysが投げた例外は内部エラー名に置き換えず元の文言を残す。
+            const keys = lnako_qjs_keys(raw) orelse return conversionFailure(runtime, raw);
             defer lnako_qjs_keys_free(keys);
             var index: usize = 0;
             while (index < lnako_qjs_keys_length(keys)) : (index += 1) {
@@ -1173,7 +1143,7 @@ fn refreshExternal(state: *State, runtime: *Runtime, value: Value, raw: *RawValu
     try conversion.refresh(value, raw);
 }
 
-fn fromRaw(state: *State, runtime: *Runtime, raw: *RawValue) !Value {
+pub fn fromRaw(state: *State, runtime: *Runtime, raw: *RawValue) !Value {
     var conversion = Conversion{ .state = state, .runtime = runtime, .wtf8_strings = true };
     defer conversion.seen.deinit(runtime.allocator());
     return conversion.convert(raw);
@@ -1183,28 +1153,22 @@ fn fromRaw(state: *State, runtime: *Runtime, raw: *RawValue) !Value {
 /// `resultFromRaw` と同じ規則で、プリミティブに加えて配列/辞書を再帰変換し、
 /// 各配列/辞書へexternal bindingを付与する。Promise・関数・BigInt・bytesは
 /// 明示的な未対応エラーにしてAOTと文言を揃える。
-fn interopFromRaw(state: *State, runtime: *Runtime, raw: *RawValue) !Value {
+pub fn interopFromRaw(state: *State, runtime: *Runtime, raw: *RawValue) !Value {
     var conversion = Conversion{ .state = state, .runtime = runtime, .mode = .interop_result };
     defer conversion.seen.deinit(runtime.allocator());
     return conversion.convert(raw);
 }
 
-/// `JS関数実行` の戻り値変換。プリミティブに加えて、JS配列→Nako配列・
-/// JSオブジェクト→Nako辞書の浅いコピーだけを許可する。要素/値はプリミティブに
-/// 限り、ネストした配列/辞書・関数・BigInt・bytesは明示的な未対応
-/// エラーにする（AOTと同じ規則）。JS参照は保持しない（浅いコピー）。
-/// Promiseは呼出し側（`callExternalCallResult`）がawaitしてから渡す。
-fn fromCallResultRaw(state: *State, runtime: *Runtime, raw: *RawValue) !Value {
-    var conversion = Conversion{ .state = state, .runtime = runtime, .mode = .call_result };
-    defer conversion.seen.deinit(runtime.allocator());
-    return conversion.convert(raw);
-}
-
-const ConversionMode = enum { full, call_result, interop_result };
+pub const ConversionMode = enum { full, interop_result };
 
 /// JS→Nako結果変換のネスト上限。AOTの同名上限と同じ値にし、深い非循環
 /// オブジェクトでもスタック枯渇しないよう明示エラーにする。
-const max_interop_conversion_depth: usize = 64;
+pub const max_interop_conversion_depth: usize = 64;
+
+/// `JSオブジェクト取得` / `JSメソッド実行` の戻り値変換で受け付ける配列要素/
+/// 辞書キー数の上限（テストで差し替え可能）。AOTの `safe_array_element_limit`
+/// と同じ値にして、疎配列の巨大lengthや巨大なキー数で一括確保しない。
+const interop_collection_limit: usize = 1_000_000;
 
 /// 1回のdispatch（引数変換〜呼出し後の再同期）に閉じた同期キャッシュ。
 /// Stateに持たせると入れ子dispatchで解放・再利用が競合するため、呼出し側が
@@ -1233,12 +1197,12 @@ const SyncCache = struct {
     }
 };
 
-const Conversion = struct {
+pub const Conversion = struct {
     state: *State,
     runtime: *Runtime,
     mode: ConversionMode = .full,
     /// 今回の変換で受け付ける配列要素/辞書キー数の上限（テストで差し替え可能）。
-    limit: usize = call_result_collection_limit,
+    limit: usize = interop_collection_limit,
     depth: usize = 0,
     /// refreshではJS側の孤立サロゲート文字列を可逆に保持する。
     wtf8_strings: bool = false,
@@ -1246,8 +1210,9 @@ const Conversion = struct {
 
     /// external値のNako側コピーをJS側の現在値で再構築する。途中で変換に失敗して
     /// も元の内容を失わないよう、まず一時的な配列/辞書へ構築し、成功後に中身だけ
-    /// 差し替える（clear→再構築の破壊的な経路を避ける）。
-    fn refresh(self: *Conversion, value: Value, raw: *RawValue) !void {
+    /// 差し替える（clear→再構築の破壊的な経路を避ける）。キー列挙の例外文言は
+    /// `conversionFailure` で保持する（回帰テストから直接呼べるようpubにする）。
+    pub fn refresh(self: *Conversion, value: Value, raw: *RawValue) !void {
         try self.seen.put(self.runtime.allocator(), lnako_qjs_identity(raw), value);
         switch (value) {
             .array => |array| {
@@ -1276,7 +1241,7 @@ const Conversion = struct {
                 var roots = self.runtime.rootFrame();
                 defer roots.deinit();
                 try roots.protect(&fresh);
-                const keys = lnako_qjs_keys(raw) orelse return error.QuickJsConversionFailed;
+                const keys = lnako_qjs_keys(raw) orelse return conversionFailure(self.runtime, raw);
                 defer lnako_qjs_keys_free(keys);
                 const key_count = lnako_qjs_keys_length(keys);
                 if (key_count > self.limit) return error.QuickJsCollectionTooLarge;
@@ -1295,7 +1260,7 @@ const Conversion = struct {
         }
     }
 
-    fn convert(self: *Conversion, raw: *RawValue) anyerror!Value {
+    pub fn convert(self: *Conversion, raw: *RawValue) anyerror!Value {
         if (self.depth >= max_interop_conversion_depth) {
             lnako_qjs_value_free(raw);
             return error.QuickJsNestingTooDeep;
@@ -1348,43 +1313,45 @@ const Conversion = struct {
                 return result;
             },
             .bigint => {
-                if (self.mode == .call_result) {
-                    lnako_qjs_value_free(raw);
-                    return error.QuickJsUnsupportedCallResult;
-                }
+                // BigIntは `JS実行` のfull変換・resyncで共有する。`JSオブジェクト取得`
+                // / `JSメソッド実行` の制限付き結果変換ではAOTと同じく拒否する。
+                // 変換・割当て失敗時もrawを確実に解放する。
                 if (self.mode == .interop_result) {
                     lnako_qjs_value_free(raw);
                     return error.QuickJsUnsupportedInteropResult;
                 }
+                defer lnako_qjs_value_free(raw);
                 const text = try rawText(raw);
                 defer lnako_qjs_free_string(text.pointer);
                 const literal = try std.fmt.allocPrint(self.runtime.allocator(), "{s}n", .{text.slice()});
                 defer self.runtime.allocator().free(literal);
-                lnako_qjs_value_free(raw);
                 return self.runtime.bigIntLiteral(literal);
             },
             .function => {
-                if (self.mode == .call_result) {
-                    lnako_qjs_value_free(raw);
-                    return error.QuickJsUnsupportedCallResult;
-                }
                 if (self.mode == .interop_result) {
                     lnako_qjs_value_free(raw);
                     return error.QuickJsUnsupportedInteropResult;
                 }
-                const name_value = lnako_qjs_get_property(raw, "name") orelse return error.QuickJsConversionFailed;
-                const name_text = rawText(name_value) catch null;
-                defer {
-                    if (name_text) |text| lnako_qjs_free_string(text.pointer);
-                    lnako_qjs_value_free(name_value);
-                }
-                const name = try self.runtime.stringUtf8(if (name_text) |text| text.slice() else "<js>");
                 errdefer lnako_qjs_value_free(raw);
+                const engine = rawEngine(raw);
+                const name_value = lnako_qjs_get_property(raw, "name");
+                defer if (name_value) |value| lnako_qjs_value_free(value);
+                if (name_value == null) {
+                    if (lnako_qjs_take_error(engine)) |text| lnako_qjs_free_string(text);
+                }
+                const name_text = if (name_value) |value| rawText(value) catch blk: {
+                    if (lnako_qjs_take_error(engine)) |text| lnako_qjs_free_string(text);
+                    break :blk null;
+                } else null;
+                defer if (name_text) |text| lnako_qjs_free_string(text.pointer);
+                var name = try wtf8Value(self.runtime, if (name_text) |text| text.slice() else "<js>");
+                var roots = self.runtime.rootFrame();
+                defer roots.deinit();
+                try roots.protect(&name);
                 return self.runtime.createExternalFunction(name.string, 0, .{ .binding = functionBinding(self.state, raw), .callFn = externalCall });
             },
-            .array => return if (self.mode == .call_result) self.convertShallowArray(raw) else self.convertArray(raw),
+            .array => return self.convertArray(raw),
             .object => {
-                if (self.mode == .call_result) return self.convertShallowObject(raw);
                 if (self.mode == .interop_result and lnako_qjs_is_bytes(raw) != 0) {
                     lnako_qjs_value_free(raw);
                     return error.QuickJsUnsupportedInteropResult;
@@ -1392,10 +1359,6 @@ const Conversion = struct {
                 return self.convertObject(raw);
             },
             .promise => {
-                if (self.mode == .call_result) {
-                    lnako_qjs_value_free(raw);
-                    return error.QuickJsUnsupportedCallResult;
-                }
                 if (self.mode == .interop_result) {
                     lnako_qjs_value_free(raw);
                     return error.QuickJsUnsupportedInteropResult;
@@ -1403,69 +1366,6 @@ const Conversion = struct {
                 return self.convertObject(raw);
             },
         }
-    }
-
-    /// `JS関数実行` の戻り値配列の浅いコピー。要素はプリミティブだけを許可し、
-    /// 浅いコピー内容は従来どおり。JS参照（external binding）もdupして保持し、
-    /// `JSオブジェクト取得` / `JSメソッド実行` が同じJS配列を参照できるようにする。
-    fn convertShallowArray(self: *Conversion, raw: *RawValue) !Value {
-        errdefer lnako_qjs_value_free(raw);
-        const length = lnako_qjs_array_length(raw);
-        // `length = 0xFFFFFFFF` のような疎配列で一括変換しないよう、AOTの
-        // safe_array_element_limitと同じ上限を適用する。
-        if (length > self.limit) return error.QuickJsCollectionTooLarge;
-        var result = try self.runtime.createArray();
-        var roots = self.runtime.rootFrame();
-        defer roots.deinit();
-        try roots.protect(&result);
-        for (0..length) |index| {
-            const item = lnako_qjs_get_index(raw, @intCast(index)) orelse return error.QuickJsConversionFailed;
-            _ = try result.array.push(try self.convertShallowElement(item));
-        }
-        // 要素の変換に成功した後でexternalを付与する（失敗時にRawValueを
-        // 二重解放しない）。参照カウントをdupするだけでNako側の割当ては増えない。
-        result.array.external = objectBinding(rawEngine(raw), lnako_qjs_dup(raw) orelse return error.OutOfMemory);
-        lnako_qjs_value_free(raw);
-        return result;
-    }
-
-    /// `JS関数実行` の戻り値オブジェクトの浅いコピー。値はプリミティブだけを
-    /// 許可し、浅いコピー内容は従来どおり。JS参照（external binding）もdupして
-    /// 保持する。TypedArray/ArrayBufferはNakoのbytes相当のため明示的な未対応
-    /// エラーにする。
-    fn convertShallowObject(self: *Conversion, raw: *RawValue) !Value {
-        errdefer lnako_qjs_value_free(raw);
-        if (lnako_qjs_is_bytes(raw) != 0) return error.QuickJsUnsupportedCallResult;
-        var result = try self.runtime.createDictionary();
-        var roots = self.runtime.rootFrame();
-        defer roots.deinit();
-        try roots.protect(&result);
-        const keys = lnako_qjs_keys(raw) orelse return error.QuickJsConversionFailed;
-        defer lnako_qjs_keys_free(keys);
-        const key_count = lnako_qjs_keys_length(keys);
-        if (key_count > self.limit) return error.QuickJsCollectionTooLarge;
-        for (0..key_count) |index| {
-            var name_length: usize = 0;
-            const name_pointer = lnako_qjs_key(keys, index, &name_length) orelse continue;
-            const name = name_pointer[0..name_length];
-            const name_z = try self.runtime.allocator().dupeSentinel(u8, name, 0);
-            defer self.runtime.allocator().free(name_z);
-            const item = lnako_qjs_get_property(raw, name_z.ptr) orelse return error.QuickJsConversionFailed;
-            try dictionarySetBridgeKey(self.runtime, result.dictionary, name, try self.convertShallowElement(item));
-        }
-        result.dictionary.external = objectBinding(rawEngine(raw), lnako_qjs_dup(raw) orelse return error.OutOfMemory);
-        lnako_qjs_value_free(raw);
-        return result;
-    }
-
-    fn convertShallowElement(self: *Conversion, raw: *RawValue) !Value {
-        return switch (lnako_qjs_kind(raw)) {
-            .undefined, .null_value, .boolean, .number, .string => self.convert(raw),
-            else => {
-                lnako_qjs_value_free(raw);
-                return error.QuickJsUnsupportedCallResult;
-            },
-        };
     }
 
     fn convertArray(self: *Conversion, raw: *RawValue) anyerror!Value {
@@ -1479,11 +1379,14 @@ const Conversion = struct {
             lnako_qjs_value_free(raw);
             return error.QuickJsCollectionTooLarge;
         }
+        var raw_owned = true;
+        errdefer if (raw_owned) lnako_qjs_value_free(raw);
         var result = try self.runtime.createArray();
         var roots = self.runtime.rootFrame();
         defer roots.deinit();
         try roots.protect(&result);
         result.array.external = objectBinding(@ptrCast(rawEngine(raw)), raw);
+        raw_owned = false;
         try self.seen.put(self.runtime.allocator(), identity, result);
         for (0..length) |index| {
             const present = lnako_qjs_has_index(raw, @intCast(index));
@@ -1508,8 +1411,11 @@ const Conversion = struct {
         // キー数上限の判定は所有権を辞書へ移す前に行う。移した後のrawは辞書の
         // external bindingが所有するため、ここで明示解放してはならない。
         const keys = lnako_qjs_keys(raw) orelse {
+            // rawはまだ辞書へ所有権を移していないため、例外文言を取り出してから
+            // 解放する（解放後のraw参照を避ける）。
+            const failure = conversionFailure(self.runtime, raw);
             lnako_qjs_value_free(raw);
-            return error.QuickJsConversionFailed;
+            return failure;
         };
         defer lnako_qjs_keys_free(keys);
         const key_count = lnako_qjs_keys_length(keys);
@@ -1533,11 +1439,11 @@ const Conversion = struct {
             const name_z = try self.runtime.allocator().dupeSentinel(u8, name, 0);
             defer self.runtime.allocator().free(name_z);
             const item = lnako_qjs_get_property(raw, name_z.ptr) orelse return error.QuickJsConversionFailed;
-            // interop_resultはAOTと同じWTF-8キーを使い、孤立サロゲートを含む
-            // JS辞書キーでもAOT/interpreterの観測を揃える。full（JS実行）は既存の
-            // strict UTF-8キー変換を維持する。
+            // AOTのfull変換（jsEvalResult）と同じくWTF-8キーを使い、孤立サロゲートを
+            // 含むJS辞書キーでもAOT/interpreterの観測を揃える。`wtf8_strings` は
+            // refresh/fromRaw が真にする。
             const converted = try self.convert(item);
-            if (self.mode == .interop_result) {
+            if (self.mode != .full or self.wtf8_strings) {
                 try dictionarySetBridgeKey(self.runtime, result.dictionary, name, converted);
             } else {
                 try common.dictionarySetUtf8(self.runtime, result.dictionary, name, converted);
@@ -1563,17 +1469,17 @@ fn rawText(raw: *const RawValue) !RawText {
 }
 
 /// JSのWTF-8（孤立サロゲートを含み得る）をNakoのUTF-16文字列へ可逆変換する。
-/// AOTの浅いコピー（compat_js.zigのwtf8ToWtf16LeAlloc）と同じ規則。
-fn wtf8Value(runtime: *Runtime, text: []const u8) !Value {
+/// AOTのfull変換（compat_js_result.zigのwtf8ToWtf16LeAlloc）と同じ規則。
+pub fn wtf8Value(runtime: *Runtime, text: []const u8) !Value {
     const units = try std.unicode.wtf8ToWtf16LeAlloc(runtime.allocator(), text);
     defer runtime.allocator().free(units);
     return runtime.stringCodeUnits(units);
 }
 
 /// WTF-8のキーをNako辞書へ設定する。`common.dictionarySetUtf8` はUTF-8 strict
-/// だが、`JS関数実行` の浅いコピーはJS文字列の孤立サロゲートを保持するため、
+/// だが、JS→Nakoのfull変換はJS文字列の孤立サロゲートを保持するため、
 /// AOTと同じWTF-8経路を使う。
-fn dictionarySetBridgeKey(runtime: *Runtime, dictionary: *value_mod.Dictionary, key: []const u8, value: Value) !void {
+pub fn dictionarySetBridgeKey(runtime: *Runtime, dictionary: *value_mod.Dictionary, key: []const u8, value: Value) !void {
     var value_root = value;
     var roots = runtime.rootFrame();
     defer roots.deinit();
@@ -1595,45 +1501,16 @@ fn quickJsError(engine: *Engine) anyerror {
     return error.QuickJsExecutionFailed;
 }
 
-test "JS関数実行の実引数はプリミティブと浅い配列・辞書だけを許可する" {
-    var runtime = value_mod.Runtime.init(std.testing.allocator);
-    defer runtime.deinit();
-    var roots = [_]Value{ .{ .undefined = {} }, .{ .undefined = {} }, .{ .undefined = {} }, .{ .undefined = {} }, .{ .undefined = {} }, .{ .undefined = {} }, .{ .undefined = {} }, .{ .undefined = {} }, .{ .undefined = {} } };
-    var frame = runtime.rootFrame();
-    defer frame.deinit();
-    for (&roots) |*root| try frame.protect(root);
-
-    try std.testing.expect(isSupportedCallArgument(.undefined));
-    try std.testing.expect(isSupportedCallArgument(.null_value));
-    try std.testing.expect(isSupportedCallArgument(.{ .boolean = true }));
-    try std.testing.expect(isSupportedCallArgument(.{ .number = 1 }));
-    roots[0] = try runtime.stringUtf8("x");
-    try std.testing.expect(isSupportedCallArgument(roots[0]));
-
-    roots[1] = try runtime.createArray();
-    try std.testing.expect(isSupportedCallArgument(roots[1]));
-    roots[2] = try runtime.createArray();
-    _ = try roots[2].array.push(.{ .number = 1 });
-    try std.testing.expect(isSupportedCallArgument(roots[2]));
-    roots[3] = try runtime.createArray();
-    _ = try roots[3].array.push(roots[2]);
-    try std.testing.expect(!isSupportedCallArgument(roots[3]));
-
-    roots[4] = try runtime.createDictionary();
-    try std.testing.expect(isSupportedCallArgument(roots[4]));
-    roots[5] = try runtime.createDictionary();
-    try roots[5].dictionary.set(roots[0].string, .{ .number = 1 });
-    try std.testing.expect(isSupportedCallArgument(roots[5]));
-    roots[6] = try runtime.createDictionary();
-    try roots[6].dictionary.set(roots[0].string, roots[5]);
-    try std.testing.expect(!isSupportedCallArgument(roots[6]));
-
-    roots[7] = try runtime.createBuiltinFunction(roots[0].string, 0);
-    try std.testing.expect(!isSupportedCallArgument(roots[7]));
-    roots[8] = try runtime.bigIntLiteral("1");
-    try std.testing.expect(!isSupportedCallArgument(roots[8]));
-    try std.testing.expect(!isSupportedCallArgument(try runtime.createBytes("ab")));
-    try std.testing.expect(!isSupportedCallArgument(try runtime.createPromise()));
+/// 変換途中のQuickJS例外を失わずに報告する。AOT側 `conversionFailure` と
+/// 同じく、bridgeがNULLを返した場合はengineのlast_errorをNakoのfailure
+/// messageへ記録し、内部エラー名ではなくJS例外の文言を残したまま実行失敗を
+/// 返す。例外文言が無い場合だけ変換失敗にする。
+fn conversionFailure(runtime: *Runtime, raw: *const RawValue) anyerror {
+    const engine = lnako_qjs_value_engine(raw) orelse return error.QuickJsConversionFailed;
+    const message = lnako_qjs_take_error(engine) orelse return error.QuickJsConversionFailed;
+    defer lnako_qjs_free_string(message);
+    try runtime.setFailureMessage(std.mem.span(message));
+    return error.QuickJsExecutionFailed;
 }
 
 test "QuickJS互換ビルド状態を公開する" {
@@ -1754,310 +1631,6 @@ test "package所有moduleのimport解決はpackage root外へのFS fallbackを�
     defer lnako_qjs_free_string(missing_message);
 }
 
-fn evalCallResult(runtime: *Runtime, engine: *Engine, source: []const u8) !Value {
-    const raw = lnako_qjs_eval(engine, source.ptr, source.len, "<JS関数実行戻り値テスト>") orelse return error.QuickJsConversionFailed;
-    var state = State.init(true);
-    defer state.deinit();
-    state.runtime = runtime;
-    return fromCallResultRaw(&state, runtime, raw);
-}
-
-/// `JS関数実行` の呼出し経路（`callExternalCallResult`）をPromise戻り値で評価する。
-/// engineの所有権は呼出し側に残す（`State.deinit` でreleaseしない）。
-fn evalCallResultPromise(runtime: *Runtime, engine: *Engine, source: []const u8) !Value {
-    var state = State.init(true);
-    state.engine = engine;
-    state.runtime = runtime;
-    defer {
-        state.engine = null;
-        state.deinit();
-    }
-    const raw = lnako_qjs_eval(engine, source.ptr, source.len, "<JS関数実行Promiseテスト>") orelse return error.QuickJsConversionFailed;
-    var callable = try fromRaw(&state, runtime, raw);
-    // 実経路（`call`）と同じく、呼出し中の割当てでcallableが回収されないようrootする。
-    var roots = runtime.rootFrame();
-    defer roots.deinit();
-    try roots.protect(&callable);
-    return callExternalCallResult(&state, runtime, callable, &.{});
-}
-
-test "JS関数実行の戻り値は浅い配列・辞書だけをNako値へ変換する" {
-    if (!build_options.quickjs_enabled) return error.SkipZigTest;
-    var runtime = Runtime.init(std.testing.allocator);
-    defer runtime.deinit();
-    const engine = lnako_qjs_new() orelse return error.SkipZigTest;
-    defer lnako_qjs_release(engine);
-
-    const array_value = try evalCallResult(&runtime, engine, "[1,2]");
-    try std.testing.expectEqual(@as(usize, 2), array_value.array.items.items.len);
-    try std.testing.expectEqual(@as(f64, 1), array_value.array.items.items[0].number);
-    try std.testing.expectEqual(@as(f64, 2), array_value.array.items.items[1].number);
-    // 浅いコピー内容は従来どおりだが、JS参照（external binding）は保持し、
-    // `JSオブジェクト取得` / `JSメソッド実行` が同じJS配列を参照できる。
-    try std.testing.expect(array_value.array.external != null);
-    try std.testing.expectEqual(@as(*anyopaque, @ptrCast(engine)), array_value.array.external.?.context);
-
-    const empty_array_value = try evalCallResult(&runtime, engine, "[]");
-    try std.testing.expectEqual(@as(usize, 0), empty_array_value.array.items.items.len);
-
-    const mixed_value = try evalCallResult(&runtime, engine, "['a', true, null, undefined, 3.5]");
-    try std.testing.expectEqual(@as(usize, 5), mixed_value.array.items.items.len);
-    try std.testing.expectEqualSlices(u16, &.{'a'}, mixed_value.array.items.items[0].string.units);
-    try std.testing.expect(mixed_value.array.items.items[1].boolean);
-    try std.testing.expect(std.meta.activeTag(mixed_value.array.items.items[2]) == .null_value);
-    try std.testing.expect(std.meta.activeTag(mixed_value.array.items.items[3]) == .undefined);
-    try std.testing.expectEqual(@as(f64, 3.5), mixed_value.array.items.items[4].number);
-
-    const dictionary_value = try evalCallResult(&runtime, engine, "({x:10,y:20})");
-    try std.testing.expectEqual(@as(usize, 2), dictionary_value.dictionary.len());
-    const keys = dictionary_value.dictionary.keys();
-    try std.testing.expectEqualSlices(u16, &.{'x'}, keys[0].units);
-    try std.testing.expectEqualSlices(u16, &.{'y'}, keys[1].units);
-    try std.testing.expectEqual(@as(f64, 10), dictionary_value.dictionary.get(keys[0]).?.number);
-    try std.testing.expectEqual(@as(f64, 20), dictionary_value.dictionary.get(keys[1]).?.number);
-    // 浅いコピー内容は従来どおりだが、JS参照（external binding）を保持する。
-    try std.testing.expect(dictionary_value.dictionary.external != null);
-    try std.testing.expectEqual(@as(*anyopaque, @ptrCast(engine)), dictionary_value.dictionary.external.?.context);
-
-    // JSのkey順（挿入順）を保持する。
-    const ordered_value = try evalCallResult(&runtime, engine, "({b:2,a:1})");
-    const ordered_keys = ordered_value.dictionary.keys();
-    try std.testing.expectEqualSlices(u16, &.{'b'}, ordered_keys[0].units);
-    try std.testing.expectEqualSlices(u16, &.{'a'}, ordered_keys[1].units);
-    try std.testing.expectEqual(@as(f64, 2), ordered_value.dictionary.get(ordered_keys[0]).?.number);
-    try std.testing.expectEqual(@as(f64, 1), ordered_value.dictionary.get(ordered_keys[1]).?.number);
-
-    const empty_dictionary_value = try evalCallResult(&runtime, engine, "({})");
-    try std.testing.expectEqual(@as(usize, 0), empty_dictionary_value.dictionary.len());
-
-    // 孤立サロゲートはAOTと同じくWTF-8可逆で保持する（V8/QuickJSの文字列単位）。
-    const surrogate_value = try evalCallResult(&runtime, engine, "['\\uD800']");
-    try std.testing.expectEqual(@as(usize, 1), surrogate_value.array.items.items.len);
-    try std.testing.expectEqualSlices(u16, &.{0xD800}, surrogate_value.array.items.items[0].string.units);
-
-    const surrogate_key_value = try evalCallResult(&runtime, engine, "({'\\uD800':1})");
-    const surrogate_keys = surrogate_key_value.dictionary.keys();
-    try std.testing.expectEqualSlices(u16, &.{0xD800}, surrogate_keys[0].units);
-    try std.testing.expectEqual(@as(f64, 1), surrogate_key_value.dictionary.get(surrogate_keys[0]).?.number);
-}
-
-test "JS関数実行のネスト・関数・BigInt・bytes戻り値は明示エラーにする" {
-    if (!build_options.quickjs_enabled) return error.SkipZigTest;
-    var runtime = Runtime.init(std.testing.allocator);
-    defer runtime.deinit();
-    const engine = lnako_qjs_new() orelse return error.SkipZigTest;
-    defer lnako_qjs_release(engine);
-    const cases = [_][]const u8{
-        "[1,[2]]",
-        "({x:{y:1}})",
-        "()=>1",
-        "1n",
-        "new Uint8Array([1,2])",
-        "new ArrayBuffer(4)",
-        "new DataView(new ArrayBuffer(4))",
-        "new SharedArrayBuffer(4)",
-        "[new Uint8Array([1])]",
-        "({x:new Uint8Array([1])})",
-    };
-    for (cases) |source| {
-        try std.testing.expectError(error.QuickJsUnsupportedCallResult, evalCallResult(&runtime, engine, source));
-    }
-}
-
-test "JS関数実行のPromise戻り値は解決値をawaitして変換する" {
-    if (!build_options.quickjs_enabled) return error.SkipZigTest;
-    const engine = lnako_qjs_new() orelse return error.SkipZigTest;
-    defer lnako_qjs_release(engine);
-    var runtime = Runtime.init(std.testing.allocator);
-    defer runtime.deinit();
-
-    const number_value = try evalCallResultPromise(&runtime, engine, "()=>Promise.resolve(3)");
-    try std.testing.expectEqual(@as(f64, 3), number_value.number);
-
-    const string_value = try evalCallResultPromise(&runtime, engine, "()=>Promise.resolve('s')");
-    try std.testing.expectEqualSlices(u16, &.{'s'}, string_value.string.units);
-
-    const boolean_value = try evalCallResultPromise(&runtime, engine, "()=>Promise.resolve(true)");
-    try std.testing.expect(boolean_value.boolean);
-
-    const null_value = try evalCallResultPromise(&runtime, engine, "()=>Promise.resolve(null)");
-    try std.testing.expect(std.meta.activeTag(null_value) == .null_value);
-
-    const undefined_value = try evalCallResultPromise(&runtime, engine, "()=>Promise.resolve()");
-    try std.testing.expect(std.meta.activeTag(undefined_value) == .undefined);
-
-    const array_value = try evalCallResultPromise(&runtime, engine, "()=>Promise.resolve([1,2])");
-    try std.testing.expectEqual(@as(usize, 2), array_value.array.items.items.len);
-    try std.testing.expectEqual(@as(f64, 1), array_value.array.items.items[0].number);
-    try std.testing.expectEqual(@as(f64, 2), array_value.array.items.items[1].number);
-    // 解決値も浅いコピー内容は従来どおりで、JS参照（external binding）を保持する。
-    try std.testing.expect(array_value.array.external != null);
-    try std.testing.expectEqual(@as(*anyopaque, @ptrCast(engine)), array_value.array.external.?.context);
-
-    const dictionary_value = try evalCallResultPromise(&runtime, engine, "()=>Promise.resolve({x:10})");
-    const keys = dictionary_value.dictionary.keys();
-    try std.testing.expectEqual(@as(usize, 1), keys.len);
-    try std.testing.expectEqualSlices(u16, &.{'x'}, keys[0].units);
-    try std.testing.expectEqual(@as(f64, 10), dictionary_value.dictionary.get(keys[0]).?.number);
-    try std.testing.expect(dictionary_value.dictionary.external != null);
-
-    // 解決値が未対応型なら、await後の変換で既存の未対応エラーになる。
-    try std.testing.expectError(
-        error.QuickJsUnsupportedCallResult,
-        evalCallResultPromise(&runtime, engine, "()=>Promise.resolve(1n)"),
-    );
-    try std.testing.expectError(
-        error.QuickJsUnsupportedCallResult,
-        evalCallResultPromise(&runtime, engine, "()=>Promise.resolve([1,[2]])"),
-    );
-
-    // rejectはreject理由、pendingはbridgeの文言で明示エラーにする（無限待機しない）。
-    try std.testing.expectError(
-        error.QuickJsExecutionFailed,
-        evalCallResultPromise(&runtime, engine, "()=>Promise.reject(new Error('x'))"),
-    );
-    try std.testing.expectError(
-        error.QuickJsExecutionFailed,
-        evalCallResultPromise(&runtime, engine, "()=>new Promise(()=>{})"),
-    );
-}
-
-fn evalFullValue(runtime: *Runtime, engine: *Engine, state: *State, source: []const u8) !Value {
-    const raw = lnako_qjs_eval(engine, source.ptr, source.len, "<interopテスト>") orelse return error.QuickJsExecutionFailed;
-    return fromRaw(state, runtime, raw);
-}
-
-test "interop 2引数JSオブジェクト取得はexternal値のプロパティを返す" {
-    if (!build_options.quickjs_enabled) return error.SkipZigTest;
-    var runtime = Runtime.init(std.testing.allocator);
-    defer runtime.deinit();
-    const engine = lnako_qjs_new() orelse return error.SkipZigTest;
-    defer lnako_qjs_release(engine);
-    var state = State.init(true);
-    defer state.deinit();
-    state.runtime = &runtime;
-    var roots = runtime.rootFrame();
-    defer roots.deinit();
-
-    var object = try evalCallResult(&runtime, engine, "({x:10})");
-    try roots.protect(&object);
-    var key = try runtime.stringUtf8("x");
-    try roots.protect(&key);
-    const number = try lookupExternalProperty(&state, &runtime, engine, object, key);
-    try std.testing.expectEqual(@as(f64, 10), number.number);
-
-    var array = try evalCallResult(&runtime, engine, "[1,2]");
-    try roots.protect(&array);
-    var index_key = try runtime.stringUtf8("0");
-    try roots.protect(&index_key);
-    const item = try lookupExternalProperty(&state, &runtime, engine, array, index_key);
-    try std.testing.expectEqual(@as(f64, 1), item.number);
-
-    // externalを持たないNako辞書はJSコピー上で取得する（安全なフォールバック）。
-    var dictionary = try runtime.createDictionary();
-    try roots.protect(&dictionary);
-    try common.dictionarySetUtf8(&runtime, dictionary.dictionary, "z", .{ .number = 9 });
-    var z_key = try runtime.stringUtf8("z");
-    try roots.protect(&z_key);
-    const fallback = try lookupExternalProperty(&state, &runtime, engine, dictionary, z_key);
-    try std.testing.expectEqual(@as(f64, 9), fallback.number);
-
-    // 関数値のレシーバはAOTと同じ文言の明示エラーにする。
-    var function_value = try evalFullValue(&runtime, engine, &state, "()=>1");
-    try roots.protect(&function_value);
-    try std.testing.expectError(
-        error.QuickJsUnsupportedArgument,
-        lookupExternalProperty(&state, &runtime, engine, function_value, key),
-    );
-    try std.testing.expect(std.mem.indexOf(u8, runtime.failureMessage().?, "JSオブジェクト取得 does not support") != null);
-}
-
-test "interop JSメソッド実行はexternalレシーバを呼び出し、非対応戻り値を明示エラーにする" {
-    if (!build_options.quickjs_enabled) return error.SkipZigTest;
-    var runtime = Runtime.init(std.testing.allocator);
-    defer runtime.deinit();
-    const engine = lnako_qjs_new() orelse return error.SkipZigTest;
-    defer lnako_qjs_release(engine);
-    var state = State.init(true);
-    defer state.deinit();
-    state.runtime = &runtime;
-    var roots = runtime.rootFrame();
-    defer roots.deinit();
-
-    var array = try evalCallResult(&runtime, engine, "[1,2]");
-    try roots.protect(&array);
-    const join = try runtime.allocator().dupeSentinel(u8, "join", 0);
-    defer runtime.allocator().free(join);
-    const separator = try runtime.stringUtf8("-");
-    const joined = try callExternalMethod(&state, &runtime, engine, array, join, &.{separator});
-    try std.testing.expectEqualSlices(u16, &[_]u16{ '1', '-', '2' }, joined.string.units);
-
-    var function_object = try evalFullValue(&runtime, engine, &state, "({f(){return ()=>{}}})");
-    try roots.protect(&function_object);
-    const f_method = try runtime.allocator().dupeSentinel(u8, "f", 0);
-    defer runtime.allocator().free(f_method);
-    try std.testing.expectError(
-        error.QuickJsUnsupportedInteropResult,
-        callExternalMethod(&state, &runtime, engine, function_object, f_method, &.{}),
-    );
-    try std.testing.expect(std.mem.indexOf(u8, runtime.failureMessage().?, "JSメソッド実行 does not support") != null);
-
-    var promise_object = try evalFullValue(&runtime, engine, &state, "({p(){return Promise.resolve(1)}})");
-    try roots.protect(&promise_object);
-    const p_method = try runtime.allocator().dupeSentinel(u8, "p", 0);
-    defer runtime.allocator().free(p_method);
-    try std.testing.expectError(
-        error.QuickJsUnsupportedInteropResult,
-        callExternalMethod(&state, &runtime, engine, promise_object, p_method, &.{}),
-    );
-}
-
-test "interop結果のキー数上限は所有権移動前に判定し二重解放しない" {
-    if (!build_options.quickjs_enabled) return error.SkipZigTest;
-    var runtime = Runtime.init(std.testing.allocator);
-    defer runtime.deinit();
-    const engine = lnako_qjs_new() orelse return error.SkipZigTest;
-    defer lnako_qjs_release(engine);
-    var state = State.init(true);
-    defer state.deinit();
-    state.runtime = &runtime;
-    const raw = lnako_qjs_eval(engine, "({a:1,b:2})", 11, "<上限テスト>") orelse return error.QuickJsExecutionFailed;
-    var conversion = Conversion{ .state = &state, .runtime = &runtime, .mode = .interop_result, .limit = 1 };
-    defer conversion.seen.deinit(runtime.allocator());
-    try std.testing.expectError(error.QuickJsCollectionTooLarge, conversion.convert(raw));
-    // rawは上限判定で1回だけ解放済み。GCで辞書が回収されても二重解放しない。
-    _ = try runtime.collect();
-}
-
-test "interop結果の変換深度は上限で明示エラーにする" {
-    if (!build_options.quickjs_enabled) return error.SkipZigTest;
-    var runtime = Runtime.init(std.testing.allocator);
-    defer runtime.deinit();
-    const engine = lnako_qjs_new() orelse return error.SkipZigTest;
-    defer lnako_qjs_release(engine);
-    var state = State.init(true);
-    defer state.deinit();
-    state.runtime = &runtime;
-    const source = "(()=>{let o={};for(let i=0;i<70;i++)o={a:o};return o})()";
-    const raw = lnako_qjs_eval(engine, source.ptr, source.len, "<深度テスト>") orelse return error.QuickJsExecutionFailed;
-    var conversion = Conversion{ .state = &state, .runtime = &runtime, .mode = .interop_result };
-    defer conversion.seen.deinit(runtime.allocator());
-    try std.testing.expectError(error.QuickJsNestingTooDeep, conversion.convert(raw));
-    _ = try runtime.collect();
-}
-
-test "JS関数実行の戻り値配列は疎配列の巨大lengthで一括変換しない" {
-    if (!build_options.quickjs_enabled) return error.SkipZigTest;
-    var runtime = Runtime.init(std.testing.allocator);
-    defer runtime.deinit();
-    const engine = lnako_qjs_new() orelse return error.SkipZigTest;
-    defer lnako_qjs_release(engine);
-    try std.testing.expectError(
-        error.QuickJsCollectionTooLarge,
-        evalCallResult(&runtime, engine, "(()=>{const a=new Array();a.length=1000001;return a;})()"),
-    );
-}
-
 /// ESM plugin の登録 shim を含む bootstrap。AOT runtime（`runtime/aot/compat_js.zig`）
 /// も同じ JS 環境を必要とするため、source を公開して共有する。
 pub const bootstrapSource =
@@ -2117,3 +1690,7 @@ pub const bootstrapSource =
     \\globalThis.navigator = globalThis.navigator || { nako3: { addPluginObject: function(_name, plugin) { globalThis.__lnako_eval_plugins.push(plugin); globalThis.__lnako_registerPlugin(plugin, globalThis.__lnako_active_namespace); } } };
     \\globalThis.console = globalThis.console || { log: function(){}, error: function(){}, warn: function(){} };
 ;
+
+comptime {
+    _ = @import("quickjs_test.zig");
+}

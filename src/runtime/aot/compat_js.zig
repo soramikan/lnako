@@ -5,7 +5,7 @@
 //! リンクし、生成物へ収録したESM manifestの登録と、`JS実行` / `JS関数実行` /
 //! `JSオブジェクト取得` / `JSメソッド実行` のdispatchを提供する。
 //!
-//! JS→Nakoの値変換（`JS実行` のfull変換・JS関数値のcallback・浅い/再帰の
+//! JS→Nakoの値変換（`JS実行` のfull変換・JS関数値のcallback・再帰の
 //! 結果変換・呼出し後の再同期）とNako→JSの同期変換（`SyncState` /
 //! `syncValueRaw` / `syncExternalRaw`）は `compat_js_result.zig` に分離し、
 //! このmoduleにはABI面（`pub export fn lnako_aot_compat_*`）と実引数の形状
@@ -285,7 +285,7 @@ pub fn fail(runtime: *state.Runtime, engine_value: *Engine) void {
 }
 
 /// プリミティブだけをNako値へ変換する。rawは呼出し側が所有権を保持し、ここでは
-/// 解放しない（`jsEvalResult` と `callResultFromRaw` で解放方針が異なるため）。
+/// 解放しない（`jsEvalResult` が呼出し後に消費する）。
 pub fn primitiveFromRaw(runtime: *state.Runtime, raw: *const RawValue) !Value {
     return switch (lnako_qjs_kind(raw)) {
         .undefined => .{},
@@ -419,27 +419,15 @@ fn arrayItems(value: Value) ?[]Value {
     return object.payload.array.items;
 }
 
-/// `JS関数実行` の実引数をQuickJS値へ変換する。最小スライスでは数値・文字列・
-/// 真偽値・null/undefinedに加えて、Nako配列→JS配列・辞書→JSオブジェクトの
-/// 浅いコピーだけを許可する。ネストした配列/辞書・関数・BigInt・bytes・
-/// Promiseは呼び出し前に明示的な未対応エラーにする（Nako側の文字列化へ
-/// 逃がさない）。文言はinterpreter（compat/quickjs.zig）と共通。
-pub const unsupported_argument_message = "JS関数実行 does not support nested arrays or dictionaries, functions, bigint, or bytes arguments yet";
-
-/// `JS関数実行` の戻り値が浅い配列/辞書へ変換できないときの文言。
-/// interpreter（compat/quickjs.zig）と同じ文言で失敗させる。
-pub const unsupported_result_message = "JS関数実行 does not support nested arrays or dictionaries, functions, bigint, or bytes results yet";
+/// `JS関数実行` の実引数として同期できない値の文言。`JS実行` の full 変換と
+/// 同じく配列・辞書（ネスト・循環・疎配列）・関数値・BigInt・bytesを受け付け、
+/// Promiseなど同期変換できない型だけを明示エラーにする。文言はinterpreter
+/// （compat/quickjs.zig）と共通。
+pub const unsupported_argument_message = "JS関数実行 does not support promises or unsupported argument types";
 
 /// bridge由来のエラー文言を既にruntimeへ記録したことを表す内部エラー。
 /// 呼出し側で再度setFailureするとQuickJSの文言が失われるため区別する。
 pub const reported_engine_failure = error.QuickJsConversionReported;
-
-fn isPrimitiveTag(tag: Tag) bool {
-    return switch (tag) {
-        .undefined, .null_value, .boolean, .number, .utf16_string, .static_utf8_string => true,
-        else => false,
-    };
-}
 
 pub fn primitiveRaw(runtime: *state.Runtime, engine_value: *Engine, value: Value) !*RawValue {
     return switch (@as(Tag, @fromBackingInt(value.tag))) {
@@ -460,79 +448,21 @@ pub fn primitiveRaw(runtime: *state.Runtime, engine_value: *Engine, value: Value
     };
 }
 
-/// 浅いコピーの要素（配列の要素・辞書の値）はプリミティブだけを許可する。
-fn shallowArgumentRaw(runtime: *state.Runtime, engine_value: *Engine, value: Value) !*RawValue {
-    if (!isPrimitiveTag(@as(Tag, @fromBackingInt(value.tag)))) return error.QuickJsUnsupportedArgument;
-    return primitiveRaw(runtime, engine_value, value);
-}
-
-fn arrayArgumentRaw(runtime: *state.Runtime, engine_value: *Engine, value: Value) !*RawValue {
-    const items = arrayItems(value) orelse return error.QuickJsUnsupportedArgument;
-    if (items.len > std.math.maxInt(u32)) return error.QuickJsCollectionTooLarge;
-    const result = lnako_qjs_array(engine_value) orelse return error.OutOfMemory;
-    errdefer lnako_qjs_value_free(result);
-    for (items, 0..) |item, index| {
-        const raw = try shallowArgumentRaw(runtime, engine_value, item);
-        defer lnako_qjs_value_free(raw);
-        if (lnako_qjs_set_index(result, @intCast(index), raw) < 0) {
-            fail(runtime, engine_value);
-            return reported_engine_failure;
-        }
-    }
-    return result;
-}
-
-fn dictionaryEntries(value: Value) ?[]const state.DictionaryEntry {
-    if (@as(Tag, @fromBackingInt(value.tag)) != .dictionary) return null;
-    const object = value.object() orelse return null;
-    return object.payload.dictionary.entries.items;
-}
-
-fn dictionaryArgumentRaw(runtime: *state.Runtime, engine_value: *Engine, value: Value) !*RawValue {
-    const entries = dictionaryEntries(value) orelse return error.QuickJsUnsupportedArgument;
-    const result = lnako_qjs_object(engine_value) orelse return error.OutOfMemory;
-    errdefer lnako_qjs_value_free(result);
-    for (entries) |entry| {
-        const name = try compat_js_result.dictionaryKeyNameZ(runtime, entry.key);
-        defer runtime.allocator.free(name);
-        const raw = try shallowArgumentRaw(runtime, engine_value, entry.value);
-        defer lnako_qjs_value_free(raw);
-        if (lnako_qjs_set_property(result, name.ptr, raw) < 0) {
-            fail(runtime, engine_value);
-            return reported_engine_failure;
-        }
-    }
-    return result;
-}
-
+/// `JSオブジェクト取得` / `JSメソッド実行` のレシーバ・実引数をQuickJS値へ
+/// 変換する。配列・辞書はexternal bindingの有無にかかわらず同期変換
+/// （`syncValueRaw`）へ渡す。`sync.full_values` は偽のままなので、ネストした
+/// 配列・辞書・関数値・Nako callbackは変換し、bytesとPromiseは従来どおり
+/// 明示エラーになる。トップレベルの関数・BigInt・bytes・Promiseも
+/// 引き続き許可しない（AOT/interpreter共通の意図的な制限）。
 fn callArgumentRaw(runtime: *state.Runtime, engine_value: *Engine, value: Value, sync: *SyncState) !*RawValue {
     const tag = @as(Tag, @fromBackingInt(value.tag));
-    // JS由来のexternal binding付き配列/辞書は、要素を再構築せず同じJS
-    // オブジェクトを渡す。interpreterのtoRawと同じく、Nako側の変更をJSへ
-    // 書き戻してからdupする。トップレベルの関数値は実引数として許可しない
-    // （interpreterのisSupportedCallArgumentと同じ）。
-    if (tag == .array or tag == .dictionary) {
-        if (try externalRaw(value)) |raw| {
-            errdefer lnako_qjs_value_free(raw);
-            try compat_js_result.syncExternalRaw(runtime, engine_value, value, raw, sync);
-            return raw;
-        }
-    }
     return switch (tag) {
         .undefined, .null_value, .boolean, .number, .utf16_string, .static_utf8_string => primitiveRaw(runtime, engine_value, value),
-        .array => arrayArgumentRaw(runtime, engine_value, value),
-        .dictionary => dictionaryArgumentRaw(runtime, engine_value, value),
+        .array, .dictionary => compat_js_result.syncValueRaw(runtime, engine_value, value, sync, 0),
         else => error.QuickJsUnsupportedArgument,
     };
 }
 
-/// `JS関数実行` のdispatch。interpreter/officialと同じく、第1引数が文字列なら
-/// global evalで関数へ解決し、第1引数が関数値ならそれを直接呼び出す
-/// （external binding付きのJS関数、またはNako関数）。第2引数が配列ならその要素を、
-/// そうでなければ第2引数1個を実引数として呼び出す。`JS実行` の
-/// eval/drain/await/例外経路を共有し、戻り値がPromiseなら解決値を待ってから
-/// `callResultFromRaw` のプリミティブ＋浅い配列/辞書変換だけを通す。rejectと
-/// pendingはbridgeの文言で明示エラーにする。
 /// compat JS 呼出しの dispatch trace route 名。interpreter 経路の
 /// `JS関数実行` と同じ表記にして両経路を突き合わせられるようにする。
 const compat_js_route = "JS関数実行";
@@ -546,6 +476,13 @@ const compat_js_eval_opcode: u16 = 0xfffe;
 const compat_js_object_get_opcode: u16 = 0xfffd;
 const compat_js_method_call_opcode: u16 = 0xfffc;
 
+/// `JS関数実行` のdispatch。interpreter/officialと同じく、第1引数が文字列なら
+/// global evalで関数へ解決し、第1引数が関数値ならそれを直接呼び出す
+/// （external binding付きのJS関数、またはNako関数）。第2引数が配列ならその要素を、
+/// そうでなければ第2引数1個を実引数として呼び出す。`JS実行` の
+/// eval/drain/await/例外経路を共有し、戻り値がPromiseなら解決値を待ってから
+/// `JS実行` と同じfull変換を通す。rejectとpendingはbridgeの文言で明示エラーに
+/// する。
 pub export fn lnako_aot_compat_js_call(out: *Value, arguments: ?[*]const Value, count: usize) callconv(.c) void {
     out.* = .{};
     const runtime = if (state.active_runtime) |*active| active else return;
@@ -649,8 +586,9 @@ fn argumentSlice(values: []const Value, count: usize) []const Value {
 }
 
 /// JS関数を実引数付きで呼び出し、`JS関数実行` の戻り値規則（Promiseのawaitと
-/// 浅い配列/辞書変換）で`out`へ格納する。失敗時はruntimeへ文言を記録してfalseを
-/// 返す（呼出し側はtraceの成否だけを確定すればよい）。
+/// `JS実行` と同じfull変換）で`out`へ格納する。実引数もfull変換（BigInt・
+/// 関数値・ネスト/循環/疎配列・bytes）でJSへ渡す。失敗時はruntimeへ文言を
+/// 記録してfalseを返す（呼出し側はtraceの成否だけを確定すればよい）。
 fn invokeJsCallable(
     runtime: *state.Runtime,
     engine_value: *Engine,
@@ -671,7 +609,7 @@ fn invokeJsCallable(
     defer runtime.popRoots(&values_frame);
     // bridgeが返すRawValueはQuickJSの参照カウントで保持され、他のJS値割当てを
     // またいでも有効。lnako_qjs_value_freeまで明示的に解放しない。
-    var sync = SyncState{};
+    var sync = SyncState{ .full_values = true };
     defer sync.deinit(runtime.allocator);
     const raw_arguments = runtime.allocator.alloc(*const RawValue, values.len) catch |failure| {
         setFailureUnlessReported(runtime, failure);
@@ -683,14 +621,10 @@ fn invokeJsCallable(
         runtime.allocator.free(raw_arguments);
     }
     for (values, 0..) |value, index| {
-        raw_arguments[index] = callArgumentRaw(runtime, engine_value, value, &sync) catch |failure| {
-            switch (failure) {
-                error.QuickJsUnsupportedArgument => runtime.setFailureText(unsupported_argument_message),
-                // bridgeの文言はarrayArgumentRaw/dictionaryArgumentRawが
-                // fail()で既にruntimeへ記録している。
-                reported_engine_failure => {},
-                else => runtime.setFailure(failure),
-            }
+        raw_arguments[index] = compat_js_result.syncValueRaw(runtime, engine_value, value, &sync, 0) catch |failure| {
+            // 未対応型は共通文言、ネスト過深・巨大配列はエラー名を保持する
+            // （externalCall / hostInvokeと同じ規則）。
+            reportUnsupported(runtime, failure, unsupported_argument_message);
             return false;
         };
         initialized += 1;
@@ -732,13 +666,9 @@ fn invokeJsCallable(
             return false;
         };
     }
-    // callResultFromRawは成功・失敗にかかわらずrawを消費して解放する。
-    out.* = compat_js_result.callResultFromRaw(runtime, raw) catch |failure| {
-        if (failure == error.QuickJsUnsupportedResult) {
-            runtime.setFailureText(unsupported_result_message);
-        } else {
-            setFailureUnlessReported(runtime, failure);
-        }
+    // `JS実行` と同じfull変換。rawは成功・失敗にかかわらず消費して解放する。
+    out.* = compat_js_result.jsEvalResult(runtime, raw) catch |failure| {
+        setFailureUnlessReported(runtime, failure);
         return false;
     };
     return true;
@@ -746,8 +676,8 @@ fn invokeJsCallable(
 
 /// `JSオブジェクト取得` / `JSメソッド実行` で、変換できない値に使う文言。
 /// interpreter（compat/quickjs.zig）と同じ文言にしてAOT/インタプリタを一致させる。
-const unsupported_object_get_message = "JSオブジェクト取得 does not support promises, functions, bigint, bytes, or nested arrays or dictionaries yet";
-const unsupported_method_message = "JSメソッド実行 does not support promises, functions, bigint, bytes, or nested arrays or dictionaries yet";
+const unsupported_object_get_message = "JSオブジェクト取得 does not support promises, functions, bigint, or bytes yet";
+const unsupported_method_message = "JSメソッド実行 does not support promises, functions, bigint, or bytes yet";
 
 /// 実引数スライスをruntime.allocatorへ複製する。呼出し後のrefreshがコンテナの
 /// payloadをswapしても、イテレーション中の値がGCで回収されるのを防ぐ。
@@ -758,7 +688,7 @@ fn copyValues(runtime: *state.Runtime, source: []const Value) ![]Value {
 }
 
 /// レシーバ値からJS値を得る。external binding付きの配列/辞書は同じJS参照を
-/// dupし、無い値は共有変換規則（プリミティブ＋浅い配列/辞書）でJSコピーを作る。
+/// dupし、無い値は共有変換規則（プリミティブ＋再帰変換する配列/辞書）でJSコピーを作る。
 /// `eval_string` が真（`JSメソッド実行`）のときだけ、文字列をJSソースとして評価する
 /// （interpreter/officialの既存経路）。`JSオブジェクト取得` は文字列をJSの
 /// プリミティブとして扱う（"abc"の"0"は"a"）。

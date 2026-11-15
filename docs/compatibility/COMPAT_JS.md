@@ -44,6 +44,13 @@ LLVM AOT＋QuickJS runtime は `--backend aot` の明示opt-inで、`-Dcompat-js
 compat runtime libraryの探索先は通常runtimeと同じく実行ファイル隣接の
 `../lib/` です。明示する場合は `LNAKO_AOT_RUNTIME_LIBRARY_COMPAT` を使います。
 
+Windows x86_64 の compat AOT リンク向けに `src/compat/quickjs_win32_shim.{h,c}`
+を追加し、QuickJS が参照する MinGW 固有の math/stdio/pthread/gettimeofday
+シンボルを MSVC 静的 CRT でも解決できるよう Win32 API 実装へ置き換えています。
+ただし **Windows x86_64 の compat AOT リンクは CI 検証待ち**です。Linux 上の
+`x86_64-windows-gnu` クロスビルドと C ソースのコンパイルは確認できますが、
+Windows x86_64 MSVC 環境でのリンク・実行はまだ検証していません。
+
 通常AOT成果物にQuickJS/compat ABIが混入しないこと、compat AOT成果物が
 QuickJSとESM情報を収録しESM呼出しに成功することは、生成物のシンボルと実行結果で
 検査します。
@@ -59,43 +66,40 @@ AOT compat dispatchは `JS実行`・`JS関数実行`・`JSオブジェクト取�
 QuickJS 参照を GC sweep で1回だけ解放します。`JS関数実行` の第1引数は関数名
 （文字列）に加えて、`JS実行` / `JSメソッド実行` が返した JS 関数値と Nako 関数値を
 受け付けます（Nako 関数値は eval を挟まず `lnako_aot_function_call` で呼び出します）。
-`JS関数実行` の戻り値である配列・辞書は、浅いコピー内容に加えてQuickJS参照
+`JS関数実行` の実引数と戻り値も、`JS実行` と同じ full 変換です。配列・辞書は
+ネスト・循環・疎配列を再帰変換し、BigInt・JS 関数値・Nako 関数 callback・bytes
+（ByteBuffer は 0..255 の数値配列）を往復します。戻り値の配列・辞書は QuickJS 参照
 （external binding）を保持し、後続の `JSオブジェクト取得` と `JSメソッド実行` が
 同じJSオブジェクトを参照します。
 external bindingはNako側ObjectがGCで回収されるときにQuickJS参照を1回だけ解放します
 （通常AOT runtimeはQuickJSを参照しない汎用ハンドル）。
 `JS関数実行` は第1引数の関数名（文字列）をglobal evalで解決し、引数コンテナの
 規則は official と同じです（第2オペランドが配列なら要素を実引数へspreadし、
-そうでなければ単一実引数）。各実引数は数値・文字列・真偽値・null/undefinedに
-加えて、Nako配列→JS配列・辞書→JSオブジェクトの浅いコピーだけを変換します。
-要素はプリミティブに限り、ネストした配列/辞書・関数・BigInt・バイト列・
-PromiseはQuickJSへ渡す前にAOTとinterpreterで同じ文言の明示的な未対応エラーに
-します（officialはそのまま渡すため、この範囲だけ意図的な差分です）。
-戻り値も同様に、数値・文字列・真偽値・null/undefinedに加えて、JS配列→Nako配列・
-JSオブジェクト→Nako辞書の浅いコピーだけを変換します（要素/値はプリミティブのみ）。
-ネストした配列/辞書・関数・BigInt・バイト列
-（TypedArray/ArrayBuffer/SharedArrayBuffer/DataView）はAOTとinterpreterで
-同じ文言の明示的な未対応エラーにします。戻り値がPromiseのときは、`JS実行` の
-AOT経路と同じくdrain後に `lnako_qjs_await` で解決値を待ち、解決値を同じ
-プリミティブ／浅い配列・辞書の規則で変換します。rejectはreject理由、pendingは
+そうでなければ単一実引数）。各実引数は `JS実行` と同じ full 変換で、数値・文字列・
+真偽値・null/undefined に加えて、ネストした配列・辞書、循環、疎配列、BigInt、
+JS 関数値、Nako 関数 callback、ByteBuffer（0..255 の数値配列）を変換します。
+同期変換できない Promise（コンテナ内の Promise を含む）と未対応型だけを、
+AOT と interpreter で同じ文言（
+`JS関数実行 does not support promises or unsupported argument types`）の明示エラーに
+します。戻り値も同じ full 変換で、ネストした配列/辞書・関数値・BigInt・bytes
+（TypedArray/ArrayBuffer/SharedArrayBuffer/DataView）を保持します。戻り値が
+Promise のときは、`JS実行` の AOT 経路と同じく drain 後に `lnako_qjs_await` で
+解決値を待ち、解決値も full 変換します。reject は reject 理由、pending は
 `QuickJS promise is still pending` を明示エラーにし、無限待機しません
-（officialはPromiseをawaitせず `[object Promise]` を返すため、この範囲だけ
-意図的な差分です）。`then` が関数のオブジェクト（thenable）もbridgeの
-`lnako_qjs_kind` がPromiseとして扱うため、解決できないthenableはpendingと同じ
-明示エラーになります。プリミティブ要素の
-配列・辞書は `表示` の文字列化が official と同じ（`1,2` / `[object Object]` /
-空配列は空行）になることを fixture で固定しています。浅いコピー内容は従来どおり
-プリミティブだけですが、戻り値の配列・辞書はJS参照（external binding）を保持します。
-疎配列の巨大な `length` と辞書のキー数は、AOT/interpreterで同じ1,000,000の
-要素数上限を超える場合に明示エラーにします。own enumerable keyを持たない
-Map/Set/Date/RegExpなどは空辞書へ変換されます（浅いコピー契約の帰結）。
+（official は Promise を await せず `[object Promise]` を返すため、この範囲だけ
+意図的な差分です）。`then` が関数のオブジェクト（thenable）も bridge の
+`lnako_qjs_kind` が Promise として扱うため、解決できない thenable は pending と
+同じ明示エラーになります。プリミティブ要素の配列・辞書は `表示` の文字列化が
+official と同じ（`1,2` / `[object Object]` / 空配列は空行）になることを fixture で
+固定しています。疎配列の巨大な `length` と辞書のキー数は、AOT/interpreter で
+同じ 1,000,000 の要素数上限を超える場合に明示エラーにします。
 Symbolなど未分類のJS値は既存の `lnako_qjs_kind` と同じく `undefined` として扱います。
 NULを含む辞書キーは既存の `convertObject` / `syncExternal` と同じ制限を継承します。
 `JS実行` を含むJS→Nakoの文字列変換はWTF-8（孤立サロゲート可逆）に統一し、
 Nako→JSの文字列・辞書キーもWTF-8で渡します。
-interpreterで `JS実行` が
+interpreterで `JS実行` / `JS関数実行` が
 返した配列・辞書は既存のJSオブジェクトを参照渡しし（Nako側の内容を書き戻す）、
-浅いコピーになるのはNakoネイティブ値と `JS関数実行` の戻り値だけです。
+Nakoネイティブ値は値コピーとしてJSへ渡ります。
 呼出し時の `this` は official の `apply(null)` と同じ `null` です
 （QuickJS bridge が `JS_NULL` を渡すため、strict 関数でのみ観測できます）。
 Promise戻り値は解決値をawaitしてから変換しますが、エラー判定前にmicrotaskを
@@ -104,10 +108,13 @@ drainするため、呼び出した関数が登録した継続は実行されて
 JS関数値は同じJS参照を直接呼び、Nako関数値はNakoの呼出し規約で実行します。
 `JSオブジェクト取得` の2引数形はlnako独自拡張で、公式の1引数形（グローバル名解決）は
 interpreterで維持します。AOTは名前→グローバルslotの対応を持たないため、1引数形は
-明示エラーにします。2引数形はレシーバがexternal bindingなら同じJS参照のプロパティ、
-そうでなければ共有変換規則で作ったJSコピーのプロパティを取得し、戻り値は
-配列・辞書を再帰変換してexternal bindingを付与します。Promise・関数・BigInt・
-bytesは戻り値として明示エラーにし、AOT/interpreterで同じ文言にします。
+引き続き明示エラーです（AOT未対応）。2引数形はレシーバがexternal bindingなら同じ
+JS参照のプロパティ、そうでなければ同期変換で作ったJSコピーのプロパティを取得し、
+戻り値は配列・辞書を再帰変換してexternal bindingを付与します。レシーバ・実引数の
+トップレベルはプリミティブと配列・辞書に限り、関数・BigInt・bytes・Promiseは
+明示エラーにします。配列・辞書の中身はネストした配列/辞書・関数値・BigInt を
+同期変換し、bytes（コンテナ内）と Promise（コンテナ内）だけを明示エラーにします。
+戻り値のPromise・関数・BigInt・bytesはAOT/interpreterで同じ文言の明示エラーです。
 ### Nako→JS callback と GC
 
 Nako の関数・クロージャを JS へ渡す経路（JS 関数値の呼出し引数、`{cb: fn}` /
@@ -140,12 +147,12 @@ bindingのレシーバは同じJS参照、それ以外は共有変換規則のJS
 呼出し後はinterpreterと同じく、JS側の内容でexternal値（レシーバと実引数）の
 Nakoコピーを再同期します。再同期は一時的な配列/辞書へ構築してから差し替えるため、
 変換に失敗しても元のNako内容は失いません。
-external bindingを持たない値でも共有変換規則でJSへ渡せるものは安全なフォールバックとし、
-トップレベルの関数・BigInt・bytes・Promise・ネストした配列/辞書はAOT/interpreterで
-同じ文言の明示エラーにします。external コンテナの再同期と callback 経路は full 変換で、
-`JS実行` 由来の関数・BigInt・bytes も要素として保持・往復します。値・Promise・callback・GCの接続はIssue #55 Unit 2で実装済みです。
-上記の浅い引数・戻り値制限（`JS関数実行`のトップレベル、およびexternalでない
-浅いコンテナ）だけを意図的な契約として維持します。AOTの4命令は専用ABIを直接呼びますが、`LNAKO_DISPATCH_TRACE` の
+external bindingを持たない値でも同期変換でJSへ渡せるものは安全なフォールバックとし、
+トップレベルの関数・BigInt・bytes・Promise と、コンテナ内の bytes・Promise は
+AOT/interpreter で同じ文言の明示エラーにします。external コンテナの再同期と
+callback 経路は full 変換で、`JS実行` 由来の関数・BigInt・bytes も要素として
+保持・往復します。値・Promise・callback・GCの接続はIssue #55 Unit 2で実装済みです。
+AOTの4命令は専用ABIを直接呼びますが、`LNAKO_DISPATCH_TRACE` の
 dispatch traceへも記録します（route名はinterpreterと同じ `JS関数実行` など、
 opcodeは65535、`command` には評価式ではなく命令名のみを入れます。評価式を
 入れると利用者のスクリプト片がtraceへ漏れ、引用符でJSON行が壊れるためです）。
@@ -154,15 +161,16 @@ AOTの4命令はIR siteを持たないので `siteId` は null になります�
 ### AOTに合わせたinterpreterの意図的制限
 
 AOTとinterpreterの観測を揃えるため、interpreterの`JSメソッド実行`と
-2引数`JSオブジェクト取得`は、レシーバ・実引数をプリミティブ＋浅い配列/辞書＋
-external bindingに限定し、戻り値のPromise・関数・BigInt・bytesを明示エラーに
-します。これは公式cnako3の`nako_to_js`/`js_to_nako`（ネスト値や関数値をそのまま
-扱う）より狭い意図的な契約です。`JS実行` の full 変換、JS 関数値の保持・呼出し、
-Nako→JS callback は #55 Unit 2 で接続済みですが、`JS関数実行` の実引数・戻り値と、
-`JSオブジェクト取得` / `JSメソッド実行` の external でない浅いコンテナでは、この
-浅い制限を維持します（external コンテナと callback 経路は full 変換）。
+2引数`JSオブジェクト取得`は、レシーバ・実引数のトップレベルをプリミティブと
+配列・辞書（external binding を含む）に限定し、トップレベルの関数・BigInt・
+bytes・Promise を明示エラーにします。配列・辞書の中身はネストした配列/辞書・
+関数値・BigInt を同期変換し、コンテナ内の bytes と Promise だけを明示エラーに
+します。戻り値のPromise・関数・BigInt・bytesも明示エラーです。`JS関数実行` の実引数・
+戻り値は full 変換で、同期変換できない Promise と未対応型だけを明示エラーに
+します。`JS実行` の full 変換、JS 関数値の保持・呼出し、Nako→JS callback は
+#55 Unit 2 で接続済みです。
 1引数`JSオブジェクト取得`（公式のグローバル名解決）はinterpreterで従来どおり動作し、
-AOTは変数bridgeを持たないため明示エラーにします。
+AOTは変数bridgeを持たないため引き続き明示エラーにします（AOT未対応）。
 
 2引数形はC風呼び出し（`JSオブジェクト取得(OBJ, KEY)`）専用です。助詞呼出しの
 スロット表は公式の1引数形（`NAMEの`）のままで、`is_variable`化はC風呼び出しの

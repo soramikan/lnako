@@ -1179,14 +1179,17 @@ pub const Runtime = struct {
         }
         const result = try self.allocator().create(Function);
         errdefer self.allocator().destroy(result);
+        const owned_captures = try self.allocator().dupe(Capture, captures);
+        errdefer self.allocator().free(owned_captures);
         result.* = .{
             .allocator = self.allocator(),
             .name = name,
             .arity = arity,
             .kind = kind,
-            .captures = try self.allocator().dupe(Capture, captures),
+            .captures = owned_captures,
         };
-        errdefer result.deinit();
+        // external binding の所有権は appendObject 成功後にだけ移す。ここで
+        // result.deinit() を呼ぶと、呼出し側の errdefer 解放と二重解放になる。
         try self.appendObject(.{ .function = result }, null);
         return .{ .function = result };
     }
