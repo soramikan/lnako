@@ -12,6 +12,19 @@ const pickEntryFromPackageJson = npm_esm.pickEntryFromPackageJson;
 const resolveEntryInRoot = npm_esm.resolveEntryInRoot;
 const resolveSubpathInRoot = npm_esm.resolveSubpathInRoot;
 
+/// `root` と `segments` を `std.fs.path.join` で連結した期待 path と
+/// `actual` を比較する。解決結果は realpath で canonicalize されるため、
+/// Windows では区切りが `\` になる。固定 `/` の suffix 比較は使わない。
+fn expectPathUnder(root: []const u8, segments: []const []const u8, actual: []const u8) !void {
+    var parts_buf: [16][]const u8 = undefined;
+    std.debug.assert(segments.len + 1 <= parts_buf.len);
+    parts_buf[0] = root;
+    @memcpy(parts_buf[1 .. segments.len + 1], segments);
+    const expected = try std.fs.path.join(testing.allocator, parts_buf[0 .. segments.len + 1]);
+    defer testing.allocator.free(expected);
+    try testing.expectEqualStrings(expected, actual);
+}
+
 // --- #53 package.json 本格パース（Node 24.21.0 / 26.13.0 実測に基づく） ---
 
 test "pickEntryFromPackageJson は name/type 非文字列を PackageJsonInvalid にする" {
@@ -94,25 +107,25 @@ test "resolveEntryInRoot は legacy main 解決で index.js へフォールバ�
     // Node 実測（v24/v26）: main の候補が無い・ディレクトリ・"."・空文字の
     // いずれも最終的に index.js が解決される。module は Node が読まない
     // lnako 拡張で、こちらも存在しない候補は main → index.js へ進む。
-    const Case = struct { json: []const u8, files: []const []const u8, expect: []const u8 };
+    const Case = struct { json: []const u8, files: []const []const u8, expect: []const []const u8 };
     const cases = [_]Case{
-        .{ .json = "{\"main\":\"missing.js\"}", .files = &.{"index.js"}, .expect = "index.js" },
-        .{ .json = "{\"main\":5}", .files = &.{"index.js"}, .expect = "index.js" },
-        .{ .json = "{\"main\":\"lib\"}", .files = &.{"lib/index.js"}, .expect = "lib/index.js" },
-        .{ .json = "{\"main\":\"lib/\"}", .files = &.{"lib/index.js"}, .expect = "lib/index.js" },
-        .{ .json = "{\"main\":\".\"}", .files = &.{"index.js"}, .expect = "index.js" },
-        .{ .json = "{\"main\":\"\"}", .files = &.{"index.js"}, .expect = "index.js" },
-        .{ .json = "{\"main\":\"./\"}", .files = &.{"index.js"}, .expect = "index.js" },
-        .{ .json = "{\"main\":\"././\"}", .files = &.{"index.js"}, .expect = "index.js" },
+        .{ .json = "{\"main\":\"missing.js\"}", .files = &.{"index.js"}, .expect = &.{"index.js"} },
+        .{ .json = "{\"main\":5}", .files = &.{"index.js"}, .expect = &.{"index.js"} },
+        .{ .json = "{\"main\":\"lib\"}", .files = &.{"lib/index.js"}, .expect = &.{ "lib", "index.js" } },
+        .{ .json = "{\"main\":\"lib/\"}", .files = &.{"lib/index.js"}, .expect = &.{ "lib", "index.js" } },
+        .{ .json = "{\"main\":\".\"}", .files = &.{"index.js"}, .expect = &.{"index.js"} },
+        .{ .json = "{\"main\":\"\"}", .files = &.{"index.js"}, .expect = &.{"index.js"} },
+        .{ .json = "{\"main\":\"./\"}", .files = &.{"index.js"}, .expect = &.{"index.js"} },
+        .{ .json = "{\"main\":\"././\"}", .files = &.{"index.js"}, .expect = &.{"index.js"} },
         // 区切りのみの絶対 path も Node は index.js へフォールバックする。
-        .{ .json = "{\"main\":\"/\"}", .files = &.{"index.js"}, .expect = "index.js" },
-        .{ .json = "{\"main\":\"//\"}", .files = &.{"index.js"}, .expect = "index.js" },
+        .{ .json = "{\"main\":\"/\"}", .files = &.{"index.js"}, .expect = &.{"index.js"} },
+        .{ .json = "{\"main\":\"//\"}", .files = &.{"index.js"}, .expect = &.{"index.js"} },
         // 末尾 separator はディレクトリ指定。`lib.js` があっても `lib/` の
         // index.js を優先し、無ければ index.js へ落ちる（Node 実測）。
-        .{ .json = "{\"main\":\"lib/\"}", .files = &.{ "lib.js", "index.js" }, .expect = "index.js" },
-        .{ .json = "{\"main\":\"lib/main\"}", .files = &.{"lib/main.js"}, .expect = "lib/main.js" },
-        .{ .json = "{\"module\":\"missing.mjs\",\"main\":\"main.js\"}", .files = &.{"main.js"}, .expect = "main.js" },
-        .{ .json = "{\"module\":\"mjs\",\"main\":\"main.js\"}", .files = &.{"mjs/index.js"}, .expect = "mjs/index.js" },
+        .{ .json = "{\"main\":\"lib/\"}", .files = &.{ "lib.js", "index.js" }, .expect = &.{"index.js"} },
+        .{ .json = "{\"main\":\"lib/main\"}", .files = &.{"lib/main.js"}, .expect = &.{ "lib", "main.js" } },
+        .{ .json = "{\"module\":\"missing.mjs\",\"main\":\"main.js\"}", .files = &.{"main.js"}, .expect = &.{"main.js"} },
+        .{ .json = "{\"module\":\"mjs\",\"main\":\"main.js\"}", .files = &.{"mjs/index.js"}, .expect = &.{ "mjs", "index.js" } },
     };
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -120,14 +133,14 @@ test "resolveEntryInRoot は legacy main 解決で index.js へフォールバ�
         var dir_name_buf: [32]u8 = undefined;
         const dir_name = try std.fmt.bufPrint(&dir_name_buf, "pkg{d}", .{index});
         try tmp.dir.createDirPath(io, dir_name);
-        const pj_path = try std.fmt.allocPrint(gpa, "{s}/package.json", .{dir_name});
+        const pj_path = try std.fs.path.join(gpa, &.{ dir_name, "package.json" });
         defer gpa.free(pj_path);
         try tmp.dir.writeFile(io, .{ .sub_path = pj_path, .data = case.json });
         for (case.files) |file| {
-            const file_path = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ dir_name, file });
+            const file_path = try std.fs.path.join(gpa, &.{ dir_name, file });
             defer gpa.free(file_path);
-            if (std.mem.lastIndexOfScalar(u8, file_path, '/')) |slash| {
-                try tmp.dir.createDirPath(io, file_path[0..slash]);
+            if (std.fs.path.dirname(file_path)) |parent| {
+                try tmp.dir.createDirPath(io, parent);
             }
             try tmp.dir.writeFile(io, .{ .sub_path = file_path, .data = "export default 1;\n" });
         }
@@ -135,7 +148,7 @@ test "resolveEntryInRoot は legacy main 解決で index.js へフォールバ�
         defer gpa.free(root);
         const resolved = try resolveEntryInRoot(gpa, io, root);
         defer resolved.deinit(gpa);
-        try testing.expect(std.mem.endsWith(u8, resolved.path, case.expect));
+        try expectPathUnder(root, case.expect, resolved.path);
     }
 }
 
@@ -146,9 +159,9 @@ test "resolveEntryInRoot はディレクトリ候補の package.json main を読
     // 見るが、`<候補>/package.json` の main は再帰解決しない。
     // `main:"lib"` + `lib/package.json {"main":"deep.js"}` は
     // `lib/index.js`（存在すれば）を選び、無ければ root の index.js へ落ちる。
-    const cases = [_]struct { files: []const []const u8, expect: []const u8 }{
-        .{ .files = &.{ "lib/package.json", "lib/deep.js", "lib/index.js" }, .expect = "lib/index.js" },
-        .{ .files = &.{ "lib/package.json", "lib/deep.js" }, .expect = "index.js" },
+    const cases = [_]struct { files: []const []const u8, expect: []const []const u8 }{
+        .{ .files = &.{ "lib/package.json", "lib/deep.js", "lib/index.js" }, .expect = &.{ "lib", "index.js" } },
+        .{ .files = &.{ "lib/package.json", "lib/deep.js" }, .expect = &.{"index.js"} },
     };
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -156,17 +169,17 @@ test "resolveEntryInRoot はディレクトリ候補の package.json main を読
         var dir_name_buf: [32]u8 = undefined;
         const dir_name = try std.fmt.bufPrint(&dir_name_buf, "dirpj{d}", .{index});
         try tmp.dir.createDirPath(io, dir_name);
-        const pj_path = try std.fmt.allocPrint(gpa, "{s}/package.json", .{dir_name});
+        const pj_path = try std.fs.path.join(gpa, &.{ dir_name, "package.json" });
         defer gpa.free(pj_path);
         try tmp.dir.writeFile(io, .{ .sub_path = pj_path, .data = "{\"main\":\"lib\"}" });
-        const root_index_path = try std.fmt.allocPrint(gpa, "{s}/index.js", .{dir_name});
+        const root_index_path = try std.fs.path.join(gpa, &.{ dir_name, "index.js" });
         defer gpa.free(root_index_path);
         try tmp.dir.writeFile(io, .{ .sub_path = root_index_path, .data = "export default 3;\n" });
         for (case.files) |file| {
-            const file_path = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ dir_name, file });
+            const file_path = try std.fs.path.join(gpa, &.{ dir_name, file });
             defer gpa.free(file_path);
-            if (std.mem.lastIndexOfScalar(u8, file_path, '/')) |slash| {
-                try tmp.dir.createDirPath(io, file_path[0..slash]);
+            if (std.fs.path.dirname(file_path)) |parent| {
+                try tmp.dir.createDirPath(io, parent);
             }
             const body = if (std.mem.endsWith(u8, file, "package.json"))
                 "{\"main\":\"deep.js\"}"
@@ -178,7 +191,7 @@ test "resolveEntryInRoot はディレクトリ候補の package.json main を読
         defer gpa.free(root);
         const resolved = try resolveEntryInRoot(gpa, io, root);
         defer resolved.deinit(gpa);
-        try testing.expect(std.mem.endsWith(u8, resolved.path, case.expect));
+        try expectPathUnder(root, case.expect, resolved.path);
     }
 }
 
@@ -191,16 +204,16 @@ test "resolveEntryInRoot は main/module の末尾 separator 前の backslash �
         var dir_name_buf: [32]u8 = undefined;
         const dir_name = try std.fmt.bufPrint(&dir_name_buf, "bs{d}", .{index});
         try tmp.dir.createDirPath(io, dir_name);
-        const pj_path = try std.fmt.allocPrint(gpa, "{s}/package.json", .{dir_name});
+        const pj_path = try std.fs.path.join(gpa, &.{ dir_name, "package.json" });
         defer gpa.free(pj_path);
         try tmp.dir.writeFile(io, .{ .sub_path = pj_path, .data = json });
-        const lib_dir = try std.fmt.allocPrint(gpa, "{s}/lib", .{dir_name});
+        const lib_dir = try std.fs.path.join(gpa, &.{ dir_name, "lib" });
         defer gpa.free(lib_dir);
         try tmp.dir.createDirPath(io, lib_dir);
-        const lib_index = try std.fmt.allocPrint(gpa, "{s}/lib/index.js", .{dir_name});
+        const lib_index = try std.fs.path.join(gpa, &.{ lib_dir, "index.js" });
         defer gpa.free(lib_index);
         try tmp.dir.writeFile(io, .{ .sub_path = lib_index, .data = "export default 1;\n" });
-        const root_index = try std.fmt.allocPrint(gpa, "{s}/index.js", .{dir_name});
+        const root_index = try std.fs.path.join(gpa, &.{ dir_name, "index.js" });
         defer gpa.free(root_index);
         try tmp.dir.writeFile(io, .{ .sub_path = root_index, .data = "export default 2;\n" });
         const root = try tmp.dir.realPathFileAlloc(io, dir_name, gpa);
@@ -226,14 +239,14 @@ test "resolveEntryInRoot の index.js フォールバックは厳密 path だけ
         var dir_name_buf: [32]u8 = undefined;
         const dir_name = try std.fmt.bufPrint(&dir_name_buf, "idx{d}", .{index});
         try tmp.dir.createDirPath(io, dir_name);
-        const pj_path = try std.fmt.allocPrint(gpa, "{s}/package.json", .{dir_name});
+        const pj_path = try std.fs.path.join(gpa, &.{ dir_name, "package.json" });
         defer gpa.free(pj_path);
         try tmp.dir.writeFile(io, .{ .sub_path = pj_path, .data = "{}" });
         for (case.files) |file| {
-            const file_path = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ dir_name, file });
+            const file_path = try std.fs.path.join(gpa, &.{ dir_name, file });
             defer gpa.free(file_path);
-            if (std.mem.lastIndexOfScalar(u8, file_path, '/')) |slash| {
-                try tmp.dir.createDirPath(io, file_path[0..slash]);
+            if (std.fs.path.dirname(file_path)) |parent| {
+                try tmp.dir.createDirPath(io, parent);
             }
             try tmp.dir.writeFile(io, .{ .sub_path = file_path, .data = "export default 1;\n" });
         }
@@ -244,7 +257,7 @@ test "resolveEntryInRoot の index.js フォールバックは厳密 path だけ
         } else {
             const resolved = try resolveEntryInRoot(gpa, io, root);
             defer resolved.deinit(gpa);
-            try testing.expect(std.mem.endsWith(u8, resolved.path, "index.js"));
+            try expectPathUnder(root, &.{"index.js"}, resolved.path);
         }
     }
 }
@@ -269,10 +282,10 @@ test "resolveEntryInRoot は lnako 拡張として .mjs を補完する（Node �
     // Node 24.21.0 / 26.13.0 実測: legacy main の拡張補完は .js/.json/.node のみで、
     // `.mjs` と `<候補>/index.mjs` は試行しない（ERR_MODULE_NOT_FOUND）。
     // lnako は ESM 専用の意図的拡張として .mjs も補完する（docs/TODO.md）。
-    const Case = struct { json: []const u8, files: []const []const u8, expect: []const u8 };
+    const Case = struct { json: []const u8, files: []const []const u8, expect: []const []const u8 };
     const cases = [_]Case{
-        .{ .json = "{\"main\":\"lib/main\"}", .files = &.{"lib/main.mjs"}, .expect = "lib/main.mjs" },
-        .{ .json = "{\"main\":\"lib\"}", .files = &.{"lib/index.mjs"}, .expect = "lib/index.mjs" },
+        .{ .json = "{\"main\":\"lib/main\"}", .files = &.{"lib/main.mjs"}, .expect = &.{ "lib", "main.mjs" } },
+        .{ .json = "{\"main\":\"lib\"}", .files = &.{"lib/index.mjs"}, .expect = &.{ "lib", "index.mjs" } },
     };
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -280,14 +293,14 @@ test "resolveEntryInRoot は lnako 拡張として .mjs を補完する（Node �
         var dir_name_buf: [32]u8 = undefined;
         const dir_name = try std.fmt.bufPrint(&dir_name_buf, "mjs{d}", .{index});
         try tmp.dir.createDirPath(io, dir_name);
-        const pj_path = try std.fmt.allocPrint(gpa, "{s}/package.json", .{dir_name});
+        const pj_path = try std.fs.path.join(gpa, &.{ dir_name, "package.json" });
         defer gpa.free(pj_path);
         try tmp.dir.writeFile(io, .{ .sub_path = pj_path, .data = case.json });
         for (case.files) |file| {
-            const file_path = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ dir_name, file });
+            const file_path = try std.fs.path.join(gpa, &.{ dir_name, file });
             defer gpa.free(file_path);
-            if (std.mem.lastIndexOfScalar(u8, file_path, '/')) |slash| {
-                try tmp.dir.createDirPath(io, file_path[0..slash]);
+            if (std.fs.path.dirname(file_path)) |parent| {
+                try tmp.dir.createDirPath(io, parent);
             }
             try tmp.dir.writeFile(io, .{ .sub_path = file_path, .data = "export default 1;\n" });
         }
@@ -295,7 +308,7 @@ test "resolveEntryInRoot は lnako 拡張として .mjs を補完する（Node �
         defer gpa.free(root);
         const resolved = try resolveEntryInRoot(gpa, io, root);
         defer resolved.deinit(gpa);
-        try testing.expect(std.mem.endsWith(u8, resolved.path, case.expect));
+        try expectPathUnder(root, case.expect, resolved.path);
     }
 }
 

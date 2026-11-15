@@ -22,6 +22,16 @@ const parseBareSpecifier = npm_esm.parseBareSpecifier;
 /// テスト用 fixture の追加ファイル。
 const TestFile = struct { path: []const u8, data: []const u8 };
 
+/// `parts` を `std.fs.path.join` で連結した期待 path と `actual` を比較する。
+/// 解決結果は realpath で canonicalize されるため、Windows では区切りが
+/// `\` になる。固定 `/` の suffix 比較ではなく platform の区切りで組み立てて
+/// 厳密に比較する。
+fn expectJoinedPath(parts: []const []const u8, actual: []const u8) !void {
+    const expected = try std.fs.path.join(testing.allocator, parts);
+    defer testing.allocator.free(expected);
+    try testing.expectEqualStrings(expected, actual);
+}
+
 /// テスト用: `dir/package.json` と追加ファイルを作り registry へ登録する。
 /// `create_root_index` が false の fixture は root 入口を持たない package に
 /// なる（exports がサブパスのみを公開する package など）。
@@ -47,8 +57,8 @@ fn makeTestRegistryWithRoot(
     for (files) |f| {
         const path = try std.fs.path.join(gpa, &.{ dir, f.path });
         defer gpa.free(path);
-        if (std.mem.lastIndexOfScalar(u8, path, '/')) |slash| {
-            try tmp.dir.createDirPath(io, path[0..slash]);
+        if (std.fs.path.dirname(path)) |parent| {
+            try tmp.dir.createDirPath(io, parent);
         }
         try tmp.dir.writeFile(io, .{ .sub_path = path, .data = f.data });
     }
@@ -93,8 +103,8 @@ test "BareRegistry resolveBare exports subpath" {
 
     const got = try reg.resolveBare("left-pad/sub");
     defer got.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, got.path, "dist/sub.mjs"));
-    try testing.expect(std.mem.endsWith(u8, got.package_root, "pkg"));
+    try expectJoinedPath(&.{ got.package_root, "dist", "sub.mjs" }, got.path);
+    try testing.expectEqualStrings("pkg", std.fs.path.basename(got.package_root));
 }
 
 test "BareRegistry resolveBare scoped exports subpath" {
@@ -112,7 +122,7 @@ test "BareRegistry resolveBare scoped exports subpath" {
 
     const got = try reg.resolveBare("@scope/pkg/client");
     defer got.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, got.path, "dist/client.mjs"));
+    try expectJoinedPath(&.{ got.package_root, "dist", "client.mjs" }, got.path);
     // 公開キーに一致しない深いサブパスは非公開。
     try testing.expectError(error.BareNotFound, reg.resolveBare("@scope/pkg/client/deep"));
 }
@@ -139,11 +149,11 @@ test "BareRegistry resolveBare subpath condition import then default" {
 
     const cond = try reg.resolveBare("left-pad/cond");
     defer cond.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, cond.path, "esm.mjs"));
+    try expectJoinedPath(&.{ cond.package_root, "esm.mjs" }, cond.path);
 
     const def = try reg.resolveBare("left-pad/default-only");
     defer def.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, def.path, "default.js"));
+    try expectJoinedPath(&.{ def.package_root, "default.js" }, def.path);
 
     // node 条件は暗黙に有効化しない。
     try testing.expectError(error.BareNotFound, reg.resolveBare("left-pad/node-only"));
@@ -256,8 +266,8 @@ test "BareRegistry resolveBare keeps root entry with subpath exports" {
 
     const root = try reg.resolveBare("left-pad");
     defer root.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, root.path, "esm.mjs"));
-    try testing.expect(std.mem.endsWith(u8, root.package_root, "pkg"));
+    try expectJoinedPath(&.{ root.package_root, "esm.mjs" }, root.path);
+    try testing.expectEqualStrings("pkg", std.fs.path.basename(root.package_root));
 }
 
 test "BareRegistry resolveBare wildcard subpath" {
@@ -276,12 +286,12 @@ test "BareRegistry resolveBare wildcard subpath" {
 
     const foo = try reg.resolveBare("left-pad/foo");
     defer foo.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, foo.path, "src/foo.mjs"));
+    try expectJoinedPath(&.{ foo.package_root, "src", "foo.mjs" }, foo.path);
 
     // 具体的な prefix のパターンを優先する。
     const bar = try reg.resolveBare("left-pad/features/bar");
     defer bar.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, bar.path, "feat/bar.mjs"));
+    try expectJoinedPath(&.{ bar.package_root, "feat", "bar.mjs" }, bar.path);
 }
 
 test "BareRegistry resolveBare array fallback" {
@@ -299,7 +309,7 @@ test "BareRegistry resolveBare array fallback" {
 
     const got = try reg.resolveBare("left-pad/sub");
     defer got.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, got.path, "esm.mjs"));
+    try expectJoinedPath(&.{ got.package_root, "esm.mjs" }, got.path);
 }
 
 test "BareRegistry resolveBare rejects backslash specifier" {
@@ -341,7 +351,7 @@ test "BareRegistry resolveBare wildcard boundaries" {
     // wildcard は複数セグメントにも一致し、target の `*` を置換する。
     const deep = try reg.resolveBare("left-pad/features/a/b");
     defer deep.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, deep.path, "feat/a/b.mjs"));
+    try expectJoinedPath(&.{ deep.package_root, "feat", "a", "b.mjs" }, deep.path);
 
     // trailing slash target（空セグメント）は不正な target。
     try testing.expectError(error.PackageJsonInvalid, reg.resolveBare("left-pad/slash"));
@@ -371,7 +381,7 @@ test "BareRegistry resolveBare wildcard requires one character (M1 example 1)" {
     try testing.expectError(error.BareNotFound, reg.resolveBare("left-pad/foo"));
     const bar = try reg.resolveBare("left-pad/foobar");
     defer bar.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, bar.path, "foobar.js"));
+    try expectJoinedPath(&.{ bar.package_root, "foobar.js" }, bar.path);
 }
 
 test "BareRegistry resolveBare wildcard does not hide on empty match (M1 example 2)" {
@@ -390,7 +400,7 @@ test "BareRegistry resolveBare wildcard does not hide on empty match (M1 example
     // 空マッチした `private*` が prefix 最長として選ばれてはならない。
     const priv = try reg.resolveBare("left-pad/features/private");
     defer priv.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, priv.path, "src/private.js"));
+    try expectJoinedPath(&.{ priv.package_root, "src", "private.js" }, priv.path);
     // 1 文字以上マッチするなら null target が勝って非公開になる。
     try testing.expectError(error.BareNotFound, reg.resolveBare("left-pad/features/privatex"));
 }
@@ -412,7 +422,7 @@ test "BareRegistry resolveBare wildcard prefix tie prefers longer key" {
     // prefix 長が同じなら key が長い `./feat*x` が勝つ（Node の patternKeyCompare）。
     const got = try reg.resolveBare("left-pad/featabx");
     defer got.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, got.path, "specific/ab.mjs"));
+    try expectJoinedPath(&.{ got.package_root, "specific", "ab.mjs" }, got.path);
 }
 
 test "BareRegistry resolveBare substitutes every star in target" {
@@ -430,7 +440,7 @@ test "BareRegistry resolveBare substitutes every star in target" {
 
     const got = try reg.resolveBare("left-pad/f/a");
     defer got.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, got.path, "x/a/a.mjs"));
+    try expectJoinedPath(&.{ got.package_root, "x", "a", "a.mjs" }, got.path);
 }
 
 test "BareRegistry resolveBare conditions follow insertion order" {
@@ -450,7 +460,7 @@ test "BareRegistry resolveBare conditions follow insertion order" {
     // `import` を固定優先せず、object の挿入順で最初の一致を使う。
     const got = try reg.resolveBare("left-pad/cond");
     defer got.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, got.path, "a.js"));
+    try expectJoinedPath(&.{ got.package_root, "a.js" }, got.path);
 }
 
 test "BareRegistry resolveBare null condition stops lookup" {
@@ -486,7 +496,7 @@ test "BareRegistry resolveBare array fallback skips invalid targets" {
     // 不正な候補は飛ばして次の候補を使う（Node の配列 fallback）。
     const ok = try reg.resolveBare("left-pad/sub");
     defer ok.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, ok.path, "ok.mjs"));
+    try expectJoinedPath(&.{ ok.package_root, "ok.mjs" }, ok.path);
     // 全候補が不正なら「未公開」ではなく package.json 不正として分類する。
     try testing.expectError(error.PackageJsonInvalid, reg.resolveBare("left-pad/bad"));
 }
@@ -574,7 +584,7 @@ test "BareRegistry resolveBare array index boundary keys" {
     try testing.expectError(error.PackageJsonInvalid, reg.resolveBare("left-pad/max"));
     const over = try reg.resolveBare("left-pad/over");
     defer over.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, over.path, "x.js"));
+    try expectJoinedPath(&.{ over.package_root, "x.js" }, over.path);
 }
 
 test "BareRegistry resolveBare duplicate keys use last value" {
@@ -594,7 +604,7 @@ test "BareRegistry resolveBare duplicate keys use last value" {
     // JS の JSON.parse と同じく後勝ち（Node 実測: b.js）。
     const got = try reg.resolveBare("left-pad/sub");
     defer got.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, got.path, "b.js"));
+    try expectJoinedPath(&.{ got.package_root, "b.js" }, got.path);
 }
 
 test "BareRegistry resolveBare array last exception decides" {
@@ -648,7 +658,7 @@ test "BareRegistry resolveBare array skips scalar but not numeric key error" {
     // スカラー target は配列で飛ばす（Node: ERR_INVALID_PACKAGE_TARGET → continue）。
     const scalar = try reg.resolveBare("left-pad/scalar");
     defer scalar.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, scalar.path, "x.js"));
+    try expectJoinedPath(&.{ scalar.package_root, "x.js" }, scalar.path);
     // 数値キーは package.json 不正で、配列でも飛ばさない。
     try testing.expectError(error.PackageJsonInvalid, reg.resolveBare("left-pad/numeric"));
 }
@@ -687,7 +697,7 @@ test "BareRegistry resolveBare keeps longer prefix key seen first" {
     // 長いキーが先に出てきても、後の短いキーで上書きしない。
     const got = try reg.resolveBare("left-pad/featabx");
     defer got.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, got.path, "specific/ab.mjs"));
+    try expectJoinedPath(&.{ got.package_root, "specific", "ab.mjs" }, got.path);
 }
 
 test "BareRegistry resolveBare root-less fixture without index.js" {
@@ -706,7 +716,7 @@ test "BareRegistry resolveBare root-less fixture without index.js" {
 
     const app = try reg.resolveBare("left-pad/app");
     defer app.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, app.path, "app.mjs"));
+    try expectJoinedPath(&.{ app.package_root, "app.mjs" }, app.path);
     try testing.expectError(error.BareNotFound, reg.resolveBare("left-pad"));
 }
 
@@ -834,7 +844,7 @@ test "BareRegistry resolveBare top-level conditions exports" {
 
     const root = try reg.resolveBare("left-pad");
     defer root.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, root.path, "esm.mjs"));
+    try expectJoinedPath(&.{ root.package_root, "esm.mjs" }, root.path);
     // 条件オブジェクトは root 専用で、サブパスは公開されない。
     try testing.expectError(error.BareNotFound, reg.resolveBare("left-pad/sub"));
 }
@@ -865,7 +875,7 @@ test "BareRegistry resolveBare without exports resolves legacy subpath" {
     const expected_mjs = try std.fs.path.join(gpa, &.{ mjs.package_root, "sub.mjs" });
     defer gpa.free(expected_mjs);
     try testing.expectEqualStrings(expected_mjs, mjs.path);
-    try testing.expect(std.mem.endsWith(u8, mjs.package_root, "pkg"));
+    try testing.expectEqualStrings("pkg", std.fs.path.basename(mjs.package_root));
 
     const nested = try reg.resolveBare("left-pad/lib/sub.js");
     defer nested.deinit(gpa);
@@ -923,7 +933,7 @@ test "BareRegistry resolveBare treats scalar exports as absent for legacy subpat
 
         const got = try reg.resolveBare("left-pad/sub.mjs");
         defer got.deinit(gpa);
-        try testing.expect(std.mem.endsWith(u8, got.path, "sub.mjs"));
+        try expectJoinedPath(&.{ got.package_root, "sub.mjs" }, got.path);
     }
 }
 
@@ -1033,7 +1043,7 @@ test "BareRegistry resolveBare nested unresolved condition falls through" {
     // 一致した `import` の値が未解決なら、挿入順で次の一致キー（default）へ進む。
     const got = try reg.resolveBare("left-pad/sub");
     defer got.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, got.path, "y.js"));
+    try expectJoinedPath(&.{ got.package_root, "y.js" }, got.path);
 }
 
 test "BareRegistry resolveBare は * 入り specifier をパターンとして解決する" {
@@ -1050,7 +1060,7 @@ test "BareRegistry resolveBare は * 入り specifier をパターンとして�
     defer reg.deinit();
     const got = try reg.resolveBare("left-pad/a*b");
     defer got.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, got.path, "literal.mjs"));
+    try expectJoinedPath(&.{ got.package_root, "literal.mjs" }, got.path);
 }
 
 test "BareRegistry resolveBare は選択パターンの不正 target を他パターンへ fallback しない" {
@@ -1097,7 +1107,7 @@ test "resolveEntryInRoot canonicalizes package_root through a symlink" {
     const resolved = try resolveEntryInRoot(gpa, io, link_root);
     defer resolved.deinit(gpa);
     try testing.expectEqualStrings(canonical_root, resolved.package_root);
-    try testing.expect(std.mem.endsWith(u8, resolved.path, "index.js"));
+    try expectJoinedPath(&.{ canonical_root, "index.js" }, resolved.path);
     try testing.expectEqualStrings(canonical_root, std.fs.path.dirname(resolved.path).?);
 }
 
