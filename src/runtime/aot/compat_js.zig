@@ -63,6 +63,7 @@ pub extern fn lnako_qjs_boolean(engine: *Engine, value: c_int) ?*RawValue;
 pub extern fn lnako_qjs_number(engine: *Engine, value: f64) ?*RawValue;
 pub extern fn lnako_qjs_string(engine: *Engine, value: [*]const u8, length: usize) ?*RawValue;
 pub extern fn lnako_qjs_bigint(engine: *Engine, decimal: [*]const u8, length: usize) ?*RawValue;
+pub extern fn lnako_qjs_host_function(engine: *Engine, function_id: usize, name: [*:0]const u8) ?*RawValue;
 pub extern fn lnako_qjs_array(engine: *Engine) ?*RawValue;
 pub extern fn lnako_qjs_object(engine: *Engine) ?*RawValue;
 pub extern fn lnako_qjs_set_index(value: *RawValue, index: u32, item: *const RawValue) c_int;
@@ -105,8 +106,121 @@ fn hostSet(_: *anyopaque, _: [*:0]const u8, _: *const RawValue) callconv(.c) c_i
     return -1;
 }
 
-fn hostInvoke(_: *anyopaque, _: usize, _: [*c]const *const RawValue, _: usize) callconv(.c) ?*RawValue {
-    return null;
+fn hostInvoke(_: *anyopaque, function_id: usize, raw_arguments: [*c]const *const RawValue, count: usize) callconv(.c) ?*RawValue {
+    const runtime = if (state.active_runtime) |*active| active else return null;
+    if (host_runtime != runtime or function_id >= host_functions.items.len) return null;
+    const engine_value = engine orelse return null;
+    if (count != 0 and raw_arguments == null) return null;
+    const had_pending = runtime.has_pending_exception;
+    var result_roots = [_]Value{ host_functions.items[function_id], .{} };
+    var result_frame: state.RootFrame = .{};
+    runtime.pushRoots(&result_frame, &result_roots, result_roots.len);
+    defer runtime.popRoots(&result_frame);
+    const arguments = runtime.allocator.alloc(Value, count) catch {
+        clearNewPendingException(runtime, had_pending);
+        return null;
+    };
+    defer runtime.allocator.free(arguments);
+    @memset(arguments, .{});
+    var arguments_frame: state.RootFrame = .{};
+    runtime.pushRoots(&arguments_frame, if (arguments.len == 0) null else arguments.ptr, arguments.len);
+    defer runtime.popRoots(&arguments_frame);
+    for (0..count) |index| {
+        const owned = lnako_qjs_dup(raw_arguments[index]) orelse {
+            clearNewPendingException(runtime, had_pending);
+            return null;
+        };
+        arguments[index] = compat_js_result.jsEvalResult(runtime, owned) catch {
+            clearNewPendingException(runtime, had_pending);
+            return null;
+        };
+    }
+    functions.lnako_aot_function_call(&result_roots[1], &result_roots[0], if (arguments.len == 0) null else arguments.ptr, arguments.len);
+    if (!had_pending and runtime.has_pending_exception) {
+        // Nako callback が失敗した。null を返すと QuickJS が InternalError へ
+        // 変換するため、JS 側の try/catch で捕捉できる。Nako の未捕捉例外は
+        // ここで解消し、JS が捕捉しなかった場合だけ呼出し元の `fail` が報告する。
+        runtime.has_pending_exception = false;
+        runtime.pending_exception = .{};
+        return null;
+    }
+    // callback 内で変更された配列・辞書を JS へ書き戻す（interpreter の
+    // hostCall と同じく、実引数を同期してから戻り値を変換する）。
+    // full_values で BigInt・bytes・Nako 関数も往復させる。
+    var sync = compat_js_result.SyncState{ .full_values = true };
+    defer sync.deinit(runtime.allocator);
+    for (arguments) |argument| {
+        const raw = compat_js_result.syncValueRaw(runtime, engine_value, argument, &sync, 0) catch {
+            clearNewPendingException(runtime, had_pending);
+            return null;
+        };
+        lnako_qjs_value_free(raw);
+    }
+    return compat_js_result.syncValueRaw(runtime, engine_value, result_roots[1], &sync, 0) catch {
+        clearNewPendingException(runtime, had_pending);
+        return null;
+    };
+}
+
+// Nako→JS callback の host 関数テーブル。`hostFunction` が JS へ渡した Nako
+// 関数を ID で保持し、QuickJS の C 関数から `hostInvoke` で呼び戻す。capture を
+// 含む Value は runtime の GC root ではないため `compatTrace` で mark し、
+// runtime 終了時（`compatDeinit`）と `lnako_aot_compat_deinit` の両方から
+// テーブルを解除する（どちらが先でもリーク・二重解放しない）。
+var host_functions: std.ArrayListUnmanaged(Value) = .empty;
+var host_runtime: ?*state.Runtime = null;
+var host_allocator: ?std.mem.Allocator = null;
+
+fn deinitHostFunctions() void {
+    if (host_allocator) |allocator| host_functions.deinit(allocator);
+    host_functions = .empty;
+    host_runtime = null;
+    host_allocator = null;
+}
+
+fn compatTrace(rt: *state.Runtime) void {
+    if (host_runtime == rt) for (host_functions.items) |value| rt.markValue(value);
+}
+
+fn compatDeinit(rt: *state.Runtime) void {
+    if (host_runtime == rt) {
+        deinitHostFunctions();
+        rt.compat_trace = null;
+        rt.compat_deinit = null;
+    }
+}
+
+/// Nako 関数・クロージャを QuickJS の C 関数値へ変換する。同じ
+/// `*state.Object` は同じ関数 ID を再利用し、別 Object（クロージャ）は別 ID
+/// として登録する。
+pub fn hostFunction(runtime: *state.Runtime, engine_value: *Engine, value: Value) !*RawValue {
+    if (@as(Tag, @fromBackingInt(value.tag)) != .function) return error.QuickJsUnsupportedArgument;
+    const object = value.object() orelse return error.QuickJsUnsupportedArgument;
+    // 別 runtime の残留エントリは前の runtime の Object を指すため、登録前に破棄する。
+    if (host_runtime != null and host_runtime != runtime) deinitHostFunctions();
+    host_runtime = runtime;
+    host_allocator = runtime.allocator;
+    runtime.compat_trace = compatTrace;
+    runtime.compat_deinit = compatDeinit;
+    var function_id: usize = 0;
+    while (function_id < host_functions.items.len) : (function_id += 1) {
+        const candidate = host_functions.items[function_id];
+        if (@as(Tag, @fromBackingInt(candidate.tag)) == .function and candidate.object() == object) break;
+    }
+    if (function_id == host_functions.items.len) try host_functions.append(runtime.allocator, value);
+    // QuickJS の C 関数名は NUL 終端。NUL を含む名前はそこで切って安全に渡す。
+    const source_name = object.payload.function.name;
+    const name = if (std.mem.indexOfScalar(u8, source_name, 0)) |end| source_name[0..end] else source_name;
+    const name_z = try runtime.allocator.dupeSentinel(u8, name, 0);
+    defer runtime.allocator.free(name_z);
+    return lnako_qjs_host_function(engine_value, function_id, name_z.ptr) orelse error.OutOfMemory;
+}
+
+fn clearNewPendingException(runtime: *state.Runtime, had_pending: bool) void {
+    if (!had_pending and runtime.has_pending_exception) {
+        runtime.has_pending_exception = false;
+        runtime.pending_exception = .{};
+    }
 }
 
 fn hostExec(_: *anyopaque, _: [*:0]const u8, _: [*c]const *const RawValue, _: usize) callconv(.c) ?*RawValue {
@@ -955,6 +1069,13 @@ pub export fn lnako_aot_compat_esm_register(manifest: ?[*]const u8, length: usiz
 /// プロセス終了時にQuickJS engineを解放する。生成物のmainがruntime deinitの
 /// 直前に呼ぶ。
 pub export fn lnako_aot_compat_deinit() callconv(.c) void {
+    // runtime.deinit() が先でも後でも、GC hook と host 関数テーブルを確実に
+    // 解除してから engine を解放する。
+    if (host_runtime) |runtime| {
+        runtime.compat_trace = null;
+        runtime.compat_deinit = null;
+    }
+    deinitHostFunctions();
     if (engine) |value| {
         lnako_qjs_release(value);
         engine = null;

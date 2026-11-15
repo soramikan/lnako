@@ -1,0 +1,29 @@
+# Nako→JS callback（hostFunction / hostInvoke）の最小スライス。
+# NakoクロージャをJS関数値へ直接・辞書・配列で渡し、Promise.then と
+# GC誘発ループを挟んでも capture が更新されることを、
+# tools/check_aot_quickjs_separation.mjs が AOT/interpreter の完全一致で確認する。
+COUNT=0
+CB=関数(V)
+  COUNT=COUNT+1
+  それはV+COUNT
+ここまで
+# JS関数値の直接呼出し（Nako→JSのhost関数テーブルへクロージャを登録）。
+CALL=JS実行(『(cb)=>{const a=cb(10);const b=cb(20);return a+b;}』)
+CALL(CB)を表示
+COUNTを表示
+# 辞書 `{cb: fn}` の中のNakoクロージャ。
+NEST=JS実行(『(o)=>{const a=o.cb(1);const b=o.cb(2);return a+b;}』)
+NEST({cb:CB})を表示
+COUNTを表示
+# 配列 `[fn]` の中のNakoクロージャ。
+ARR=JS実行(『(a)=>{const x=a[0](5);const y=a[0](6);return x+y;}』)
+ARR([CB])を表示
+COUNTを表示
+# Promise.resolve().then(...) の microtask 経由で呼ばれるNako callback。
+SAVED=JS実行(『(cb)=>{globalThis.__nako_cb=cb;return 0;}』)
+SAVED(CB)
+JS関数実行(『()=>Promise.resolve(10).then(globalThis.__nako_cb)』, [])を表示
+COUNTを表示
+# JS側で大量にオブジェクトを作ってGCを誘発してから、保存済みcallbackを呼ぶ。
+JS関数実行(『()=>{for(let i=0;i<20000;i++){globalThis.__junk=[{i},new Array(16).fill(i)]}return globalThis.__nako_cb(7)}』, [])を表示
+COUNTを表示

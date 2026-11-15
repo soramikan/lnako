@@ -1,0 +1,36 @@
+# Nako→JS callback の値往復（BigInt・循環オブジェクト・配列/辞書）。
+# `JS実行` が返した JS 関数値・BigInt・循環オブジェクト・配列/辞書を
+# Nako クロージャへ渡し、Nako 側の変更が JS へ、JS 側の変更が Nako へ
+# 戻ることを tools/check_aot_quickjs_separation.mjs が AOT/interpreter の
+# 完全一致で確認する。
+B=JS実行("9007199254740993n")
+ADD=JS実行("(x)=>x+1n")
+ADD(B)を表示
+# 循環するJSオブジェクトをNako callbackで変更し、循環を保ったまま戻す。
+OBJ=JS実行(『(()=>{const o={n:1};o.self=o;return o})()』)
+MUT=JS実行(『(o,cb)=>{cb(o);return o.n;}』)
+MCB=関数(O)
+  O["n"]=42
+  それは0
+ここまで
+MUT(OBJ,MCB)を表示
+JS関数実行("o=>o.self===o",[OBJ])を表示
+# Nako配列/辞書をNako callbackで変更し、JS側の観測へ反映する。
+ARR=[1]
+DICT={x:1}
+MUT2=JS実行(『(a,o,cb)=>{cb(a,o);return [a.length,o.x];}』)
+MCB2=関数(A,O)
+  A[1]=99
+  O["x"]=42
+  それは0
+ここまで
+MUT2(ARR,DICT,MCB2)を表示
+ARRを表示
+DICTを表示
+# `JS実行` が返したexternalな配列・辞書もNako callbackへ渡して変更できる。
+JARR=JS実行("[1,2]")
+JDICT=JS実行(『({x:1})』)
+MUT3=JS実行(『(a,o,cb)=>{cb(a,o);return [a[0],o.x];}』)
+MUT3(JARR,JDICT,MCB2)を表示
+JARRを表示
+JDICTを表示
