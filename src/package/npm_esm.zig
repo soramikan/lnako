@@ -13,8 +13,18 @@
 //! フォールバックしない（作者が root を隠せる）。`exports` が無い package は
 //! `module` → `main` → `index.js` の順に候補を選び、候補のファイルが無ければ
 //! Node の legacy main 解決と同じく次の候補（最終的に `index.js`）へ進む。
-//! ただし Node の「`exports` 無し package の `name/sub` 従来解決」は実装して
-//! おらず、`BareNotFound` として拒否する（安全側。docs/TODO.md に記録）。
+//! `exports` が無い（または string / array / object 以外の）package の
+//! `name/sub` は、Node の ESM と同じく `<package_root>/<sub>` の厳密 path
+//! として解決する（拡張子補完・`<sub>/index.js` フォールバックはしない）。
+//!
+//! `package_root` は解決の先頭で realpath へ canonicalize し、入口ファイルも
+//! `realPathFileAlloc` 後に canonical root の直系の子孫であることを確認する。
+//! symlink で root 外へ脱出する入口は fail-closed で拒否する。
+//!
+//! registry（`BareRegistry` / `npm_resolver.Prepared`）は入口を構築時に
+//! 確定せず、bare name の要求時に遅延解決する。これにより root target の
+//! `EntryNotFound` / `PackageJsonInvalid` / `BareNotFound`（非公開）を Node の
+//! import 解決と同じ分類で返せる。
 //!
 //! module_graph は層境界のためここを直接 import せず、`NpmModuleResolver`
 //! コールバック経由で利用する。
@@ -421,11 +431,51 @@ fn readPackageJson(gpa: Allocator, io: std.Io, package_root_abs: []const u8) Err
 /// （Node 24.21.0 / 26.13.0 実測: `main` 欠落・ディレクトリ・`.`・空文字の
 /// いずれも最終的に `index.js` へ到達する）。`.mjs` 補完だけは Node に無い
 /// lnako の意図的拡張（docs/TODO.md）。
+///
+/// `package_root_abs` は realpath へ canonicalize してから使う（symlink を
+/// 含む root でも `module_graph` の realpath 比較と同じ座標系になる）。
+/// 入口ファイルが symlink で canonical root の外を指す場合は
+/// `PackageJsonInvalid` で fail-closed にする。
 pub fn resolveEntryInRoot(gpa: Allocator, io: std.Io, package_root_abs: []const u8) Error!ResolvedEntry {
-    const root = try gpa.dupe(u8, package_root_abs);
+    return resolveEntryInRootWith(gpa, io, package_root_abs, .direct);
+}
+
+/// root 入口解決の文脈。`exports` が `"."` を公開しない場合の分類だけが
+/// 異なる（Node の import 解決では `ERR_PACKAGE_PATH_NOT_EXPORTED` に相当する
+/// `BareNotFound`、入口検査 API の直接利用では入口不在の `EntryNotFound`）。
+const RootResolutionContext = enum {
+    /// `resolveEntryInRoot` の直接利用。既存の呼出し契約を保つ。
+    direct,
+    /// registry に登録済みの package root からの遅延解決
+    /// （`resolveEntryForBare`）。
+    registry,
+};
+
+fn resolveEntryInRootWith(
+    gpa: Allocator,
+    io: std.Io,
+    package_root_abs: []const u8,
+    context: RootResolutionContext,
+) Error!ResolvedEntry {
+    // registry 経由（bare name の import 解決）では、package root や
+    // `package.json` が消えた場合も Node の ERR_MODULE_NOT_FOUND に合わせて
+    // `BareNotFound` にする。直接利用 API は診断用の分類をそのまま返す。
+    const root = canonicalizePackageRoot(gpa, io, package_root_abs) catch |err| switch (err) {
+        error.PackageJsonMissing => switch (context) {
+            .direct => return error.PackageJsonMissing,
+            .registry => return error.BareNotFound,
+        },
+        else => return err,
+    };
     errdefer gpa.free(root);
 
-    const pj_bytes = try readPackageJson(gpa, io, root);
+    const pj_bytes = readPackageJson(gpa, io, root) catch |err| switch (err) {
+        error.PackageJsonMissing => switch (context) {
+            .direct => return error.PackageJsonMissing,
+            .registry => return error.BareNotFound,
+        },
+        else => return err,
+    };
     defer gpa.free(pj_bytes);
 
     var manifest = try package_json_mod.parse(gpa, pj_bytes);
@@ -434,7 +484,10 @@ pub fn resolveEntryInRoot(gpa: Allocator, io: std.Io, package_root_abs: []const 
     if (manifest.exports) |exports_v| {
         const picked = switch (try resolveExportsRoot(gpa, exports_v)) {
             .target => |target| target,
-            .excluded, .unresolved => return error.EntryNotFound,
+            .excluded, .unresolved => return switch (context) {
+                .direct => error.EntryNotFound,
+                .registry => error.BareNotFound,
+            },
             .invalid => return error.PackageJsonInvalid,
         };
         defer gpa.free(picked);
@@ -445,12 +498,12 @@ pub fn resolveEntryInRoot(gpa: Allocator, io: std.Io, package_root_abs: []const 
         // legacy main の同じ検査（PackageJsonInvalid）と分類を揃える。
         if (!entryPathIsContained(cleaned)) return error.PackageJsonInvalid;
         const abs = try std.fs.path.join(gpa, &.{ root, cleaned });
+        defer gpa.free(abs);
         // exports の target は拡張子補完しない（Node の exports と同じく厳密 path）。
-        if (!fileExists(io, abs)) {
-            gpa.free(abs);
-            return error.EntryNotFound;
-        }
-        return .{ .path = abs, .package_root = root };
+        if (!fileExists(io, abs)) return error.EntryNotFound;
+        // symlink が canonical root の外を指すなら fail-closed。
+        const canonical = (try canonicalEntryPath(gpa, io, root, abs)) orelse return error.PackageJsonInvalid;
+        return .{ .path = canonical, .package_root = root };
     }
 
     // exports が無い package。`module` は Node が読まない lnako の ESM 入口
@@ -465,11 +518,10 @@ pub fn resolveEntryInRoot(gpa: Allocator, io: std.Io, package_root_abs: []const 
     // （`index.js.js` や `index.js/index.js` のような拡張子・ディレクトリ
     // 補完はしない）。
     const index_path = try std.fmt.allocPrint(gpa, "{s}/index.js", .{root});
-    if (!fileExists(io, index_path)) {
-        gpa.free(index_path);
-        return error.EntryNotFound;
-    }
-    return .{ .path = index_path, .package_root = root };
+    defer gpa.free(index_path);
+    if (!fileExists(io, index_path)) return error.EntryNotFound;
+    const canonical = (try canonicalEntryPath(gpa, io, root, index_path)) orelse return error.PackageJsonInvalid;
+    return .{ .path = canonical, .package_root = root };
 }
 
 /// `module` / `main` 候補を legacy main 解決の順で探す:
@@ -483,7 +535,9 @@ pub fn resolveEntryInRoot(gpa: Allocator, io: std.Io, package_root_abs: []const 
 /// 候補が無ければ null を返し、呼び出し側は次の優先候補へ進む。候補 path が
 /// package root 外・絶対 path・`:` 等を含む場合は、Node の legacy 解決
 /// （package root を出られる）より厳しく `PackageJsonInvalid` にする
-/// （exports の不正 target と同じ分類・fail-closed）。
+/// （exports の不正 target と同じ分類・fail-closed）。候補が symlink で
+/// canonical root の外を指す場合も、次候補へフォールバックせず
+/// `PackageJsonInvalid` にする。
 ///
 /// 末尾 separator 付きの候補（`"lib/"`）はディレクトリ指定として扱い、
 /// `<候補>/index.js` / `<候補>/index.mjs` だけを試す（Node 実測:
@@ -508,20 +562,31 @@ fn resolveLegacyEntry(gpa: Allocator, io: std.Io, root: []u8, raw_candidate: []c
     if (!entryPathIsContained(candidate)) return error.PackageJsonInvalid;
 
     if (!directory_only) {
-        const joined = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ root, candidate });
-        if (fileExists(io, joined)) return .{ .path = joined, .package_root = root };
-        gpa.free(joined);
+        {
+            const joined = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ root, candidate });
+            defer gpa.free(joined);
+            if (fileExists(io, joined)) {
+                const canonical = (try canonicalEntryPath(gpa, io, root, joined)) orelse return error.PackageJsonInvalid;
+                return .{ .path = canonical, .package_root = root };
+            }
+        }
 
         for ([_][]const u8{ ".js", ".mjs" }) |ext| {
             const with_ext = try std.fmt.allocPrint(gpa, "{s}/{s}{s}", .{ root, candidate, ext });
-            if (fileExists(io, with_ext)) return .{ .path = with_ext, .package_root = root };
-            gpa.free(with_ext);
+            defer gpa.free(with_ext);
+            if (fileExists(io, with_ext)) {
+                const canonical = (try canonicalEntryPath(gpa, io, root, with_ext)) orelse return error.PackageJsonInvalid;
+                return .{ .path = canonical, .package_root = root };
+            }
         }
     }
     for ([_][]const u8{ "index.js", "index.mjs" }) |index_name| {
         const index_path = try std.fmt.allocPrint(gpa, "{s}/{s}/{s}", .{ root, candidate, index_name });
-        if (fileExists(io, index_path)) return .{ .path = index_path, .package_root = root };
-        gpa.free(index_path);
+        defer gpa.free(index_path);
+        if (fileExists(io, index_path)) {
+            const canonical = (try canonicalEntryPath(gpa, io, root, index_path)) orelse return error.PackageJsonInvalid;
+            return .{ .path = canonical, .package_root = root };
+        }
     }
     return null;
 }
@@ -545,12 +610,19 @@ fn stripTrailingSeparators(path: []const u8) []const u8 {
 /// `name/sub` の `sub`（先頭 `./` 無し）。戻り値の分類は次の通り。
 /// - `BareNotFound`: そのサブパスを公開していない（`null` target を含む）
 /// - `PackageJsonInvalid`: package.json が不正（不正 JSON・root 非 object・
-///   `name`/`type` 非文字列・exports キー混在・target が root 外/不正形式）
-/// - `InvalidSpecifier`: wildcard の一致部分が不正（配列 fallback でも継続しない）
-/// - `EntryNotFound`: target は妥当だがファイルが無い
+///   `name`/`type` 非文字列・exports キー混在・target が root 外/不正形式・
+///   入口 symlink の root 外脱出）
+/// - `InvalidSpecifier`: wildcard の一致部分が不正（配列 fallback でも継続
+///   しない）、または `exports` 無しの `name/sub` の字句が不正
+/// - `EntryNotFound`: target は妥当だがファイルが無い（`exports` 無しの
+///   `name/sub` で拡張子補完・directory index 補完をしない結果も含む）
 /// - `PackageJsonMissing`: registry 構築後に `package.json` が消えた場合
-/// `exports` を持たない package の `name/sub` は Node の従来解決に対応せず
-/// `BareNotFound` にする（安全側。docs/TODO.md に未対応境界として記録）。
+///
+/// `exports` を持たない（または `exports` が string / array / object 以外の）
+/// package の `name/sub` は、Node の ESM と同じく `<package_root>/<sub>` の
+/// 厳密 path として解決する。`package_root_abs` は realpath へ canonicalize
+/// し、解決した入口が canonical root の外（symlink 脱出）を指す場合は
+/// `InvalidSpecifier` で fail-closed にする。
 pub fn resolveSubpathInRoot(
     gpa: Allocator,
     io: std.Io,
@@ -558,7 +630,7 @@ pub fn resolveSubpathInRoot(
     subpath: []const u8,
 ) Error!ResolvedEntry {
     if (!subpathIsSafe(subpath)) return error.BareNotFound;
-    const root = try gpa.dupe(u8, package_root_abs);
+    const root = try canonicalizePackageRoot(gpa, io, package_root_abs);
     errdefer gpa.free(root);
 
     const pj_bytes = try readPackageJson(gpa, io, root);
@@ -567,22 +639,41 @@ pub fn resolveSubpathInRoot(
     defer manifest.deinit();
 
     // `exports` が string/array/object 以外（`null`・数値・真偽値）なら
-    // Node と同じく exports 無し扱いで、サブパスは公開されない。
-    const exports_v = manifest.exports orelse return error.BareNotFound;
+    // Node と同じく exports 無し扱いになる。その場合のサブパスは
+    // `<package_root>/<sub>` の従来解決（Node の ESM と同じ厳密 path）。
+    const exports_v = manifest.exports orelse return resolveLegacySubpath(gpa, io, root, subpath);
     // サブパス専用 package でも、キーの混在は Node と同じく package.json 不正。
     if (exports_v == .object and !exportsKeysAreConsistent(exports_v.object)) return error.PackageJsonInvalid;
     switch (try pickExportsSubpath(gpa, exports_v, subpath)) {
         .target => |target| {
             defer gpa.free(target);
             const abs = try std.fs.path.join(gpa, &.{ root, target[2..] });
-            errdefer gpa.free(abs);
+            defer gpa.free(abs);
             // exports の target は拡張子補完しない（Node の exports と同じく厳密 path）。
             if (!fileExists(io, abs)) return error.EntryNotFound;
-            return .{ .path = abs, .package_root = root };
+            // symlink が canonical root の外を指すなら fail-closed。
+            const canonical = (try canonicalEntryPath(gpa, io, root, abs)) orelse return error.PackageJsonInvalid;
+            return .{ .path = canonical, .package_root = root };
         },
         .invalid => return error.PackageJsonInvalid,
         .excluded, .unresolved => return error.BareNotFound,
     }
+}
+
+/// `exports` を持たない package の `name/sub` を Node の ESM と同じく
+/// `<package_root>/<sub>` の厳密 path として解決する。Node 準拠で拡張子
+/// 補完（`.js` / `.mjs`）も `<sub>/index.js` フォールバックもしないため、
+/// 該当ファイルが無い（またはディレクトリである）場合は `EntryNotFound`。
+/// `sub` の字句が不正（制御文字・`:`・Windows drive letter 等）なら
+/// `InvalidSpecifier`、symlink で canonical root の外へ脱出するなら同じく
+/// `InvalidSpecifier` で fail-closed にする。
+fn resolveLegacySubpath(gpa: Allocator, io: std.Io, root: []u8, subpath: []const u8) Error!ResolvedEntry {
+    if (!entryPathIsContained(subpath)) return error.InvalidSpecifier;
+    const abs = try std.fs.path.join(gpa, &.{ root, subpath });
+    defer gpa.free(abs);
+    if (!fileExists(io, abs)) return error.EntryNotFound;
+    const canonical = (try canonicalEntryPath(gpa, io, root, abs)) orelse return error.InvalidSpecifier;
+    return .{ .path = canonical, .package_root = root };
 }
 
 /// `module` / `main` / `index.js` の入口 path が package root 内の相対 path で
@@ -612,18 +703,92 @@ fn fileExists(io: std.Io, path: []const u8) bool {
     return stat.kind == .file;
 }
 
-/// registry に登録した 1 package。root 入口は必須ではない。exports が
-/// サブパスのみを公開し、`module` / `main` / `index.js` も無い package は
-/// `root_path = null` として登録し、サブパスだけを解決可能にする。
+/// `realPathFileAlloc` の sentinel 付き slice を通常の gpa 所有 slice へ写す
+/// （`ResolvedEntry` / `BarePackage` の field 型を `[]u8` に揃える）。
+fn realPathOwned(gpa: Allocator, io: std.Io, path: []const u8) ![]u8 {
+    const canonical = try std.Io.Dir.cwd().realPathFileAlloc(io, path, gpa);
+    defer gpa.free(canonical);
+    return try gpa.dupe(u8, canonical);
+}
+
+/// package root を realpath へ canonicalize する（symlink・`..` を実体 path に
+/// 寄せる）。入口ファイルの包含検査と `module_graph` の realpath 比較を同じ
+/// 座標系に揃えるため、`resolveEntryInRoot` / `resolveSubpathInRoot` の先頭で
+/// 行う。不在・非 directory は `PackageJsonMissing`、その他の I/O 失敗は
+/// `PackageJsonInvalid`（`readPackageJson` と同じ分類）。
+fn canonicalizePackageRoot(gpa: Allocator, io: std.Io, package_root_abs: []const u8) Error![]u8 {
+    return realPathOwned(gpa, io, package_root_abs) catch |err| switch (err) {
+        error.OutOfMemory => error.OutOfMemory,
+        error.Canceled => error.Canceled,
+        error.FileNotFound, error.NotDir => error.PackageJsonMissing,
+        else => error.PackageJsonInvalid,
+    };
+}
+
+/// 入口ファイルの実体 path を返し、canonical な package root の直系の子孫で
+/// あることを検証する。symlink で root 外へ脱出する入口は null（呼び出し側が
+/// 文脈に応じた分類を選ぶ: exports / legacy は `PackageJsonInvalid`、
+/// `exports` 無し `name/sub` は `InvalidSpecifier`）。realpath 自体の失敗は
+/// 入口不在を `EntryNotFound`、その他を `PackageJsonInvalid` に写す。
+fn canonicalEntryPath(
+    gpa: Allocator,
+    io: std.Io,
+    canonical_root: []const u8,
+    lexical_abs: []const u8,
+) Error!?[]u8 {
+    const canonical = realPathOwned(gpa, io, lexical_abs) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.Canceled => return error.Canceled,
+        // `fileExists` 確認後の削除・差し替えは入口不在として扱う。
+        error.FileNotFound, error.NotDir => return error.EntryNotFound,
+        else => return error.PackageJsonInvalid,
+    };
+    errdefer gpa.free(canonical);
+    if (!isStrictlyWithin(canonical_root, canonical)) {
+        gpa.free(canonical);
+        return null;
+    }
+    return canonical;
+}
+
+/// `child` が `parent` の直系の子孫（separator 境界）か。
+/// `npm_env.isStrictlyWithin` と同じ separator 境界の規則に加えて、`parent`
+/// 自身が separator で終わる場合（filesystem root の `/`、Windows の `C:\\`）
+/// も直下の子を子孫として扱う。Windows の realpath が `/`・`\` のどちらも
+/// 返し得るため `std.fs.path.isSep` で判定する。
+fn isStrictlyWithin(parent: []const u8, child: []const u8) bool {
+    if (parent.len == 0) return false;
+    if (!std.mem.startsWith(u8, child, parent)) return false;
+    if (std.fs.path.isSep(parent[parent.len - 1])) return child.len > parent.len;
+    return child.len > parent.len and std.fs.path.isSep(child[parent.len]);
+}
+
+test "isStrictlyWithin enforces separator boundary" {
+    // 同一 path は子孫ではない。
+    try testing.expect(!isStrictlyWithin("/pkg", "/pkg"));
+    try testing.expect(!isStrictlyWithin("/", "/"));
+    // 兄弟 prefix は separator 境界を満たさない。
+    try testing.expect(!isStrictlyWithin("/pkg", "/pkg2/a.js"));
+    // 通常の子孫。
+    try testing.expect(isStrictlyWithin("/pkg", "/pkg/a.js"));
+    try testing.expect(isStrictlyWithin("/pkg", "/pkg/sub/a.js"));
+    // filesystem root は末尾が separator でも直下の子を子孫として扱う。
+    try testing.expect(isStrictlyWithin("/", "/index.js"));
+    // 空 parent は常に false。
+    try testing.expect(!isStrictlyWithin("", "/index.js"));
+}
+
+/// registry に登録した 1 package。root 入口は registry 構築時に確定せず、
+/// bare name の要求時に `resolveEntryForBare` で遅延解決する。これにより
+/// `EntryNotFound` / `PackageJsonInvalid` / 非公開（`BareNotFound`）を Node の
+/// import 解決と同じ分類で保持したまま、サブパス専用 package や壊れた
+/// package.json を持つ package が registry 全体を落とさない。
 pub const BarePackage = struct {
-    /// package root 絶対 path（`package.json` がある dir）。
+    /// package root の canonical 絶対 path（`package.json` がある dir）。
     package_root: []u8,
-    /// root 入口の絶対 path。root を公開しない package は null。
-    root_path: ?[]u8,
 
     pub fn deinit(self: BarePackage, gpa: Allocator) void {
         gpa.free(self.package_root);
-        if (self.root_path) |path| gpa.free(path);
     }
 };
 
@@ -633,7 +798,8 @@ pub const BareRegistry = struct {
     io: std.Io,
     /// bare name → BarePackage（arena ではなく gpa 所有）。
     by_name: std.StringHashMapUnmanaged(BarePackage) = .empty,
-    /// package_root 絶対 path → bare name（npm 内 bare の context 復元用）。
+    /// canonical な package_root 絶対 path → bare name（npm 内 bare の
+    /// context 復元用。`module_graph` の realpath 比較と同じ座標系）。
     root_to_name: std.StringHashMapUnmanaged([]const u8) = .empty,
 
     pub fn deinit(self: *BareRegistry) void {
@@ -654,9 +820,9 @@ pub const BareRegistry = struct {
 
     /// lock の npmInstances と cache から registry を構築する。
     /// `tree_path_for` は instance の cache tree 絶対 path を返す（null = 欠落）。
-    /// root 入口を解決できないサブパス専用 package も、そのサブパスを解決
-    /// できるよう registry へ登録する（root 解決の失敗で registry 全体を
-    /// 落とさない）。
+    /// 入口解決は行わないため、root 入口を持たない package（サブパス専用・
+    /// package.json 破損・root target 欠落）も登録でき、registry 全体を
+    /// 落とさない。root 入口は bare name の要求時に遅延解決する。
     pub fn buildFromInstances(
         gpa: Allocator,
         io: std.Io,
@@ -706,40 +872,42 @@ pub const BareRegistry = struct {
 
     /// bare specifier を解決する。返却の path/root は caller が `deinit` する。
     /// `name` は package root 入口、`name/sub` / `@scope/name/sub` は
-    /// `package.json` の `exports` サブパス入口から解決する。root 入口を
-    /// 持たない package（exports がサブパスのみ）の `name` は `BareNotFound`。
+    /// `package.json` の `exports` サブパス入口（`exports` が無ければ
+    /// `<root>/<sub>` の従来解決）から解決する。root 入口は要求時に
+    /// `resolveEntryForBare` で遅延解決する。
     pub fn resolveBare(self: *const BareRegistry, specifier: []const u8) Error!ResolvedEntry {
         const parsed = parseBareSpecifier(specifier) orelse return error.BareNotFound;
         const package = self.by_name.get(parsed.name) orelse return error.BareNotFound;
-        if (parsed.subpath.len == 0) {
-            const root_path = package.root_path orelse return error.BareNotFound;
-            const path = try self.gpa.dupe(u8, root_path);
-            errdefer self.gpa.free(path);
-            return .{
-                .path = path,
-                .package_root = try self.gpa.dupe(u8, package.package_root),
-            };
-        }
+        if (parsed.subpath.len == 0) return resolveEntryForBare(self.gpa, self.io, package.package_root);
         return resolveSubpathInRoot(self.gpa, self.io, package.package_root, parsed.subpath);
     }
 };
 
-/// instance の tree root から registry 登録用の package を作る。root 入口を
-/// 解決できない package（サブパス専用・root target 欠落・package.json 破損）は
-/// `root_path = null` として登録し、registry 全体を落とさない。root の
-/// エラー分類（`EntryNotFound` / `PackageJsonInvalid` の保持）は
-/// docs/TODO.md の follow-up（遅延解決）で扱う。`npm_resolver` が instance
-/// 単位の entry 構築（#54 の context 別解決）で再利用するため公開する。
+/// registry に登録済みの package root から bare name の入口を遅延解決する。
+/// Node の import 解決に合わせた分類を返す:
+/// - `package.json` が無い・`exports` が `"."` を公開しない: `BareNotFound`
+/// - 入口ファイル（`exports` target / `main` / `module` / `index.js`）が無い:
+///   `EntryNotFound`
+/// - `package.json` 不正・root 外を指す target / symlink: `PackageJsonInvalid`
+pub fn resolveEntryForBare(gpa: Allocator, io: std.Io, package_root: []const u8) Error!ResolvedEntry {
+    return resolveEntryInRootWith(gpa, io, package_root, .registry);
+}
+
+/// instance の tree root から registry 登録用の package を作る。入口解決は
+/// 行わず、`package_root` だけを canonical path で保持する（壊れた
+/// package.json・root target 欠落の package も登録し、registry 全体を
+/// 落とさない）。`npm_resolver` が instance 単位の entry 構築（#54 の
+/// context 別解決）で再利用するため公開する。
+/// `tree` が存在して realpath を取得できる場合は canonical path を、
+/// できない場合だけ渡された path を複製して保持する（分類は遅延解決時の
+/// `resolveEntryForBare` が行う）。
 pub fn resolvePackageForRegistry(gpa: Allocator, io: std.Io, tree: []const u8) Error!BarePackage {
-    const resolved = resolveEntryInRoot(gpa, io, tree) catch |err| switch (err) {
+    const root = realPathOwned(gpa, io, tree) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
-        error.EntryNotFound, error.PackageJsonMissing, error.PackageJsonInvalid => return .{
-            .package_root = try gpa.dupe(u8, tree),
-            .root_path = null,
-        },
-        else => return err,
+        error.Canceled => return error.Canceled,
+        else => return .{ .package_root = try gpa.dupe(u8, tree) },
     };
-    return .{ .package_root = resolved.package_root, .root_path = resolved.path };
+    return .{ .package_root = root };
 }
 
 /// bare specifier を package 名とサブパスへ分解したもの。
@@ -837,1013 +1005,8 @@ pub fn looksLikeGzip(bytes: []const u8) bool {
     return bytes.len >= 2 and bytes[0] == 0x1f and bytes[1] == 0x8b;
 }
 
-// ---------------------------------------------------------------------------
-// tests
-// ---------------------------------------------------------------------------
-
-test "pickEntryFromPackageJson exports string" {
-    const gpa = testing.allocator;
-    const entry = (try pickEntryFromPackageJson(gpa, "{\"exports\":\"./dist/index.mjs\"}")).?;
-    defer entry.deinit(gpa);
-    try testing.expectEqualStrings("./dist/index.mjs", entry.target);
-    try testing.expect(entry.from_exports);
-}
-
-test "pickEntryFromPackageJson rejects exports target without ./" {
-    const gpa = testing.allocator;
-    // Node の exports target は `./` 前置の相対 path でなければならない。
-    try testing.expectError(error.PackageJsonInvalid, pickEntryFromPackageJson(gpa, "{\"exports\":\"dist/index.mjs\"}"));
-}
-
-test "pickEntryFromPackageJson exports import condition ignores node" {
-    const gpa = testing.allocator;
-    const json =
-        \\{"exports":{".":{"node":"./node.js","import":"./esm.mjs","default":"./default.js"}}}
-    ;
-    const entry = (try pickEntryFromPackageJson(gpa, json)).?;
-    defer entry.deinit(gpa);
-    try testing.expectEqualStrings("./esm.mjs", entry.target);
-}
-
-test "pickEntryFromPackageJson exports conditions follow insertion order" {
-    const gpa = testing.allocator;
-    // `import` 固定優先にせず、object の挿入順で最初の一致を使う。
-    const json =
-        \\{"exports":{"default":"./a.js","import":"./b.mjs"}}
-    ;
-    const entry = (try pickEntryFromPackageJson(gpa, json)).?;
-    defer entry.deinit(gpa);
-    try testing.expectEqualStrings("./a.js", entry.target);
-}
-
-test "pickEntryFromPackageJson exports null condition stops lookup" {
-    const gpa = testing.allocator;
-    const json =
-        \\{"exports":{".":{"import":null,"default":"./x.js"}}}
-    ;
-    // 一致した条件の値が null なら、そこで非公開（default へ進まない）。
-    const picked = try pickEntryFromPackageJson(gpa, json);
-    if (picked) |entry| entry.deinit(gpa);
-    try testing.expect(picked == null);
-}
-
-test "pickEntryFromPackageJson does not pick browser alone" {
-    const gpa = testing.allocator;
-    const json =
-        \\{"exports":{".":{"browser":"./browser.js","require":"./cjs.js"}},"main":"lib/main.js"}
-    ;
-    // import/default が一致しない exports は root を公開しない
-    // （`module` / `main` / `index.js` へはフォールバックしない）。
-    const picked = try pickEntryFromPackageJson(gpa, json);
-    if (picked) |entry| entry.deinit(gpa);
-    try testing.expect(picked == null);
-}
-
-test "pickEntryFromPackageJson treats scalar exports as absent" {
-    const gpa = testing.allocator;
-    // Node は exports が string / array / object 以外なら exports 無しとして
-    // module/main/index.js の従来解決へ落とす。
-    for ([_][]const u8{
-        "{\"exports\":5,\"main\":\"lib/main.js\"}",
-        "{\"exports\":false,\"main\":\"lib/main.js\"}",
-        "{\"exports\":null,\"main\":\"lib/main.js\"}",
-    }) |json| {
-        const entry = (try pickEntryFromPackageJson(gpa, json)).?;
-        defer entry.deinit(gpa);
-        try testing.expectEqualStrings("lib/main.js", entry.target);
-        try testing.expect(!entry.from_exports);
-    }
-}
-
-test "pickEntryFromPackageJson module field" {
-    const gpa = testing.allocator;
-    const entry = (try pickEntryFromPackageJson(gpa, "{\"module\":\"lib/mod.mjs\",\"main\":\"lib/mod.js\"}")).?;
-    defer entry.deinit(gpa);
-    try testing.expectEqualStrings("lib/mod.mjs", entry.target);
-    try testing.expect(!entry.from_exports);
-}
-
-test "pickEntryFromPackageJson exports array" {
-    const gpa = testing.allocator;
-    // root exports の配列 fallback（不正 target は飛ばす）。
-    const entry = (try pickEntryFromPackageJson(gpa, "{\"exports\":[\"../evil.js\",\"./a.js\"]}")).?;
-    defer entry.deinit(gpa);
-    try testing.expectEqualStrings("./a.js", entry.target);
-    try testing.expect(entry.from_exports);
-}
-
-test "resolveEntryInRoot reads package.json" {
-    const gpa = testing.allocator;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const io = testing.io;
-    try tmp.dir.writeFile(io, .{ .sub_path = "package.json", .data = "{\"exports\":\"./hi.mjs\"}" });
-    try tmp.dir.writeFile(io, .{ .sub_path = "hi.mjs", .data = "export const x = 1;\n" });
-    const root = try tmp.dir.realPathFileAlloc(io, ".", gpa);
-    defer gpa.free(root);
-    const resolved = try resolveEntryInRoot(gpa, io, root);
-    defer resolved.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, resolved.path, "hi.mjs"));
-}
-
-test "entryPathIsContained rejects parent segments in both separators" {
-    try testing.expect(entryPathIsContained("index.js"));
-    try testing.expect(entryPathIsContained("dist/foo..bar.js"));
-    try testing.expect(entryPathIsContained("lib/mod.js"));
-    try testing.expect(entryPathIsContained("lib\\mod.js"));
-    try testing.expect(!entryPathIsContained("../x.js"));
-    try testing.expect(!entryPathIsContained("a/../b.js"));
-    try testing.expect(!entryPathIsContained(".."));
-    try testing.expect(!entryPathIsContained("..\\x.js"));
-    try testing.expect(!entryPathIsContained("a\\..\\x.js"));
-    try testing.expect(!entryPathIsContained("/x.js"));
-    try testing.expect(!entryPathIsContained("\\x.js"));
-    try testing.expect(!entryPathIsContained("C:\\x.js"));
-    try testing.expect(!entryPathIsContained("C:/x.js"));
-    try testing.expect(!entryPathIsContained("index.js:s"));
-    try testing.expect(!entryPathIsContained("a\x00b.js"));
-    try testing.expect(!entryPathIsContained(""));
-}
-
-test "BareRegistry resolveBare returns entry" {
-    const gpa = testing.allocator;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const io = testing.io;
-    try tmp.dir.createDirPath(io, "pkg");
-    try tmp.dir.writeFile(io, .{ .sub_path = "pkg/package.json", .data = "{\"main\":\"index.js\"}" });
-    try tmp.dir.writeFile(io, .{ .sub_path = "pkg/index.js", .data = "export default 1;\n" });
-    const pkg_root = try tmp.dir.realPathFileAlloc(io, "pkg", gpa);
-    defer gpa.free(pkg_root);
-
-    var reg: BareRegistry = .{ .gpa = gpa, .io = io };
-    defer reg.deinit();
-    const name = try gpa.dupe(u8, "left-pad");
-    errdefer gpa.free(name);
-    const entry = try resolveEntryInRoot(gpa, io, pkg_root);
-    try reg.by_name.put(gpa, name, .{ .package_root = entry.package_root, .root_path = entry.path });
-
-    const got = try reg.resolveBare("left-pad");
-    defer got.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, got.path, "index.js"));
-    try testing.expectError(error.BareNotFound, reg.resolveBare("missing"));
-}
-
-/// テスト用 fixture の追加ファイル。
-const TestFile = struct { path: []const u8, data: []const u8 };
-
-/// テスト用: `dir/package.json` と追加ファイルを作り registry へ登録する。
-/// `create_root_index` が false の fixture は root 入口を持たない package に
-/// なる（exports がサブパスのみを公開する package など）。
-fn makeTestRegistryWithRoot(
-    gpa: Allocator,
-    io: std.Io,
-    tmp: *testing.TmpDir,
-    dir: []const u8,
-    name: []const u8,
-    package_json: []const u8,
-    files: []const TestFile,
-    create_root_index: bool,
-) !BareRegistry {
-    try tmp.dir.createDirPath(io, dir);
-    const pj = try std.fs.path.join(gpa, &.{ dir, "package.json" });
-    defer gpa.free(pj);
-    try tmp.dir.writeFile(io, .{ .sub_path = pj, .data = package_json });
-    if (create_root_index) {
-        const root_index = try std.fs.path.join(gpa, &.{ dir, "index.js" });
-        defer gpa.free(root_index);
-        try tmp.dir.writeFile(io, .{ .sub_path = root_index, .data = "export default 1;\n" });
-    }
-    for (files) |f| {
-        const path = try std.fs.path.join(gpa, &.{ dir, f.path });
-        defer gpa.free(path);
-        if (std.mem.lastIndexOfScalar(u8, path, '/')) |slash| {
-            try tmp.dir.createDirPath(io, path[0..slash]);
-        }
-        try tmp.dir.writeFile(io, .{ .sub_path = path, .data = f.data });
-    }
-    const root = try tmp.dir.realPathFileAlloc(io, dir, gpa);
-    defer gpa.free(root);
-    var reg: BareRegistry = .{ .gpa = gpa, .io = io };
-    errdefer reg.deinit();
-    // root 入口を解決できない fixture もサブパス専用 package として登録する。
-    const package = try resolvePackageForRegistry(gpa, io, root);
-    errdefer package.deinit(gpa);
-    const key = try gpa.dupe(u8, name);
-    errdefer gpa.free(key);
-    try reg.by_name.put(gpa, key, package);
-    return reg;
-}
-
-fn makeTestRegistry(
-    gpa: Allocator,
-    io: std.Io,
-    tmp: *testing.TmpDir,
-    dir: []const u8,
-    name: []const u8,
-    package_json: []const u8,
-    files: []const TestFile,
-) !BareRegistry {
-    return makeTestRegistryWithRoot(gpa, io, tmp, dir, name, package_json, files, true);
-}
-
-test "BareRegistry resolveBare exports subpath" {
-    const gpa = testing.allocator;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const io = testing.io;
-    const json =
-        \\{"exports":{".":"./index.js","./sub":"./dist/sub.mjs"}}
-    ;
-    var reg = try makeTestRegistry(gpa, io, &tmp, "pkg", "left-pad", json, &.{
-        .{ .path = "dist/sub.mjs", .data = "export default 2;\n" },
-    });
-    defer reg.deinit();
-
-    const got = try reg.resolveBare("left-pad/sub");
-    defer got.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, got.path, "dist/sub.mjs"));
-    try testing.expect(std.mem.endsWith(u8, got.package_root, "pkg"));
-}
-
-test "BareRegistry resolveBare scoped exports subpath" {
-    const gpa = testing.allocator;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const io = testing.io;
-    const json =
-        \\{"exports":{".":"./index.js","./client":"./dist/client.mjs"}}
-    ;
-    var reg = try makeTestRegistry(gpa, io, &tmp, "scoped", "@scope/pkg", json, &.{
-        .{ .path = "dist/client.mjs", .data = "export default 2;\n" },
-    });
-    defer reg.deinit();
-
-    const got = try reg.resolveBare("@scope/pkg/client");
-    defer got.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, got.path, "dist/client.mjs"));
-    // 公開キーに一致しない深いサブパスは非公開。
-    try testing.expectError(error.BareNotFound, reg.resolveBare("@scope/pkg/client/deep"));
-}
-
-test "BareRegistry resolveBare subpath condition import then default" {
-    const gpa = testing.allocator;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const io = testing.io;
-    const json =
-        \\{"exports":{
-        \\  ".":"./index.js",
-        \\  "./cond":{"node":"./node.js","import":"./esm.mjs","default":"./default.js"},
-        \\  "./default-only":{"default":"./default.js"},
-        \\  "./node-only":{"node":"./node.js"}
-        \\}}
-    ;
-    var reg = try makeTestRegistry(gpa, io, &tmp, "pkg", "left-pad", json, &.{
-        .{ .path = "esm.mjs", .data = "export default 2;\n" },
-        .{ .path = "default.js", .data = "export default 3;\n" },
-        .{ .path = "node.js", .data = "module.exports = 4;\n" },
-    });
-    defer reg.deinit();
-
-    const cond = try reg.resolveBare("left-pad/cond");
-    defer cond.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, cond.path, "esm.mjs"));
-
-    const def = try reg.resolveBare("left-pad/default-only");
-    defer def.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, def.path, "default.js"));
-
-    // node 条件は暗黙に有効化しない。
-    try testing.expectError(error.BareNotFound, reg.resolveBare("left-pad/node-only"));
-}
-
-test "BareRegistry resolveBare rejects unpublished subpath" {
-    const gpa = testing.allocator;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const io = testing.io;
-    const json =
-        \\{"exports":{".":"./index.js","./published":"./dist/published.mjs"}}
-    ;
-    var reg = try makeTestRegistry(gpa, io, &tmp, "pkg", "left-pad", json, &.{
-        .{ .path = "dist/published.mjs", .data = "export default 2;\n" },
-    });
-    defer reg.deinit();
-
-    try testing.expectError(error.BareNotFound, reg.resolveBare("left-pad/missing"));
-    try testing.expectError(error.BareNotFound, reg.resolveBare("left-pad/published/deep"));
-    // exports が文字列（root のみ）の package もサブパスは非公開。
-    var tmp2 = testing.tmpDir(.{});
-    defer tmp2.cleanup();
-    var reg2 = try makeTestRegistry(gpa, io, &tmp2, "pkg2", "right-pad", "{\"exports\":\"./index.js\"}", &.{});
-    defer reg2.deinit();
-    try testing.expectError(error.BareNotFound, reg2.resolveBare("right-pad/sub"));
-}
-
-test "BareRegistry resolveBare rejects traversal specifier" {
-    const gpa = testing.allocator;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const io = testing.io;
-    const json =
-        \\{"exports":{"./sub":"./dist/sub.mjs"}}
-    ;
-    var reg = try makeTestRegistry(gpa, io, &tmp, "pkg", "left-pad", json, &.{
-        .{ .path = "dist/sub.mjs", .data = "export default 2;\n" },
-    });
-    defer reg.deinit();
-
-    try testing.expectError(error.BareNotFound, reg.resolveBare("left-pad/../evil"));
-    try testing.expectError(error.BareNotFound, reg.resolveBare("left-pad/./sub"));
-    try testing.expectError(error.BareNotFound, reg.resolveBare("left-pad//sub"));
-    try testing.expectError(error.BareNotFound, reg.resolveBare("left-pad/"));
-    try testing.expectError(error.BareNotFound, reg.resolveBare("@scope/pkg/../evil"));
-}
-
-test "BareRegistry resolveBare rejects invalid export targets as PackageJsonInvalid" {
-    const gpa = testing.allocator;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const io = testing.io;
-    const json =
-        \\{"exports":{
-        \\  ".":"./index.js",
-        \\  "./up":"../evil.js",
-        \\  "./nested-up":"./dist/../../evil.js",
-        \\  "./abs":"/tmp/evil.js",
-        \\  "./node-modules":"./node_modules/evil.js",
-        \\  "./bare-target":"dist/sub.mjs",
-        \\  "./dot":"./dist/./sub.mjs"
-        \\}}
-    ;
-    var reg = try makeTestRegistry(gpa, io, &tmp, "pkg", "left-pad", json, &.{
-        .{ .path = "dist/sub.mjs", .data = "export default 2;\n" },
-    });
-    defer reg.deinit();
-
-    // 「未公開（BareNotFound）」と「壊れた/悪意ある package.json」を区別する。
-    for ([_][]const u8{
-        "left-pad/up",
-        "left-pad/nested-up",
-        "left-pad/abs",
-        "left-pad/node-modules",
-        "left-pad/bare-target",
-        "left-pad/dot",
-    }) |spec| {
-        try testing.expectError(error.PackageJsonInvalid, reg.resolveBare(spec));
-    }
-}
-
-test "BareRegistry resolveBare missing subpath file is EntryNotFound" {
-    const gpa = testing.allocator;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const io = testing.io;
-    const json =
-        \\{"exports":{"./sub":"./dist/sub.mjs"}}
-    ;
-    var reg = try makeTestRegistry(gpa, io, &tmp, "pkg", "left-pad", json, &.{});
-    defer reg.deinit();
-
-    try testing.expectError(error.EntryNotFound, reg.resolveBare("left-pad/sub"));
-}
-
-test "BareRegistry resolveBare keeps root entry with subpath exports" {
-    const gpa = testing.allocator;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const io = testing.io;
-    const json =
-        \\{"exports":{".":{"import":"./esm.mjs","default":"./index.js"},"./sub":"./dist/sub.mjs"}}
-    ;
-    var reg = try makeTestRegistry(gpa, io, &tmp, "pkg", "left-pad", json, &.{
-        .{ .path = "esm.mjs", .data = "export default 2;\n" },
-        .{ .path = "dist/sub.mjs", .data = "export default 3;\n" },
-    });
-    defer reg.deinit();
-
-    const root = try reg.resolveBare("left-pad");
-    defer root.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, root.path, "esm.mjs"));
-    try testing.expect(std.mem.endsWith(u8, root.package_root, "pkg"));
-}
-
-test "BareRegistry resolveBare wildcard subpath" {
-    const gpa = testing.allocator;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const io = testing.io;
-    const json =
-        \\{"exports":{"./*":"./src/*.mjs","./features/*":"./feat/*.mjs"}}
-    ;
-    var reg = try makeTestRegistry(gpa, io, &tmp, "pkg", "left-pad", json, &.{
-        .{ .path = "src/foo.mjs", .data = "export default 2;\n" },
-        .{ .path = "feat/bar.mjs", .data = "export default 3;\n" },
-    });
-    defer reg.deinit();
-
-    const foo = try reg.resolveBare("left-pad/foo");
-    defer foo.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, foo.path, "src/foo.mjs"));
-
-    // 具体的な prefix のパターンを優先する。
-    const bar = try reg.resolveBare("left-pad/features/bar");
-    defer bar.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, bar.path, "feat/bar.mjs"));
-}
-
-test "BareRegistry resolveBare array fallback" {
-    const gpa = testing.allocator;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const io = testing.io;
-    const json =
-        \\{"exports":{"./sub":[{"node":"./node.js"},"./esm.mjs"]}}
-    ;
-    var reg = try makeTestRegistry(gpa, io, &tmp, "pkg", "left-pad", json, &.{
-        .{ .path = "esm.mjs", .data = "export default 2;\n" },
-    });
-    defer reg.deinit();
-
-    const got = try reg.resolveBare("left-pad/sub");
-    defer got.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, got.path, "esm.mjs"));
-}
-
-test "BareRegistry resolveBare rejects backslash specifier" {
-    const gpa = testing.allocator;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const io = testing.io;
-    const json =
-        \\{"exports":{"./sub":"./dist/sub.mjs"}}
-    ;
-    var reg = try makeTestRegistry(gpa, io, &tmp, "pkg", "left-pad", json, &.{
-        .{ .path = "dist/sub.mjs", .data = "export default 2;\n" },
-    });
-    defer reg.deinit();
-
-    // Windows 区切り文字での逃避を bare 名として解釈しない。
-    try testing.expectError(error.BareNotFound, reg.resolveBare("left-pad\\sub"));
-    try testing.expectError(error.BareNotFound, reg.resolveBare("left-pad/sub\\evil"));
-}
-
-test "BareRegistry resolveBare wildcard boundaries" {
-    const gpa = testing.allocator;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const io = testing.io;
-    const json =
-        \\{"exports":{
-        \\  "./features/*":"./feat/*.mjs",
-        \\  "./slash":"./dist/",
-        \\  "./drive":"./C:/evil.js",
-        \\  "./a*b":"./*"
-        \\}}
-    ;
-    var reg = try makeTestRegistry(gpa, io, &tmp, "pkg", "left-pad", json, &.{
-        .{ .path = "feat/a/b.mjs", .data = "export default 2;\n" },
-    });
-    defer reg.deinit();
-
-    // wildcard は複数セグメントにも一致し、target の `*` を置換する。
-    const deep = try reg.resolveBare("left-pad/features/a/b");
-    defer deep.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, deep.path, "feat/a/b.mjs"));
-
-    // trailing slash target（空セグメント）は不正な target。
-    try testing.expectError(error.PackageJsonInvalid, reg.resolveBare("left-pad/slash"));
-    // Windows ドライブレター target は不正な target。
-    try testing.expectError(error.PackageJsonInvalid, reg.resolveBare("left-pad/drive"));
-    // `*` は 1 文字以上: 空マッチは非公開。
-    try testing.expectError(error.BareNotFound, reg.resolveBare("left-pad/ab"));
-}
-
-// --- PR #225 レビュー指摘の回帰テスト（M1/M2 + correctness minor） ---
-
-test "BareRegistry resolveBare wildcard requires one character (M1 example 1)" {
-    const gpa = testing.allocator;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const io = testing.io;
-    const json =
-        \\{"exports":{"./foo*":"./foo*.js"}}
-    ;
-    var reg = try makeTestRegistry(gpa, io, &tmp, "pkg", "left-pad", json, &.{
-        .{ .path = "foo.js", .data = "export default 1;\n" },
-        .{ .path = "foobar.js", .data = "export default 2;\n" },
-    });
-    defer reg.deinit();
-
-    // `*` は 1 文字以上: `pkg/foo` は非公開（Node: ERR_PACKAGE_PATH_NOT_EXPORTED）。
-    try testing.expectError(error.BareNotFound, reg.resolveBare("left-pad/foo"));
-    const bar = try reg.resolveBare("left-pad/foobar");
-    defer bar.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, bar.path, "foobar.js"));
-}
-
-test "BareRegistry resolveBare wildcard does not hide on empty match (M1 example 2)" {
-    const gpa = testing.allocator;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const io = testing.io;
-    const json =
-        \\{"exports":{"./features/*":"./src/*.js","./features/private*":null}}
-    ;
-    var reg = try makeTestRegistry(gpa, io, &tmp, "pkg", "left-pad", json, &.{
-        .{ .path = "src/private.js", .data = "export default 2;\n" },
-    });
-    defer reg.deinit();
-
-    // 空マッチした `private*` が prefix 最長として選ばれてはならない。
-    const priv = try reg.resolveBare("left-pad/features/private");
-    defer priv.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, priv.path, "src/private.js"));
-    // 1 文字以上マッチするなら null target が勝って非公開になる。
-    try testing.expectError(error.BareNotFound, reg.resolveBare("left-pad/features/privatex"));
-}
-
-test "BareRegistry resolveBare wildcard prefix tie prefers longer key" {
-    const gpa = testing.allocator;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const io = testing.io;
-    const json =
-        \\{"exports":{"./feat*":"./generic/*.mjs","./feat*x":"./specific/*.mjs"}}
-    ;
-    var reg = try makeTestRegistry(gpa, io, &tmp, "pkg", "left-pad", json, &.{
-        .{ .path = "generic/abx.mjs", .data = "export default 1;\n" },
-        .{ .path = "specific/ab.mjs", .data = "export default 2;\n" },
-    });
-    defer reg.deinit();
-
-    // prefix 長が同じなら key が長い `./feat*x` が勝つ（Node の patternKeyCompare）。
-    const got = try reg.resolveBare("left-pad/featabx");
-    defer got.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, got.path, "specific/ab.mjs"));
-}
-
-test "BareRegistry resolveBare substitutes every star in target" {
-    const gpa = testing.allocator;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const io = testing.io;
-    const json =
-        \\{"exports":{"./f/*":"./x/*/*.mjs"}}
-    ;
-    var reg = try makeTestRegistry(gpa, io, &tmp, "pkg", "left-pad", json, &.{
-        .{ .path = "x/a/a.mjs", .data = "export default 1;\n" },
-    });
-    defer reg.deinit();
-
-    const got = try reg.resolveBare("left-pad/f/a");
-    defer got.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, got.path, "x/a/a.mjs"));
-}
-
-test "BareRegistry resolveBare conditions follow insertion order" {
-    const gpa = testing.allocator;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const io = testing.io;
-    const json =
-        \\{"exports":{".":"./index.js","./cond":{"default":"./a.js","import":"./b.mjs"}}}
-    ;
-    var reg = try makeTestRegistry(gpa, io, &tmp, "pkg", "left-pad", json, &.{
-        .{ .path = "a.js", .data = "export default 1;\n" },
-        .{ .path = "b.mjs", .data = "export default 2;\n" },
-    });
-    defer reg.deinit();
-
-    // `import` を固定優先せず、object の挿入順で最初の一致を使う。
-    const got = try reg.resolveBare("left-pad/cond");
-    defer got.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, got.path, "a.js"));
-}
-
-test "BareRegistry resolveBare null condition stops lookup" {
-    const gpa = testing.allocator;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const io = testing.io;
-    const json =
-        \\{"exports":{".":"./index.js","./hidden":{"import":null,"default":"./fallback.js"}}}
-    ;
-    var reg = try makeTestRegistry(gpa, io, &tmp, "pkg", "left-pad", json, &.{
-        .{ .path = "fallback.js", .data = "export default 1;\n" },
-    });
-    defer reg.deinit();
-
-    // 一致した条件の値が null なら、そこで非公開（default へ進まない）。
-    try testing.expectError(error.BareNotFound, reg.resolveBare("left-pad/hidden"));
-}
-
-test "BareRegistry resolveBare array fallback skips invalid targets" {
-    const gpa = testing.allocator;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const io = testing.io;
-    const json =
-        \\{"exports":{".":"./index.js","./sub":["../evil.js","./ok.mjs"],"./bad":["../evil.js"]}}
-    ;
-    var reg = try makeTestRegistry(gpa, io, &tmp, "pkg", "left-pad", json, &.{
-        .{ .path = "ok.mjs", .data = "export default 1;\n" },
-    });
-    defer reg.deinit();
-
-    // 不正な候補は飛ばして次の候補を使う（Node の配列 fallback）。
-    const ok = try reg.resolveBare("left-pad/sub");
-    defer ok.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, ok.path, "ok.mjs"));
-    // 全候補が不正なら「未公開」ではなく package.json 不正として分類する。
-    try testing.expectError(error.PackageJsonInvalid, reg.resolveBare("left-pad/bad"));
-}
-
-test "BareRegistry resolveBare classifies invalid export targets" {
-    const gpa = testing.allocator;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const io = testing.io;
-    const json =
-        "{\"exports\":{\".\":\"./index.js\",\"./up\":\"../evil.js\"," ++
-        "\"./abs\":\"/tmp/evil.js\",\"./node-modules\":\"./node_modules/evil.js\"," ++
-        "\"./upper-node-modules\":\"./NODE_MODULES/evil.js\",\"./bare\":\"dist/sub.mjs\"," ++
-        "\"./ads\":\"./index.js:s\",\"./control\":\"./dist/a\\u0001.mjs\"," ++
-        "\"./nul\":\"./dist/a\\u0000.mjs\",\"./backslash\":\"./dist/a\\\\b.mjs\"}}";
-    var reg = try makeTestRegistry(gpa, io, &tmp, "pkg", "left-pad", json, &.{});
-    defer reg.deinit();
-
-    for ([_][]const u8{
-        "left-pad/up",
-        "left-pad/abs",
-        "left-pad/node-modules",
-        "left-pad/upper-node-modules",
-        "left-pad/bare",
-        "left-pad/ads",
-        "left-pad/control",
-        "left-pad/nul",
-        "left-pad/backslash",
-    }) |spec| {
-        try testing.expectError(error.PackageJsonInvalid, reg.resolveBare(spec));
-    }
-}
-
-test "BareRegistry resolveBare classifies scalar targets as PackageJsonInvalid" {
-    const gpa = testing.allocator;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const io = testing.io;
-    const json =
-        \\{"exports":{".":"./index.js","./scalar":{"import":true,"default":"./x.js"},"./num":5}}
-    ;
-    var reg = try makeTestRegistry(gpa, io, &tmp, "pkg", "left-pad", json, &.{
-        .{ .path = "x.js", .data = "export default 1;\n" },
-    });
-    defer reg.deinit();
-
-    // Node は string / array / null / object 以外の target を
-    // ERR_INVALID_PACKAGE_TARGET にする（default へ進まない）。
-    try testing.expectError(error.PackageJsonInvalid, reg.resolveBare("left-pad/scalar"));
-    try testing.expectError(error.PackageJsonInvalid, reg.resolveBare("left-pad/num"));
-}
-
-test "BareRegistry resolveBare rejects array index condition keys" {
-    const gpa = testing.allocator;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const io = testing.io;
-    const json =
-        \\{"exports":{".":"./index.js","./idx":{"0":"./a.js","default":"./x.js"}}}
-    ;
-    var reg = try makeTestRegistry(gpa, io, &tmp, "pkg", "left-pad", json, &.{
-        .{ .path = "x.js", .data = "export default 1;\n" },
-    });
-    defer reg.deinit();
-
-    // Node は条件オブジェクトの配列 index キーを ERR_INVALID_PACKAGE_CONFIG に
-    // する（配列 fallback でも飛ばさない）。
-    try testing.expectError(error.PackageJsonInvalid, reg.resolveBare("left-pad/idx"));
-}
-
-test "BareRegistry resolveBare array index boundary keys" {
-    const gpa = testing.allocator;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const io = testing.io;
-    const json =
-        \\{"exports":{".":"./index.js","./max":{"4294967294":"./a.js","default":"./x.js"},"./over":{"4294967295":"./a.js","default":"./x.js"}}}
-    ;
-    var reg = try makeTestRegistry(gpa, io, &tmp, "pkg", "left-pad", json, &.{
-        .{ .path = "x.js", .data = "export default 1;\n" },
-    });
-    defer reg.deinit();
-
-    // Node の isArrayIndex は 2^32-2 までを index とする（`4294967295` は違う）。
-    try testing.expectError(error.PackageJsonInvalid, reg.resolveBare("left-pad/max"));
-    const over = try reg.resolveBare("left-pad/over");
-    defer over.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, over.path, "x.js"));
-}
-
-test "BareRegistry resolveBare duplicate keys use last value" {
-    const gpa = testing.allocator;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const io = testing.io;
-    const json =
-        \\{"exports":{".":"./index.js","./sub":"./a.js","./sub":"./b.js"}}
-    ;
-    var reg = try makeTestRegistry(gpa, io, &tmp, "pkg", "left-pad", json, &.{
-        .{ .path = "a.js", .data = "export default 1;\n" },
-        .{ .path = "b.js", .data = "export default 2;\n" },
-    });
-    defer reg.deinit();
-
-    // JS の JSON.parse と同じく後勝ち（Node 実測: b.js）。
-    const got = try reg.resolveBare("left-pad/sub");
-    defer got.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, got.path, "b.js"));
-}
-
-test "BareRegistry resolveBare array last exception decides" {
-    const gpa = testing.allocator;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const io = testing.io;
-    const json =
-        \\{"exports":{".":"./index.js","./last-null":["../evil.js",null],"./last-invalid":[null,"../evil.js"]}}
-    ;
-    var reg = try makeTestRegistry(gpa, io, &tmp, "pkg", "left-pad", json, &.{});
-    defer reg.deinit();
-
-    // Node: 最後の例外が null なら非公開、不正 target なら package.json 不正。
-    try testing.expectError(error.BareNotFound, reg.resolveBare("left-pad/last-null"));
-    try testing.expectError(error.PackageJsonInvalid, reg.resolveBare("left-pad/last-invalid"));
-}
-
-test "BareRegistry resolveBare rejects numeric key after matching condition" {
-    const gpa = testing.allocator;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const io = testing.io;
-    const json =
-        \\{"exports":{".":"./index.js","./sub":{"import":"./a.js","0":"./b.js"}}}
-    ;
-    var reg = try makeTestRegistry(gpa, io, &tmp, "pkg", "left-pad", json, &.{
-        .{ .path = "a.js", .data = "export default 1;\n" },
-        .{ .path = "b.js", .data = "export default 2;\n" },
-    });
-    defer reg.deinit();
-
-    // Node は条件マッチング前に全キーを検査する（import が先でも拒否）。
-    try testing.expectError(error.PackageJsonInvalid, reg.resolveBare("left-pad/sub"));
-}
-
-test "BareRegistry resolveBare array skips scalar but not numeric key error" {
-    const gpa = testing.allocator;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const io = testing.io;
-    const json =
-        \\{"exports":{".":"./index.js","./scalar":[true,"./x.js"],"./numeric":[{"0":"./a.js"},"./x.js"]}}
-    ;
-    var reg = try makeTestRegistry(gpa, io, &tmp, "pkg", "left-pad", json, &.{
-        .{ .path = "x.js", .data = "export default 1;\n" },
-        .{ .path = "a.js", .data = "export default 2;\n" },
-    });
-    defer reg.deinit();
-
-    // スカラー target は配列で飛ばす（Node: ERR_INVALID_PACKAGE_TARGET → continue）。
-    const scalar = try reg.resolveBare("left-pad/scalar");
-    defer scalar.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, scalar.path, "x.js"));
-    // 数値キーは package.json 不正で、配列でも飛ばさない。
-    try testing.expectError(error.PackageJsonInvalid, reg.resolveBare("left-pad/numeric"));
-}
-
-test "BareRegistry resolveBare rejects node_modules in wildcard match" {
-    const gpa = testing.allocator;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const io = testing.io;
-    const json =
-        \\{"exports":{"./*":["./a/*.js","./fallback.js"]}}
-    ;
-    var reg = try makeTestRegistry(gpa, io, &tmp, "pkg", "left-pad", json, &.{
-        .{ .path = "fallback.js", .data = "export default 1;\n" },
-    });
-    defer reg.deinit();
-
-    // Node: ERR_INVALID_MODULE_SPECIFIER。配列 fallback で後続候補へ進まない。
-    try testing.expectError(error.InvalidSpecifier, reg.resolveBare("left-pad/node_modules/x"));
-}
-
-test "BareRegistry resolveBare keeps longer prefix key seen first" {
-    const gpa = testing.allocator;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const io = testing.io;
-    const json =
-        \\{"exports":{".":"./index.js","./feat*x":"./specific/*.mjs","./feat*":"./generic/*.mjs"}}
-    ;
-    var reg = try makeTestRegistry(gpa, io, &tmp, "pkg", "left-pad", json, &.{
-        .{ .path = "specific/ab.mjs", .data = "export default 1;\n" },
-        .{ .path = "generic/abx.mjs", .data = "export default 2;\n" },
-    });
-    defer reg.deinit();
-
-    // 長いキーが先に出てきても、後の短いキーで上書きしない。
-    const got = try reg.resolveBare("left-pad/featabx");
-    defer got.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, got.path, "specific/ab.mjs"));
-}
-
-test "BareRegistry resolveBare root-less fixture without index.js" {
-    const gpa = testing.allocator;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const io = testing.io;
-    const json =
-        \\{"exports":{"./app":"./app.mjs"}}
-    ;
-    // `index.js` を書かない fixture。root 入口は存在しない。
-    var reg = try makeTestRegistryWithRoot(gpa, io, &tmp, "pkg", "left-pad", json, &.{
-        .{ .path = "app.mjs", .data = "export default 1;\n" },
-    }, false);
-    defer reg.deinit();
-
-    const app = try reg.resolveBare("left-pad/app");
-    defer app.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, app.path, "app.mjs"));
-    try testing.expectError(error.BareNotFound, reg.resolveBare("left-pad"));
-}
-
-test "resolveEntryInRoot rejects directory as entry file" {
-    const gpa = testing.allocator;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const io = testing.io;
-    try tmp.dir.createDirPath(io, "dist");
-    // `dist.js` があっても exports は拡張子補完しない（Node は厳密 path）。
-    try tmp.dir.writeFile(io, .{ .sub_path = "dist.js", .data = "export default 1;\n" });
-    try tmp.dir.writeFile(io, .{ .sub_path = "package.json", .data = "{\"exports\":\"./dist\"}" });
-    const root = try tmp.dir.realPathFileAlloc(io, ".", gpa);
-    defer gpa.free(root);
-
-    try testing.expectError(error.EntryNotFound, resolveEntryInRoot(gpa, io, root));
-}
-
-test "resolveEntryInRoot does not probe extensions for exports targets" {
-    const gpa = testing.allocator;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const io = testing.io;
-    const json =
-        \\{"exports":"./dist/index"}
-    ;
-    try tmp.dir.writeFile(io, .{ .sub_path = "package.json", .data = json });
-    try tmp.dir.createDirPath(io, "dist");
-    try tmp.dir.writeFile(io, .{ .sub_path = "dist/index.js", .data = "export default 1;\n" });
-    const root = try tmp.dir.realPathFileAlloc(io, ".", gpa);
-    defer gpa.free(root);
-
-    // exports target は拡張子補完しない（Node: ERR_MODULE_NOT_FOUND）。
-    try testing.expectError(error.EntryNotFound, resolveEntryInRoot(gpa, io, root));
-}
-
-test "resolveEntryInRoot does not fall back to main when exports hides root" {
-    const gpa = testing.allocator;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const io = testing.io;
-    const json =
-        \\{"exports":{"./app":"./app.mjs"},"main":"index.js"}
-    ;
-    try tmp.dir.writeFile(io, .{ .sub_path = "package.json", .data = json });
-    try tmp.dir.writeFile(io, .{ .sub_path = "app.mjs", .data = "export default 1;\n" });
-    try tmp.dir.writeFile(io, .{ .sub_path = "index.js", .data = "export default 2;\n" });
-    const root = try tmp.dir.realPathFileAlloc(io, ".", gpa);
-    defer gpa.free(root);
-
-    // exports がある package は root 入口を exports からのみ選ぶ（Node と同じ）。
-    try testing.expectError(error.EntryNotFound, resolveEntryInRoot(gpa, io, root));
-}
-
-test "resolveEntryInRoot rejects exports target outside root" {
-    const gpa = testing.allocator;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const io = testing.io;
-    try tmp.dir.writeFile(io, .{ .sub_path = "package.json", .data = "{\"exports\":\"./../evil.js\"}" });
-    const root = try tmp.dir.realPathFileAlloc(io, ".", gpa);
-    defer gpa.free(root);
-
-    try testing.expectError(error.PackageJsonInvalid, resolveEntryInRoot(gpa, io, root));
-}
-
-test "pickEntryFromPackageJson rejects mixed exports keys" {
-    const gpa = testing.allocator;
-    // Node は `.` 前置キーと条件キーの混在を ERR_INVALID_PACKAGE_CONFIG にする。
-    try testing.expectError(error.PackageJsonInvalid, pickEntryFromPackageJson(
-        gpa,
-        "{\"exports\":{\".\":\"./index.js\",\"import\":\"./esm.mjs\"}}",
-    ));
-}
-
-test "BareRegistry resolveBare empty array target is unpublished" {
-    const gpa = testing.allocator;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const io = testing.io;
-    const json =
-        \\{"exports":{".":"./index.js","./empty":[],"./cond-empty":{"import":[],"default":"./ok.mjs"}}}
-    ;
-    var reg = try makeTestRegistry(gpa, io, &tmp, "pkg", "left-pad", json, &.{
-        .{ .path = "ok.mjs", .data = "export default 1;\n" },
-    });
-    defer reg.deinit();
-
-    // Node は空配列 target を null（非公開）として即座に確定する
-    // （`default` へは進まない）。
-    try testing.expectError(error.BareNotFound, reg.resolveBare("left-pad/empty"));
-    try testing.expectError(error.BareNotFound, reg.resolveBare("left-pad/cond-empty"));
-}
-
-test "resolveSubpathInRoot rejects mixed exports keys" {
-    const gpa = testing.allocator;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const io = testing.io;
-    const json =
-        \\{"exports":{"./sub":"./sub.mjs","import":"./esm.mjs"}}
-    ;
-    // package_json 自体が不正なので registry 構築を経ずに直接検査する。
-    try tmp.dir.createDirPath(io, "pkg");
-    try tmp.dir.writeFile(io, .{ .sub_path = "pkg/package.json", .data = json });
-    try tmp.dir.writeFile(io, .{ .sub_path = "pkg/sub.mjs", .data = "export default 1;\n" });
-    const root = try tmp.dir.realPathFileAlloc(io, "pkg", gpa);
-    defer gpa.free(root);
-
-    try testing.expectError(error.PackageJsonInvalid, resolveSubpathInRoot(gpa, io, root, "sub"));
-}
-
-test "BareRegistry resolveBare top-level conditions exports" {
-    const gpa = testing.allocator;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const io = testing.io;
-    const json =
-        \\{"exports":{"import":"./esm.mjs","default":"./index.js"}}
-    ;
-    var reg = try makeTestRegistry(gpa, io, &tmp, "pkg", "left-pad", json, &.{
-        .{ .path = "esm.mjs", .data = "export default 1;\n" },
-    });
-    defer reg.deinit();
-
-    const root = try reg.resolveBare("left-pad");
-    defer root.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, root.path, "esm.mjs"));
-    // 条件オブジェクトは root 専用で、サブパスは公開されない。
-    try testing.expectError(error.BareNotFound, reg.resolveBare("left-pad/sub"));
-}
-
-test "BareRegistry resolveBare without exports rejects subpath" {
-    const gpa = testing.allocator;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const io = testing.io;
-    var reg = try makeTestRegistry(gpa, io, &tmp, "pkg", "left-pad", "{\"main\":\"index.js\"}", &.{});
-    defer reg.deinit();
-
-    const root = try reg.resolveBare("left-pad");
-    defer root.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, root.path, "index.js"));
-    // Node の従来 subpath 解決は未対応（安全側で拒否）。
-    try testing.expectError(error.BareNotFound, reg.resolveBare("left-pad/sub"));
-}
-
-test "parseBareSpecifier rejects empty scope and empty name" {
-    try testing.expect(parseBareSpecifier("@/x") == null);
-    try testing.expect(parseBareSpecifier("@scope/") == null);
-    try testing.expect(parseBareSpecifier("@scope//x") == null);
-    try testing.expect(parseBareSpecifier("@scope") == null);
-    try testing.expect(parseBareSpecifier("@") == null);
-    try testing.expect(parseBareSpecifier("/x") == null);
-    try testing.expect(parseBareSpecifier("./x") == null);
-}
-
-test "parseBareSpecifier splits scoped subpath" {
-    const scoped = parseBareSpecifier("@scope/pkg/sub").?;
-    try testing.expectEqualStrings("@scope/pkg", scoped.name);
-    try testing.expectEqualStrings("sub", scoped.subpath);
-    const scoped_root = parseBareSpecifier("@scope/pkg").?;
-    try testing.expectEqualStrings("@scope/pkg", scoped_root.name);
-    try testing.expectEqualStrings("", scoped_root.subpath);
-    const plain = parseBareSpecifier("pkg/sub/deep").?;
-    try testing.expectEqualStrings("pkg", plain.name);
-    try testing.expectEqualStrings("sub/deep", plain.subpath);
-}
+// 非公開 helper（`entryPathIsContained` / `pickExportsSubpath` /
+// `max_exports_depth`）に依存する回帰テストは、定義と同じファイルに置く。
 
 test "pickExportsSubpath resolves star in specifier via pattern" {
     const gpa = testing.allocator;
@@ -1923,205 +1086,23 @@ test "pickExportsSubpath は未解決 target でも不正な一致部分を拒�
     try testing.expectError(error.InvalidSpecifier, pickExportsSubpath(gpa, exports_v, "node_modules/x"));
 }
 
-test "BareRegistry resolveBare null target precedes specifier validation" {
-    const gpa = testing.allocator;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const io = testing.io;
-    const json =
-        \\{"exports":{".":"./index.js","./*":null}}
-    ;
-    var reg = try makeTestRegistry(gpa, io, &tmp, "pkg", "left-pad", json, &.{});
-    defer reg.deinit();
-
-    // Node 実測（v24/v26）: `"./*": null` + `pkg/node_modules/x` は
-    // ERR_PACKAGE_PATH_NOT_EXPORTED。一致部分の検証より null が先。
-    try testing.expectError(error.BareNotFound, reg.resolveBare("left-pad/node_modules/x"));
-}
-
-test "BareRegistry resolveBare rejects colon and control chars in wildcard match" {
-    const gpa = testing.allocator;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const io = testing.io;
-    const json =
-        \\{"exports":{".":"./index.js","./*":"./a/*.js"}}
-    ;
-    var reg = try makeTestRegistry(gpa, io, &tmp, "pkg", "left-pad", json, &.{});
-    defer reg.deinit();
-
-    // Node は警告のみで通すが、この実装は fail-closed（docs/TODO.md）。
-    try testing.expectError(error.InvalidSpecifier, reg.resolveBare("left-pad/a:b"));
-    try testing.expectError(error.InvalidSpecifier, reg.resolveBare("left-pad/a\x01b"));
-    // 空セグメントは specifier の段階で bare として拒否する。
-    try testing.expect(parseBareSpecifier("left-pad/x//y") == null);
-}
-
-test "BareRegistry resolveBare empty string exports is invalid" {
-    const gpa = testing.allocator;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const io = testing.io;
-    var reg = try makeTestRegistry(gpa, io, &tmp, "pkg", "left-pad", "{\"exports\":\"\"}", &.{});
-    defer reg.deinit();
-
-    // Node 実測（v24/v26）: `exports: ""` は root で ERR_INVALID_PACKAGE_TARGET、
-    // サブパスは sugar 経由で ERR_PACKAGE_PATH_NOT_EXPORTED。
-    try testing.expectError(error.PackageJsonInvalid, pickEntryFromPackageJson(gpa, "{\"exports\":\"\"}"));
-    // registry は root 解決の失敗を root 非公開へ丸めるため BareNotFound。
-    try testing.expectError(error.BareNotFound, reg.resolveBare("left-pad"));
-    try testing.expectError(error.BareNotFound, reg.resolveBare("left-pad/sub"));
-}
-
-test "BareRegistry resolveBare nested unresolved condition falls through" {
-    const gpa = testing.allocator;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const io = testing.io;
-    const json =
-        \\{"exports":{".":"./index.js","./sub":{"import":{"node":"./x.js"},"default":"./y.js"}}}
-    ;
-    var reg = try makeTestRegistry(gpa, io, &tmp, "pkg", "left-pad", json, &.{
-        .{ .path = "y.js", .data = "export default 1;\n" },
-    });
-    defer reg.deinit();
-
-    // 一致した `import` の値が未解決なら、挿入順で次の一致キー（default）へ進む。
-    const got = try reg.resolveBare("left-pad/sub");
-    defer got.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, got.path, "y.js"));
-}
-
-const TestInstanceTrees = struct {
-    paths: []const struct { name: []const u8, path: []const u8 },
-
-    fn treePath(ctx: *anyopaque, gpa: Allocator, instance: lock_model.NpmInstance) anyerror!?[]u8 {
-        const self: *const TestInstanceTrees = @ptrCast(@alignCast(ctx));
-        for (self.paths) |entry| {
-            if (std.mem.eql(u8, entry.name, instance.name)) return try gpa.dupe(u8, entry.path);
-        }
-        return null;
-    }
-};
-
-test "BareRegistry registerInstance は同名を no-op にする" {
-    const gpa = testing.allocator;
-    const io = testing.io;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    for ([_]struct { dir: []const u8, version: []const u8 }{
-        .{ .dir = "first", .version = "1.0.0" },
-        .{ .dir = "second", .version = "2.0.0" },
-    }) |entry| {
-        try tmp.dir.createDirPath(io, entry.dir);
-        const json = try std.fmt.allocPrint(gpa, "{{\"version\":\"{s}\",\"main\":\"index.js\"}}", .{entry.version});
-        defer gpa.free(json);
-        const manifest_path = try std.fmt.allocPrint(gpa, "{s}/package.json", .{entry.dir});
-        defer gpa.free(manifest_path);
-        const source_path = try std.fmt.allocPrint(gpa, "{s}/index.js", .{entry.dir});
-        defer gpa.free(source_path);
-        try tmp.dir.writeFile(io, .{ .sub_path = manifest_path, .data = json });
-        try tmp.dir.writeFile(io, .{ .sub_path = source_path, .data = "export default 1;\n" });
-    }
-    const first_root = try tmp.dir.realPathFileAlloc(io, "first", gpa);
-    defer gpa.free(first_root);
-    const second_root = try tmp.dir.realPathFileAlloc(io, "second", gpa);
-    defer gpa.free(second_root);
-
-    var reg: BareRegistry = .{ .gpa = gpa, .io = io };
-    defer reg.deinit();
-    const first = lock_model.NpmInstance{ .key = "pkg@1.0.0", .name = "pkg", .version = "1.0.0" };
-    const second = lock_model.NpmInstance{ .key = "pkg@2.0.0", .name = "pkg", .version = "2.0.0" };
-    try reg.registerInstance(first, first_root);
-    try reg.registerInstance(second, second_root);
-    const entry = try reg.resolveBare("pkg");
-    defer entry.deinit(gpa);
-    const entry_dir = std.fs.path.dirname(entry.path) orelse return error.UnexpectedResult;
-    try testing.expectEqualStrings("first", std.fs.path.basename(entry_dir));
-}
-
-test "BareRegistry buildFromInstances registers subpath-only package (M2)" {
-    const gpa = testing.allocator;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const io = testing.io;
-
-    try tmp.dir.createDirPath(io, "subonly");
-    try tmp.dir.writeFile(io, .{ .sub_path = "subonly/package.json", .data = "{\"exports\":{\"./app\":\"./app.mjs\"}}" });
-    try tmp.dir.writeFile(io, .{ .sub_path = "subonly/app.mjs", .data = "export default 1;\n" });
-    try tmp.dir.createDirPath(io, "rooted");
-    try tmp.dir.writeFile(io, .{ .sub_path = "rooted/package.json", .data = "{\"main\":\"index.js\"}" });
-    try tmp.dir.writeFile(io, .{ .sub_path = "rooted/index.js", .data = "export default 2;\n" });
-
-    const subonly_root = try tmp.dir.realPathFileAlloc(io, "subonly", gpa);
-    defer gpa.free(subonly_root);
-    const rooted_root = try tmp.dir.realPathFileAlloc(io, "rooted", gpa);
-    defer gpa.free(rooted_root);
-
-    var trees = TestInstanceTrees{ .paths = &.{
-        .{ .name = "subonly", .path = subonly_root },
-        .{ .name = "rooted", .path = rooted_root },
-    } };
-    const instances = [_]lock_model.NpmInstance{
-        .{ .key = "subonly@1.0.0", .name = "subonly", .version = "1.0.0" },
-        .{ .key = "rooted@1.0.0", .name = "rooted", .version = "1.0.0" },
-    };
-
-    var reg = try BareRegistry.buildFromInstances(gpa, io, &instances, TestInstanceTrees.treePath, &trees);
-    defer reg.deinit();
-
-    // root 入口を持たない package でもサブパスは解決できる。
-    const app = try reg.resolveBare("subonly/app");
-    defer app.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, app.path, "app.mjs"));
-    // root 入口だけが非公開になる。
-    try testing.expectError(error.BareNotFound, reg.resolveBare("subonly"));
-    // 同じ registry の他の package は影響を受けない。
-    const root = try reg.resolveBare("rooted");
-    defer root.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, root.path, "index.js"));
-}
-
-test "BareRegistry buildFromInstances keeps other packages when one is invalid" {
-    const gpa = testing.allocator;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const io = testing.io;
-
-    try tmp.dir.createDirPath(io, "broken");
-    // JSON として壊れた package.json。
-    try tmp.dir.writeFile(io, .{ .sub_path = "broken/package.json", .data = "{\"exports\":{\"./sub\":\"./s.mjs\"" });
-    try tmp.dir.writeFile(io, .{ .sub_path = "broken/s.mjs", .data = "export default 1;\n" });
-    try tmp.dir.createDirPath(io, "ok");
-    try tmp.dir.writeFile(io, .{ .sub_path = "ok/package.json", .data = "{\"main\":\"index.js\"}" });
-    try tmp.dir.writeFile(io, .{ .sub_path = "ok/index.js", .data = "export default 2;\n" });
-
-    const broken_root = try tmp.dir.realPathFileAlloc(io, "broken", gpa);
-    defer gpa.free(broken_root);
-    const ok_root = try tmp.dir.realPathFileAlloc(io, "ok", gpa);
-    defer gpa.free(ok_root);
-
-    var trees = TestInstanceTrees{ .paths = &.{
-        .{ .name = "broken", .path = broken_root },
-        .{ .name = "ok", .path = ok_root },
-    } };
-    const instances = [_]lock_model.NpmInstance{
-        .{ .key = "broken@1.0.0", .name = "broken", .version = "1.0.0" },
-        .{ .key = "ok@1.0.0", .name = "ok", .version = "1.0.0" },
-    };
-
-    // 壊れた package.json があっても registry 全体は構築できる。
-    var reg = try BareRegistry.buildFromInstances(gpa, io, &instances, TestInstanceTrees.treePath, &trees);
-    defer reg.deinit();
-
-    // 壊れた package のサブパスは per-import で package.json 不正になる。
-    try testing.expectError(error.PackageJsonInvalid, reg.resolveBare("broken/sub"));
-    try testing.expectError(error.BareNotFound, reg.resolveBare("broken"));
-    // 無関係な package は影響を受けない。
-    const root = try reg.resolveBare("ok");
-    defer root.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, root.path, "index.js"));
+test "entryPathIsContained rejects parent segments in both separators" {
+    try testing.expect(entryPathIsContained("index.js"));
+    try testing.expect(entryPathIsContained("dist/foo..bar.js"));
+    try testing.expect(entryPathIsContained("lib/mod.js"));
+    try testing.expect(entryPathIsContained("lib\\mod.js"));
+    try testing.expect(!entryPathIsContained("../x.js"));
+    try testing.expect(!entryPathIsContained("a/../b.js"));
+    try testing.expect(!entryPathIsContained(".."));
+    try testing.expect(!entryPathIsContained("..\\x.js"));
+    try testing.expect(!entryPathIsContained("a\\..\\x.js"));
+    try testing.expect(!entryPathIsContained("/x.js"));
+    try testing.expect(!entryPathIsContained("\\x.js"));
+    try testing.expect(!entryPathIsContained("C:\\x.js"));
+    try testing.expect(!entryPathIsContained("C:/x.js"));
+    try testing.expect(!entryPathIsContained("index.js:s"));
+    try testing.expect(!entryPathIsContained("a\x00b.js"));
+    try testing.expect(!entryPathIsContained(""));
 }
 
 test "package.json の深い exports ネストは PackageJsonInvalid" {
@@ -2136,58 +1117,6 @@ test "package.json の深い exports ネストは PackageJsonInvalid" {
     while (i < max_exports_depth + 4) : (i += 1) try json.append(gpa, ']');
     try json.append(gpa, '}');
     try testing.expectError(error.PackageJsonInvalid, pickEntryFromPackageJson(gpa, json.items));
-}
-
-test "BareRegistry resolveBare は過大な wildcard 展開を確保前に拒否する" {
-    const gpa = testing.allocator;
-    const io = testing.io;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.createDirPath(io, "pkg");
-    var json: std.ArrayListUnmanaged(u8) = .empty;
-    defer json.deinit(gpa);
-    try json.appendSlice(gpa, "{\"exports\":{\"./*\":\"./");
-    var i: usize = 0;
-    while (i < 100) : (i += 1) try json.appendSlice(gpa, "x*");
-    try json.appendSlice(gpa, "\"}}");
-    try tmp.dir.writeFile(io, .{ .sub_path = "pkg/package.json", .data = json.items });
-    const root = try tmp.dir.realPathFileAlloc(io, "pkg", gpa);
-    defer gpa.free(root);
-    var reg: BareRegistry = .{ .gpa = gpa, .io = io };
-    defer reg.deinit();
-    const name = try gpa.dupe(u8, "left-pad");
-    const package_root = try gpa.dupe(u8, root);
-    try reg.by_name.put(gpa, name, .{ .package_root = package_root, .root_path = null });
-
-    const long = try gpa.alloc(u8, 20_000);
-    defer gpa.free(long);
-    @memset(long, 'a');
-    const spec = try std.fmt.allocPrint(gpa, "left-pad/{s}", .{long});
-    defer gpa.free(spec);
-    try testing.expectError(error.InvalidSpecifier, reg.resolveBare(spec));
-}
-
-test "BareRegistry resolveBare は null target を一致部分検証より優先する" {
-    const gpa = testing.allocator;
-    const io = testing.io;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.createDirPath(io, "pkg");
-    const json =
-        \\{"exports":{"./*":{"import":null}}}
-    ;
-    try tmp.dir.writeFile(io, .{ .sub_path = "pkg/package.json", .data = json });
-    const root = try tmp.dir.realPathFileAlloc(io, "pkg", gpa);
-    defer gpa.free(root);
-    var reg: BareRegistry = .{ .gpa = gpa, .io = io };
-    defer reg.deinit();
-    const name = try gpa.dupe(u8, "left-pad");
-    const package_root = try gpa.dupe(u8, root);
-    try reg.by_name.put(gpa, name, .{ .package_root = package_root, .root_path = null });
-
-    // 一致部分は node_modules だが、target が null（非公開）なので
-    // InvalidSpecifier ではなく BareNotFound。
-    try testing.expectError(error.BareNotFound, reg.resolveBare("left-pad/node_modules/x"));
 }
 
 test "package.json の exports 深度は境界ちょうどまで受理する" {
@@ -2219,36 +1148,10 @@ test "package.json の exports 深度は境界ちょうどまで受理する" {
     try testing.expectError(error.PackageJsonInvalid, pickEntryFromPackageJson(gpa, too_deep.items));
 }
 
-test "BareRegistry resolveBare は * 入り specifier をパターンとして解決する" {
-    const gpa = testing.allocator;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const io = testing.io;
-    const json =
-        \\{"exports":{".":"./index.js","./a*b":"./literal.mjs","./*":"./wild/*.mjs"}}
-    ;
-    var reg = try makeTestRegistry(gpa, io, &tmp, "pkg", "left-pad", json, &.{
-        .{ .path = "literal.mjs", .data = "export default 1;\n" },
-    });
-    defer reg.deinit();
-    const got = try reg.resolveBare("left-pad/a*b");
-    defer got.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, got.path, "literal.mjs"));
-}
-
-test "BareRegistry resolveBare は選択パターンの不正 target を他パターンへ fallback しない" {
-    const gpa = testing.allocator;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const io = testing.io;
-    const json =
-        \\{"exports":{".":"./index.js","./a*b":"../evil.js","./*":"./wild/*.mjs"}}
-    ;
-    var reg = try makeTestRegistry(gpa, io, &tmp, "pkg", "left-pad", json, &.{});
-    defer reg.deinit();
-    try testing.expectError(error.PackageJsonInvalid, reg.resolveBare("left-pad/a*b"));
-}
-
 test {
+    // #53: package.json 本格パースの回帰テスト
     _ = @import("npm_esm_test.zig");
+    // #54: #53 以前に npm_esm.zig 内へあった回帰テストの分離先
+    _ = @import("npm_esm_registry_test.zig");
+    _ = @import("npm_esm_entry_test.zig");
 }

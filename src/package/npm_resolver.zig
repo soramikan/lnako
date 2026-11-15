@@ -473,13 +473,11 @@ pub const Prepared = struct {
         const instance = self.instances[index];
         const package = self.entries.get(instance.key) orelse return error.BareNotFound;
         if (parsed.subpath.len == 0) {
-            const root_path = package.root_path orelse return error.BareNotFound;
-            const path = try self.gpa.dupe(u8, root_path);
-            errdefer self.gpa.free(path);
-            return .{
-                .path = path,
-                .package_root = try self.gpa.dupe(u8, package.package_root),
-            };
+            // root 入口は registry 構築時に確定せず、要求時に遅延解決する。
+            // Node の import 解決と同じ分類（package.json 欠落・非公開は
+            // BareNotFound、target 欠落は EntryNotFound、package.json 不正は
+            // PackageJsonInvalid）をそのまま呼出し側へ渡す。
+            return npm_esm.resolveEntryForBare(self.gpa, self.io, package.package_root);
         }
         // サブパスの分類（PackageJsonInvalid/EntryNotFound/InvalidSpecifier 等）
         // は npm_esm の taxonomy をそのまま呼出し側へ渡す（fail-closed の
@@ -1392,6 +1390,62 @@ test "非 gzip fixture は blob として展開され入口解決は BareNotFoun
     defer state.deinit();
     // package.json が無いため root 入口は公開されない（安全側）。
     try testing.expectError(error.BareNotFound, state.resolveBare(gpa, "left-pad"));
+}
+
+test "State は root 入口の EntryNotFound / PackageJsonInvalid を保持する" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    const Case = struct { package_json: []const u8, expected: anyerror };
+    const cases = [_]Case{
+        // exports の "." target 欠落（ERR_MODULE_NOT_FOUND 相当）。
+        .{ .package_json = "{\"exports\":{\".\":\"./missing.mjs\"},\"main\":\"index.js\"}", .expected = error.EntryNotFound },
+        // exports 無しで main/index.js とも欠落（legacy main 解決の最終結果）。
+        .{ .package_json = "{\"main\":\"missing.js\"}", .expected = error.EntryNotFound },
+        // root を公開しない exports（ERR_PACKAGE_PATH_NOT_EXPORTED 相当）。
+        .{ .package_json = "{\"exports\":[]}", .expected = error.BareNotFound },
+        .{ .package_json = "{\"exports\":{\"node\":\"./x.js\"}}", .expected = error.BareNotFound },
+        // package.json 自体が不正（ERR_INVALID_PACKAGE_CONFIG 相当）。
+        .{ .package_json = "{\"exports\":\"./index.js\"", .expected = error.PackageJsonInvalid },
+    };
+    for (cases) |case| {
+        var temporary = test_sandbox.tmpDir(.{});
+        defer temporary.cleanup();
+        try temporary.dir.createDirPath(io, "cache");
+
+        const tarball = try buildTarGz(gpa, &.{
+            .{ .path = "package/package.json", .content = case.package_json },
+        });
+        defer gpa.free(tarball);
+        var digest: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
+        std.crypto.hash.sha2.Sha256.hash(tarball, &digest, .{});
+        const sha256 = try std.fmt.allocPrint(gpa, "sha256:{s}", .{std.fmt.bytesToHex(digest, .lower)});
+        defer gpa.free(sha256);
+        const instance = lock_model.NpmInstance{
+            .key = "left-pad@1.0.0",
+            .name = "left-pad",
+            .version = "1.0.0",
+            .sha256 = sha256,
+            .url = "fixture://left-pad-1.0.0.tgz",
+        };
+
+        const cache_root = try temporary.dir.realPathFileAlloc(io, "cache", gpa);
+        defer gpa.free(cache_root);
+        var store = try cache_mod.Store.open(gpa, io, cache_root);
+        defer store.deinit();
+        const key = (try npm_esm.cacheKeyForInstance(gpa, instance)).?;
+        defer gpa.free(key);
+        try npm_esm.publishNpmTree(gpa, io, &store, key, tarball);
+
+        var state = State{
+            .io = io,
+            .backing_allocator = gpa,
+            .instances = &.{instance},
+            .cache_root = cache_root,
+        };
+        defer state.deinit();
+        // registry 構築時の失敗に丸めず、root 入口の分類を遅延解決で返す。
+        try testing.expectError(case.expected, state.resolveBare(gpa, "left-pad"));
+    }
 }
 
 /// 世代 tree（`<generation_root>/deps/<dir>`）と package 一式・provenance
