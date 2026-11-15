@@ -844,6 +844,132 @@ test "compat AOT runtimeは変換中のJS例外文言を内部エラー名で上
     }
 }
 
+test "compat AOT runtimeはキー列挙中のJS例外文言を保持する" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, .{} };
+    var frame: state.RootFrame = .{};
+    pushTestRoots(&state.active_runtime.?, &frame, &roots);
+    defer state.active_runtime.?.popRoots(&frame);
+    var out: Value = .{};
+    const engine = try ensureEngine();
+    const proxy_source = "new Proxy({}, {ownKeys(){throw new Error('keys-boom');}})";
+
+    // `JS実行` の full 変換（convertFullObject）はownKeys例外の文言を残す。
+    _ = try evalCompatJs(&state.active_runtime.?, proxy_source);
+    try expectPendingFailureContains(&state.active_runtime.?, "keys-boom");
+
+    // `JS関数実行` の浅い辞書変換（shallowDictionaryFromRaw）も同じ文言を残す。
+    _ = try callCompatJs(
+        &state.active_runtime.?,
+        "()=>new Proxy({}, {ownKeys(){throw new Error('keys-boom');}})",
+    );
+    try expectPendingFailureContains(&state.active_runtime.?, "keys-boom");
+
+    // JS側にProxyを置き、external配列のプロパティとして`JSオブジェクト取得`の
+    // 戻り値変換（convertResultDictionary）へ渡す。配列の同期はインデックスだけを
+    // 扱うため、追加したプロパティは削除されない。
+    _ = try evalCompatJs(
+        &state.active_runtime.?,
+        "globalThis.__lnako_keys_proxy = new Proxy({}, {ownKeys(){throw new Error('keys-boom');}}), 0",
+    );
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    roots[0] = try callCompatJs(
+        &state.active_runtime.?,
+        "()=>{const a=[];a.p=globalThis.__lnako_keys_proxy;return a;}",
+    );
+    roots[1] = try testString(&state.active_runtime.?, "p");
+    lnako_aot_compat_js_object_get(&out, roots[0..2].ptr, 2);
+    try expectPendingFailureContains(&state.active_runtime.?, "keys-boom");
+
+    // `JSメソッド実行` の戻り値変換（同じ convertResultDictionary）。
+    roots[0] = try testString(&state.active_runtime.?, "({get(){return globalThis.__lnako_keys_proxy}})");
+    roots[1] = try testString(&state.active_runtime.?, "get");
+    state.lnako_aot_array_new(&roots[2], null, 0);
+    lnako_aot_compat_js_method_call(&out, &roots, 3);
+    try expectPendingFailureContains(&state.active_runtime.?, "keys-boom");
+
+    // `JS関数実行` の実引数同期（syncContents）でexternal辞書のownKeysが投げる。
+    const sync_raw = lnako_qjs_eval(engine, proxy_source.ptr, proxy_source.len, "<keys-boom>") orelse
+        return error.QuickJsConversionFailed;
+    defer lnako_qjs_value_free(sync_raw);
+    state.lnako_aot_dictionary_new(&roots[2], null, 0);
+    try compat.attachExternal(roots[2], sync_raw);
+    var call_arguments = [_]Value{ .{}, .{} };
+    var call_frame: state.RootFrame = .{};
+    pushTestRoots(&state.active_runtime.?, &call_frame, &call_arguments);
+    defer state.active_runtime.?.popRoots(&call_frame);
+    call_arguments[0] = try testString(&state.active_runtime.?, "(o)=>1");
+    state.lnako_aot_array_new(&call_arguments[1], roots[2..3].ptr, 1);
+    lnako_aot_compat_js_call(&out, &call_arguments, 2);
+    try expectPendingFailureContains(&state.active_runtime.?, "keys-boom");
+
+    // `refreshFromRaw` の辞書ブランチ（呼出し後の再同期）も同じ文言を残す。
+    state.lnako_aot_dictionary_new(&roots[2], null, 0);
+    const refresh_raw = lnako_qjs_eval(engine, proxy_source.ptr, proxy_source.len, "<keys-boom>") orelse
+        return error.QuickJsConversionFailed;
+    defer lnako_qjs_value_free(refresh_raw);
+    try std.testing.expectError(
+        compat.reported_engine_failure,
+        compat_result.refreshFromRaw(&state.active_runtime.?, roots[2], refresh_raw),
+    );
+    try expectPendingFailureContains(&state.active_runtime.?, "keys-boom");
+}
+
+test "compat AOT runtimeはJSオブジェクト取得とJSメソッド実行でBigIntを拒否する" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, .{} };
+    var frame: state.RootFrame = .{};
+    pushTestRoots(&state.active_runtime.?, &frame, &roots);
+    defer state.active_runtime.?.popRoots(&frame);
+    var out: Value = .{};
+
+    // `JSオブジェクト取得` は辞書直下のBigIntをinterpreterと同じ文言で拒否する。
+    roots[0] = try evalCompatJs(&state.active_runtime.?, "({n:1n})");
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    roots[1] = try testString(&state.active_runtime.?, "n");
+    lnako_aot_compat_js_object_get(&out, roots[0..2].ptr, 2);
+    try expectPendingFailureContains(&state.active_runtime.?, "JSオブジェクト取得 does not support promises, functions, bigint, bytes, or nested arrays or dictionaries yet");
+
+    // 入れ子の辞書直下でも同じ文言で拒否する。
+    roots[0] = try evalCompatJs(&state.active_runtime.?, "({nested:{n:1n}})");
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    roots[1] = try testString(&state.active_runtime.?, "nested");
+    lnako_aot_compat_js_object_get(&out, roots[0..2].ptr, 2);
+    try expectPendingFailureContains(&state.active_runtime.?, "JSオブジェクト取得 does not support promises, functions, bigint, bytes, or nested arrays or dictionaries yet");
+
+    // `JSメソッド実行` が返したBigIntも同じ文言で拒否する。
+    roots[0] = try testString(&state.active_runtime.?, "({get(){return 1n}})");
+    roots[1] = try testString(&state.active_runtime.?, "get");
+    state.lnako_aot_array_new(&roots[2], null, 0);
+    lnako_aot_compat_js_method_call(&out, &roots, 3);
+    try expectPendingFailureContains(&state.active_runtime.?, "JSメソッド実行 does not support promises, functions, bigint, bytes, or nested arrays or dictionaries yet");
+
+    // 呼出し後のrefreshは`convertFull`を使うため、結果変換が拒否するBigIntでも
+    // Nako側の辞書値としては保持される。
+    roots[0] = try evalCompatJs(&state.active_runtime.?, "({n:1,set(){this.n=1n;return 'ok';}})");
+    roots[1] = try testString(&state.active_runtime.?, "set");
+    state.lnako_aot_array_new(&roots[2], null, 0);
+    lnako_aot_compat_js_method_call(&out, &roots, 3);
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    try expectBigIntText((try dictionaryValueByKey(&state.active_runtime.?, roots[0], "n")).?, "1");
+}
+
 test "compat AOT runtimeはJS関数実行の未対応戻り値を同じ文言で明示エラーにする" {
     if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
     var runtime = state.Runtime{ .allocator = std.testing.allocator };
@@ -1708,9 +1834,10 @@ fn failingCallback(_: *Value, _: *anyopaque, _: ?[*]const Value, _: usize) callc
     runtime.setFailureText("nako callback failed");
 }
 
-/// capture に保持したJS関数を呼び、その結果をcaptureの配列へ追加して要素数を
-/// 戻す Nako callback。GC後もクロージャ・capture・JS関数が生存することを、
-/// 呼出し結果の要素数で確認する。
+/// capture に保持したJS関数を呼び、その結果をcaptureの配列へ追加して
+/// `captured:<要素数>` を返す Nako callback。GC後もクロージャ・capture・JS関数が
+/// 生存することに加え、capture配列の先頭要素（heap上の文字列）が回収されず
+/// 内容まで保たれていることを文字列で確認する。
 fn captureRoundTripCallback(out: *Value, context: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {
     const runtime = if (state.active_runtime) |*active| active else return;
     const object: *state.Object = @ptrCast(@alignCast(context));
@@ -1751,7 +1878,46 @@ fn captureRoundTripCallback(out: *Value, context: *anyopaque, _: ?[*]const Value
             return;
         };
     }
-    out.* = state.numberValue(@floatFromInt(array_object.payload.array.items.len));
+    out.* = captureRoundTripText(runtime, array_object) orelse return;
+}
+
+/// capture配列の先頭要素が文字列のまま残っていることを確認し、`captured:<数>`
+/// をNako文字列として返す。要素数だけの確認では、文字列本体がGCで回収されて
+/// タグだけ残る退行を見逃すため、UTF-8内容まで突き合わせる。
+fn captureRoundTripText(runtime: *state.Runtime, array_object: *state.Object) ?Value {
+    const items = array_object.payload.array.items;
+    if (items.len == 0) {
+        runtime.setFailureText("capture callback requires a captured string element");
+        return null;
+    }
+    const first_tag = @as(Tag, @fromBackingInt(items[0].tag));
+    if (first_tag != .utf16_string and first_tag != .static_utf8_string) {
+        runtime.setFailureText("captured string element lost its string tag");
+        return null;
+    }
+    const text = state.stringUtf8Alloc(runtime, items[0]) catch |failure| {
+        runtime.setFailure(failure);
+        return null;
+    };
+    defer runtime.allocator.free(text);
+    if (!std.mem.eql(u8, text, "captured")) {
+        runtime.setFailureText("captured string element lost its content");
+        return null;
+    }
+    const combined = std.fmt.allocPrint(runtime.allocator, "{s}:{d}", .{ text, items.len }) catch |failure| {
+        runtime.setFailure(failure);
+        return null;
+    };
+    defer runtime.allocator.free(combined);
+    const units = std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, combined) catch |failure| {
+        runtime.setFailure(failure);
+        return null;
+    };
+    defer runtime.allocator.free(units);
+    return runtime.createString(units) catch |failure| {
+        runtime.setFailure(failure);
+        return null;
+    };
 }
 
 fn pushTestRoots(runtime: *state.Runtime, frame: *state.RootFrame, roots: []Value) void {
@@ -1840,7 +2006,7 @@ test "compat AOT runtimeはNako callbackの配列・辞書変更とBigIntをJS�
     state.lnako_aot_dictionary_new(&roots[1], &dictionary_pairs, dictionary_pairs.len);
     roots[2] = try state.active_runtime.?.createBigInt("9007199254740993");
     roots[3] = try state.active_runtime.?.createFunction(mutationCallback, 3, &.{});
-    roots[4] = try evalCompatJs(&state.active_runtime.?, "(a,o,b,cb)=>{cb(a,o,b);return typeof b;}");
+    roots[4] = try evalCompatJs(&state.active_runtime.?, "(a,o,b,cb)=>{const result=cb(a,o,b);return (typeof result) + ':' + (result === 9007199254740993n);}");
 
     call_arguments[0] = roots[4];
     call_arguments[1] = roots[0];
@@ -1852,7 +2018,8 @@ test "compat AOT runtimeはNako callbackの配列・辞書変更とBigIntをJS�
     {
         const actual = try state.stringUtf8Alloc(&state.active_runtime.?, out);
         defer std.testing.allocator.free(actual);
-        try std.testing.expectEqualStrings("bigint", actual);
+        // callbackの戻り値がJSのBigIntとして書き戻り、元のBigIntと一致する。
+        try std.testing.expectEqualStrings("bigint:true", actual);
     }
     // Nako callback が変更した配列・辞書が JS から戻ってきている。
     const refreshed_items = roots[0].object().?.payload.array.items;
@@ -2164,7 +2331,9 @@ test "compat AOT runtimeはJSへ渡したNakoクロージャとcaptureをGC trac
         const actual = try state.stringUtf8Alloc(&state.active_runtime.?, roots[6]);
         defer std.testing.allocator.free(actual);
         // 呼出しごとに 123 と external辞書の n=7 を追加する。1回目は3要素、2回目は5要素。
-        try std.testing.expectEqualStrings("3,5", actual);
+        // capture配列の先頭要素 "captured" がGC後も内容まで残っていることも、
+        // callbackの戻り文字列（`captured:<要素数>`）で確認する。
+        try std.testing.expectEqualStrings("captured:3,captured:5", actual);
     }
 }
 

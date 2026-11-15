@@ -199,7 +199,8 @@ fn syncContents(runtime: *state.Runtime, engine_value: *Engine, value: Value, ra
                 }
             }
             // Nako側から消えたキーはJS側でも削除する（own enumerableのみ）。
-            const keys = compat.lnako_qjs_keys(raw) orelse return error.QuickJsConversionFailed;
+            // ProxyのownKeysが投げた例外は内部エラー名に置き換えず元の文言を残す。
+            const keys = compat.lnako_qjs_keys(raw) orelse return conversionFailure(runtime, raw);
             defer compat.lnako_qjs_keys_free(keys);
             var index: usize = 0;
             while (index < compat.lnako_qjs_keys_length(keys)) : (index += 1) {
@@ -391,7 +392,7 @@ fn convertFullObject(
 ) anyerror!Value {
     const identity = compat.lnako_qjs_identity(raw);
     if (seen.get(identity)) |existing| return existing;
-    const keys = compat.lnako_qjs_keys(raw) orelse return error.QuickJsConversionFailed;
+    const keys = compat.lnako_qjs_keys(raw) orelse return conversionFailure(runtime, raw);
     defer compat.lnako_qjs_keys_free(keys);
     const count = compat.lnako_qjs_keys_length(keys);
     if (count > state.safe_array_element_limit) return error.QuickJsCollectionTooLarge;
@@ -599,7 +600,7 @@ pub fn shallowArrayFromRaw(runtime: *state.Runtime, raw: *const RawValue) !Value
 }
 
 pub fn shallowDictionaryFromRaw(runtime: *state.Runtime, raw: *const RawValue) !Value {
-    const keys = compat.lnako_qjs_keys(raw) orelse return error.QuickJsConversionFailed;
+    const keys = compat.lnako_qjs_keys(raw) orelse return conversionFailure(runtime, raw);
     defer compat.lnako_qjs_keys_free(keys);
     const count = compat.lnako_qjs_keys_length(keys);
     if (count > state.safe_array_element_limit) return error.QuickJsCollectionTooLarge;
@@ -630,8 +631,9 @@ pub fn shallowDictionaryFromRaw(runtime: *state.Runtime, raw: *const RawValue) !
 /// `JSオブジェクト取得` / `JSメソッド実行` の戻り値変換。`JS関数実行` の浅い
 /// 規則（`callResultFromRaw`）と違い、配列/辞書は再帰的に変換し、各配列/辞書へ
 /// external bindingを付与する。関数とbytesはこの経路では明示的な未対応エラーに
-/// する。BigIntは呼出し後の再同期（refresh）と変換規則を共有するため保持する。
-/// rawは消費する。
+/// する。BigIntもinterpreterの`interop_result`と同じく`QuickJsUnsupportedResult`
+/// として拒否する（呼出し後の再同期（refresh）は`convertFull`を使うため、
+/// refreshのBigInt保持は変わらない）。rawは消費する。
 pub fn resultFromRaw(runtime: *state.Runtime, raw: *RawValue) !Value {
     var seen: std.AutoHashMapUnmanaged(usize, Value) = .empty;
     defer seen.deinit(runtime.allocator);
@@ -654,14 +656,6 @@ fn convertResult(runtime: *state.Runtime, raw: *RawValue, seen: *std.AutoHashMap
     defer compat.lnako_qjs_value_free(raw);
     return switch (compat.lnako_qjs_kind(raw)) {
         .undefined, .null_value, .boolean, .number, .string => compat.primitiveFromRaw(runtime, raw),
-        .bigint => blk: {
-            // 呼出し後の再同期（refresh）で BigInt プロパティを失わないよう、
-            // interpreter の full 変換と同じ10進文字列経路で作る。
-            var length: usize = 0;
-            const text = compat.lnako_qjs_to_string(raw, &length) orelse return error.QuickJsConversionFailed;
-            defer compat.lnako_qjs_free_string(text);
-            break :blk try runtime.createBigInt(text[0..length]);
-        },
         .array => convertResultArray(runtime, raw, seen, depth),
         .object => blk: {
             if (compat.lnako_qjs_is_bytes(raw) != 0) return error.QuickJsUnsupportedResult;
@@ -708,7 +702,7 @@ fn convertResultArray(runtime: *state.Runtime, raw: *RawValue, seen: *std.AutoHa
 fn convertResultDictionary(runtime: *state.Runtime, raw: *RawValue, seen: *std.AutoHashMapUnmanaged(usize, Value), depth: usize) anyerror!Value {
     const identity = compat.lnako_qjs_identity(raw);
     if (seen.get(identity)) |existing| return existing;
-    const keys = compat.lnako_qjs_keys(raw) orelse return error.QuickJsConversionFailed;
+    const keys = compat.lnako_qjs_keys(raw) orelse return conversionFailure(runtime, raw);
     defer compat.lnako_qjs_keys_free(keys);
     const count = compat.lnako_qjs_keys_length(keys);
     if (count > state.safe_array_element_limit) return error.QuickJsCollectionTooLarge;
@@ -776,7 +770,7 @@ pub fn refreshFromRaw(runtime: *state.Runtime, value: Value, raw: *RawValue) any
             std.mem.swap(std.ArrayList(bool), &object.array_presence, &fresh_object.array_presence);
         },
         .dictionary => {
-            const keys = compat.lnako_qjs_keys(raw) orelse return error.QuickJsConversionFailed;
+            const keys = compat.lnako_qjs_keys(raw) orelse return conversionFailure(runtime, raw);
             defer compat.lnako_qjs_keys_free(keys);
             const count = compat.lnako_qjs_keys_length(keys);
             if (count > state.safe_array_element_limit) return error.QuickJsCollectionTooLarge;
