@@ -125,12 +125,17 @@ fn hostInvoke(_: *anyopaque, function_id: usize, raw_arguments: [*c]const *const
     var arguments_frame: state.RootFrame = .{};
     runtime.pushRoots(&arguments_frame, if (arguments.len == 0) null else arguments.ptr, arguments.len);
     defer runtime.popRoots(&arguments_frame);
+    // 実引数は1つの `seen` を共有して変換する。JSが `cb(o, o)` と同じ
+    // オブジェクトを複数回渡した場合に同じNako値へ写し、片方への変更が
+    // 他方の書戻しで失われないようにする。
+    var seen: std.AutoHashMapUnmanaged(usize, Value) = .empty;
+    defer seen.deinit(runtime.allocator);
     for (0..count) |index| {
         const owned = lnako_qjs_dup(raw_arguments[index]) orelse {
             clearNewPendingException(runtime, had_pending);
             return null;
         };
-        arguments[index] = compat_js_result.jsEvalResult(runtime, owned) catch {
+        arguments[index] = compat_js_result.jsEvalResultWithSeen(runtime, owned, &seen) catch {
             clearNewPendingException(runtime, had_pending);
             return null;
         };
@@ -323,8 +328,8 @@ pub fn externalRaw(value: Value) !?*RawValue {
 pub fn reportRefreshFailure(runtime: *state.Runtime, failure: anyerror, message: []const u8) void {
     if (failure == error.QuickJsUnsupportedResult or failure == error.QuickJsUnsupportedArgument) {
         runtime.setFailureText(message);
-    } else if (failure != reported_engine_failure) {
-        runtime.setFailure(failure);
+    } else {
+        setFailureUnlessReported(runtime, failure);
     }
 }
 
@@ -349,12 +354,12 @@ pub export fn lnako_aot_compat_js_eval(out: *Value, arguments: ?[*]const Value, 
         return;
     }
     const source = sourceUtf8Alloc(runtime, arguments.?[0]) catch |failure| {
-        runtime.setFailure(failure);
+        setFailureUnlessReported(runtime, failure);
         return;
     };
     defer runtime.allocator.free(source);
     const engine_value = ensureEngine() catch |failure| {
-        runtime.setFailure(failure);
+        setFailureUnlessReported(runtime, failure);
         return;
     };
     var raw = lnako_qjs_eval(engine_value, source.ptr, source.len, "<JS実行>") orelse {
@@ -380,7 +385,7 @@ pub export fn lnako_aot_compat_js_eval(out: *Value, arguments: ?[*]const Value, 
     // 関数プロパティを持つ辞書が `QuickJsUnsupportedValue` になっていた。
     // Issue #55）。
     out.* = compat_js_result.jsEvalResult(runtime, raw) catch |failure| {
-        runtime.setFailure(failure);
+        setFailureUnlessReported(runtime, failure);
         return;
     };
     trace_success = runtime.failure_epoch == failure_epoch_at_entry;
@@ -537,7 +542,7 @@ pub export fn lnako_aot_compat_js_call(out: *Value, arguments: ?[*]const Value, 
     // このABIは引数スライスだけを受け取る。変換中の割当てに備えてここでも
     // 引数全体をrootし、第2引数が配列のときの要素スライスの寿命を確保する。
     const rooted = runtime.allocator.alloc(Value, count) catch |failure| {
-        runtime.setFailure(failure);
+        setFailureUnlessReported(runtime, failure);
         return;
     };
     defer runtime.allocator.free(rooted);
@@ -566,7 +571,7 @@ pub export fn lnako_aot_compat_js_call(out: *Value, arguments: ?[*]const Value, 
     defer runtime.dispatch_trace.result(trace_call_id, compat_js_route, compat_js_opcode, compat_js_route, 0, trace_success);
     if (first_tag == .function) {
         const js_callable = externalRaw(rooted[0]) catch |failure| {
-            runtime.setFailure(failure);
+            setFailureUnlessReported(runtime, failure);
             return;
         };
         if (js_callable) |callable| {
@@ -574,7 +579,7 @@ pub export fn lnako_aot_compat_js_call(out: *Value, arguments: ?[*]const Value, 
             // 挟まず同じ関数をそのまま呼ぶ（interpreterのcallExternalCallResult）。
             defer lnako_qjs_value_free(callable);
             const engine_value = ensureEngine() catch |failure| {
-                runtime.setFailure(failure);
+                setFailureUnlessReported(runtime, failure);
                 return;
             };
             if (!invokeJsCallable(runtime, engine_value, callable, rooted, count, out)) return;
@@ -584,7 +589,7 @@ pub export fn lnako_aot_compat_js_call(out: *Value, arguments: ?[*]const Value, 
         // external bindingの無い関数値は Nako 関数。interpreterの
         // `effects.invoke` と同じく Nako 値のまま呼び出す。
         const values = copyValues(runtime, argumentSlice(rooted, count)) catch |failure| {
-            runtime.setFailure(failure);
+            setFailureUnlessReported(runtime, failure);
             return;
         };
         defer runtime.allocator.free(values);
@@ -597,12 +602,12 @@ pub export fn lnako_aot_compat_js_call(out: *Value, arguments: ?[*]const Value, 
     }
     // interpreterと同じく、utf16_stringの関数名はlossy変換してevalする。
     const source = state.stringUtf8Alloc(runtime, rooted[0]) catch |failure| {
-        runtime.setFailure(failure);
+        setFailureUnlessReported(runtime, failure);
         return;
     };
     defer runtime.allocator.free(source);
     const engine_value = ensureEngine() catch |failure| {
-        runtime.setFailure(failure);
+        setFailureUnlessReported(runtime, failure);
         return;
     };
     const callable = lnako_qjs_eval(engine_value, source.ptr, source.len, "<JS関数実行>") orelse {
@@ -642,7 +647,7 @@ fn invokeJsCallable(
     // 呼出し後のrefreshは実引数コンテナ自身のpayloadを差し替え得るため、
     // values（コンテナのArrayListバッファを指す）をrootedなローカルへ複製する。
     const values = copyValues(runtime, argumentSlice(rooted, count)) catch |failure| {
-        runtime.setFailure(failure);
+        setFailureUnlessReported(runtime, failure);
         return false;
     };
     defer runtime.allocator.free(values);
@@ -654,7 +659,7 @@ fn invokeJsCallable(
     var sync = SyncState{};
     defer sync.deinit(runtime.allocator);
     const raw_arguments = runtime.allocator.alloc(*const RawValue, values.len) catch |failure| {
-        runtime.setFailure(failure);
+        setFailureUnlessReported(runtime, failure);
         return false;
     };
     var initialized: usize = 0;
@@ -717,7 +722,7 @@ fn invokeJsCallable(
         if (failure == error.QuickJsUnsupportedResult) {
             runtime.setFailureText(unsupported_result_message);
         } else {
-            runtime.setFailure(failure);
+            setFailureUnlessReported(runtime, failure);
         }
         return false;
     };
@@ -773,11 +778,18 @@ fn rootedArguments(runtime: *state.Runtime, arguments: ?[*]const Value, count: u
     return rooted;
 }
 
+/// QuickJS の例外文言を既に runtime へ記録した `reported_engine_failure` を
+/// 再記録しない。ここで `setFailure` すると内部エラー名
+/// （`QuickJsConversionReported`）で元のJS例外が上書きされる。
+pub fn setFailureUnlessReported(runtime: *state.Runtime, failure: anyerror) void {
+    if (failure != reported_engine_failure) runtime.setFailure(failure);
+}
+
 pub fn reportUnsupported(runtime: *state.Runtime, failure: anyerror, message: []const u8) void {
     if (failure == error.QuickJsUnsupportedArgument or failure == error.QuickJsUnsupportedResult) {
         runtime.setFailureText(message);
-    } else if (failure != reported_engine_failure) {
-        runtime.setFailure(failure);
+    } else {
+        setFailureUnlessReported(runtime, failure);
     }
 }
 
@@ -803,13 +815,13 @@ pub export fn lnako_aot_compat_js_object_get(out: *Value, arguments: ?[*]const V
     }
     var frame: state.RootFrame = .{};
     const rooted = rootedArguments(runtime, arguments, count, &frame) catch |failure| {
-        runtime.setFailure(failure);
+        setFailureUnlessReported(runtime, failure);
         return;
     };
     defer runtime.allocator.free(rooted);
     defer runtime.popRoots(&frame);
     const engine_value = ensureEngine() catch |failure| {
-        runtime.setFailure(failure);
+        setFailureUnlessReported(runtime, failure);
         return;
     };
     var sync = SyncState{};
@@ -820,7 +832,7 @@ pub export fn lnako_aot_compat_js_object_get(out: *Value, arguments: ?[*]const V
     };
     defer lnako_qjs_value_free(raw_object);
     const name = propertyNameZ(runtime, rooted[1]) catch |failure| {
-        runtime.setFailure(failure);
+        setFailureUnlessReported(runtime, failure);
         return;
     };
     defer runtime.allocator.free(name);
@@ -865,13 +877,13 @@ pub export fn lnako_aot_compat_js_method_call(out: *Value, arguments: ?[*]const 
     }
     var frame: state.RootFrame = .{};
     const rooted = rootedArguments(runtime, arguments, count, &frame) catch |failure| {
-        runtime.setFailure(failure);
+        setFailureUnlessReported(runtime, failure);
         return;
     };
     defer runtime.allocator.free(rooted);
     defer runtime.popRoots(&frame);
     const engine_value = ensureEngine() catch |failure| {
-        runtime.setFailure(failure);
+        setFailureUnlessReported(runtime, failure);
         return;
     };
     var sync = SyncState{};
@@ -882,7 +894,7 @@ pub export fn lnako_aot_compat_js_method_call(out: *Value, arguments: ?[*]const 
     };
     defer lnako_qjs_value_free(raw_object);
     const method = propertyNameZ(runtime, rooted[1]) catch |failure| {
-        runtime.setFailure(failure);
+        setFailureUnlessReported(runtime, failure);
         return;
     };
     defer runtime.allocator.free(method);
@@ -894,7 +906,7 @@ pub export fn lnako_aot_compat_js_method_call(out: *Value, arguments: ?[*]const 
     };
     // refreshは実引数コンテナのpayloadを差し替え得るため、valuesを複製してrootする。
     const values = copyValues(runtime, values_source) catch |failure| {
-        runtime.setFailure(failure);
+        setFailureUnlessReported(runtime, failure);
         return;
     };
     defer runtime.allocator.free(values);
@@ -902,7 +914,7 @@ pub export fn lnako_aot_compat_js_method_call(out: *Value, arguments: ?[*]const 
     runtime.pushRoots(&values_frame, if (values.len == 0) null else values.ptr, values.len);
     defer runtime.popRoots(&values_frame);
     const raw_arguments = runtime.allocator.alloc(*const RawValue, values.len) catch |failure| {
-        runtime.setFailure(failure);
+        setFailureUnlessReported(runtime, failure);
         return;
     };
     var initialized: usize = 0;
@@ -987,11 +999,11 @@ pub export fn lnako_aot_compat_esm_register(manifest: ?[*]const u8, length: usiz
     const bytes = if (manifest) |pointer| pointer[0..length] else return;
     if (bytes.len == 0) return;
     const engine_value = ensureEngine() catch |failure| {
-        runtime.setFailure(failure);
+        setFailureUnlessReported(runtime, failure);
         return;
     };
     var parsed = std.json.parseFromSlice(std.json.Value, runtime.allocator, bytes, .{}) catch |failure| {
-        runtime.setFailure(failure);
+        setFailureUnlessReported(runtime, failure);
         return;
     };
     defer parsed.deinit();
@@ -1032,13 +1044,13 @@ pub export fn lnako_aot_compat_esm_register(manifest: ?[*]const u8, length: usiz
         const path = jsonString(object.get("path")) orelse continue;
         const source = jsonString(object.get("source")) orelse continue;
         const path_z = dupeModuleName(runtime, path) catch |failure| {
-            runtime.setFailure(failure);
+            setFailureUnlessReported(runtime, failure);
             return;
         };
         defer runtime.allocator.free(path_z);
         const package_root = jsonString(object.get("package_root"));
         const root_z = if (package_root) |root| dupeModuleName(runtime, root) catch |failure| {
-            runtime.setFailure(failure);
+            setFailureUnlessReported(runtime, failure);
             return;
         } else null;
         defer if (root_z) |root| runtime.allocator.free(root);
@@ -1053,7 +1065,7 @@ pub export fn lnako_aot_compat_esm_register(manifest: ?[*]const u8, length: usiz
         for (aliases) |alias| {
             const alias_text = jsonString(alias) orelse continue;
             const alias_z = runtime.allocator.dupeSentinel(u8, alias_text, 0) catch |failure| {
-                runtime.setFailure(failure);
+                setFailureUnlessReported(runtime, failure);
                 return;
             };
             defer runtime.allocator.free(alias_z);

@@ -742,6 +742,108 @@ test "compat AOT runtimeは辞書戻り値の変換中GCで要素値を失わな
     lnako_aot_compat_deinit();
 }
 
+fn collectDuringDictionaryKeyCallback(out: *Value, _: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (state.active_runtime) |*active| active else return;
+    // 辞書キーがrootされる前にGCを走らせ、未rootなら回収される状態を作る。
+    _ = runtime.collect();
+    // 回収されたキーと同じ大きさの文字列で領域を再利用し、未rootなら壊す。
+    const units = [_]u16{'X'};
+    var iteration: usize = 0;
+    while (iteration < 512) : (iteration += 1) {
+        _ = runtime.createString(&units) catch return;
+    }
+}
+
+test "compat AOT runtimeはgetter経由のGCから辞書キーを保護する" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, .{} };
+    var frame: state.RootFrame = .{};
+    pushTestRoots(&state.active_runtime.?, &frame, &roots);
+    defer state.active_runtime.?.popRoots(&frame);
+    var call_arguments = [_]Value{ .{}, .{} };
+    var out: Value = .{};
+
+    // Nako callback を JS の globalThis へ渡し、getter から呼び戻す。
+    roots[0] = try state.active_runtime.?.createFunction(collectDuringDictionaryKeyCallback, 0, &.{});
+    roots[1] = try evalCompatJs(&state.active_runtime.?, "(cb)=>{globalThis.__lnako_gc_key_cb=cb;return 0;}");
+    call_arguments[0] = roots[1];
+    call_arguments[1] = roots[0];
+    state.lnako_aot_function_call(&out, &call_arguments[0], call_arguments[1..].ptr, 1);
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+
+    // 辞書変換ではキー `k` を root してから getter を呼ぶ。getter が Nako
+    // callback 経由で collect を走らせても、キーは回収されない。
+    roots[2] = try evalCompatJs(
+        &state.active_runtime.?,
+        "({get k(){globalThis.__lnako_gc_key_cb();return 'v';}})",
+    );
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.dictionary)), roots[2].tag);
+    const entries = roots[2].object().?.payload.dictionary.entries.items;
+    try std.testing.expectEqual(@as(usize, 1), entries.len);
+    {
+        const key_units = try state.valueUtf16Alloc(&state.active_runtime.?, entries[0].key);
+        defer std.testing.allocator.free(key_units);
+        try std.testing.expectEqualSlices(u16, &.{'k'}, key_units);
+    }
+    {
+        const value_units = try state.valueUtf16Alloc(&state.active_runtime.?, entries[0].value);
+        defer std.testing.allocator.free(value_units);
+        try std.testing.expectEqualSlices(u16, &.{'v'}, value_units);
+    }
+}
+
+test "compat AOT runtimeは変換中のJS例外文言を内部エラー名で上書きしない" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    var roots = [_]Value{.{}};
+    var frame: state.RootFrame = .{};
+    pushTestRoots(&state.active_runtime.?, &frame, &roots);
+    defer state.active_runtime.?.popRoots(&frame);
+
+    // JS実行 の full 変換中に getter が投げた例外は、内部エラー名ではなく
+    // 元のJS例外文言として runtime に残る。
+    _ = try evalCompatJs(&state.active_runtime.?, "({get k(){throw new Error('conversion-boom');}})");
+    try std.testing.expect(state.active_runtime.?.has_pending_exception);
+    {
+        const message = state.active_runtime.?.takeException();
+        const actual = try state.stringUtf8Alloc(&state.active_runtime.?, message);
+        defer std.testing.allocator.free(actual);
+        try std.testing.expect(std.mem.indexOf(u8, actual, "conversion-boom") != null);
+        try std.testing.expect(std.mem.indexOf(u8, actual, "QuickJsConversionReported") == null);
+    }
+
+    // JS関数値の戻り値変換でも同じ文言を保持する。
+    roots[0] = try evalCompatJs(&state.active_runtime.?, "()=>({get k(){throw new Error('callback-boom');}})");
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    var out: Value = .{};
+    state.lnako_aot_function_call(&out, &roots[0], null, 0);
+    try std.testing.expect(state.active_runtime.?.has_pending_exception);
+    {
+        const message = state.active_runtime.?.takeException();
+        const actual = try state.stringUtf8Alloc(&state.active_runtime.?, message);
+        defer std.testing.allocator.free(actual);
+        try std.testing.expect(std.mem.indexOf(u8, actual, "callback-boom") != null);
+        try std.testing.expect(std.mem.indexOf(u8, actual, "QuickJsConversionReported") == null);
+    }
+}
+
 test "compat AOT runtimeはJS関数実行の未対応戻り値を同じ文言で明示エラーにする" {
     if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
     var runtime = state.Runtime{ .allocator = std.testing.allocator };
@@ -1759,6 +1861,69 @@ test "compat AOT runtimeはNako callbackの配列・辞書変更とBigIntをJS�
     try std.testing.expectEqual(@as(f64, 42), @as(f64, @bitCast(roots[1].object().?.payload.dictionary.entries.items[0].value.payload)));
 }
 
+var test_shared_argument_identity = false;
+
+fn sharedArgumentCallback(out: *Value, _: *anyopaque, arguments_slice: ?[*]const Value, count: usize) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (state.active_runtime) |*active| active else return;
+    const arguments = arguments_slice orelse return;
+    if (count < 2) return;
+    const first = arguments[0];
+    const second = arguments[1];
+    test_shared_argument_identity = first.object() != null and first.object() == second.object();
+    const object = first.object() orelse return;
+    if (object.payload != .dictionary) return;
+    const units = std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, "n") catch return;
+    defer runtime.allocator.free(units);
+    const key = runtime.createString(units) catch return;
+    var roots = [_]Value{key};
+    var frame: state.RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    runtime.setDictionary(&object.payload.dictionary, roots[0], state.numberValue(2)) catch return;
+    out.* = first;
+}
+
+test "compat AOT runtimeは同じJSオブジェクトの複数実引数を同一のNako値へ変換する" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, .{} };
+    var frame: state.RootFrame = .{};
+    pushTestRoots(&state.active_runtime.?, &frame, &roots);
+    defer state.active_runtime.?.popRoots(&frame);
+    var call_arguments = [_]Value{ .{}, .{}, .{} };
+    var out: Value = .{};
+
+    roots[0] = try state.active_runtime.?.createFunction(sharedArgumentCallback, 2, &.{});
+    // JS が同じオブジェクトを2回渡す。Nako callback は第1引数の n を 2 にし、
+    // 戻り値として JS は o.n を返す。
+    roots[1] = try evalCompatJs(&state.active_runtime.?, "(o,cb)=>{cb(o,o);return o.n;}");
+    const key = try testString(&state.active_runtime.?, "n");
+    var dictionary_pairs = [_]Value{ key, state.numberValue(1) };
+    state.lnako_aot_dictionary_new(&roots[2], &dictionary_pairs, dictionary_pairs.len);
+    test_shared_argument_identity = false;
+    call_arguments[0] = roots[1];
+    call_arguments[1] = roots[2];
+    call_arguments[2] = roots[0];
+    state.lnako_aot_function_call(&out, &call_arguments[0], call_arguments[1..].ptr, 2);
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    // Nako 側で2つの実引数が同じ辞書オブジェクトになっている。
+    try std.testing.expect(test_shared_argument_identity);
+    // 第1引数への変更が第2引数の書戻しで失われず、JS 側の o.n も 2 になる。
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.number)), out.tag);
+    try std.testing.expectEqual(@as(f64, 2), @as(f64, @bitCast(out.payload)));
+    const refreshed = roots[2].object().?.payload.dictionary.entries.items;
+    try std.testing.expectEqual(@as(usize, 1), refreshed.len);
+    try std.testing.expectEqual(@as(f64, 2), @as(f64, @bitCast(refreshed[0].value.payload)));
+}
+
 test "compat AOT runtimeはPromise.then経由のNako callbackをmicrotaskで実行する" {
     if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
     var runtime = state.Runtime{ .allocator = std.testing.allocator };
@@ -1814,8 +1979,13 @@ test "compat AOT runtimeはNako callback例外をJSのtry/catchで捕捉し未�
     var out: Value = .{};
 
     roots[0] = try state.active_runtime.?.createFunction(failingCallback, 0, &.{});
-    // JS が catch した場合は Nako 側の未捕捉例外を残さない。
-    roots[1] = try evalCompatJs(&state.active_runtime.?, "(cb)=>{try{cb();return 'caught';}catch(e){return 'caught';}}");
+    // JS が catch した場合は Nako 側の未捕捉例外を残さない。try 側と catch 側で
+    // 戻り値を変え、catch した例外が QuickJS の InternalError であることも確認する
+    // （bridge が NULL を返すと QuickJS が InternalError に変換する）。
+    roots[1] = try evalCompatJs(
+        &state.active_runtime.?,
+        "(cb)=>{try{cb();return 'not-thrown';}catch(e){return 'caught:' + (e instanceof Error) + ':' + e.name;}}",
+    );
     arguments[0] = roots[1];
     arguments[1] = roots[0];
     state.lnako_aot_function_call(&out, &arguments[0], arguments[1..].ptr, 1);
@@ -1823,7 +1993,7 @@ test "compat AOT runtimeはNako callback例外をJSのtry/catchで捕捉し未�
     {
         const actual = try state.stringUtf8Alloc(&state.active_runtime.?, out);
         defer std.testing.allocator.free(actual);
-        try std.testing.expectEqualStrings("caught", actual);
+        try std.testing.expectEqualStrings("caught:true:InternalError", actual);
     }
 
     // catch しなければ呼出しが失敗し、Nako 側に例外が残る。

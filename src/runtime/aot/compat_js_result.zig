@@ -304,6 +304,14 @@ pub fn jsEvalResult(runtime: *state.Runtime, raw: *RawValue) anyerror!Value {
     return convertFull(runtime, raw, &seen, 0);
 }
 
+/// 複数のJS値を同じ `seen` で変換する。host callback の実引数のように、
+/// 同じJSオブジェクトが複数回現れ得る変換では、呼出し側が1つの `seen` を
+/// 共有して同一のNako値へ写す（個別に `jsEvalResult` を呼ぶと別オブジェクトに
+/// なり、片方への変更が他方の書戻しで失われる）。
+pub fn jsEvalResultWithSeen(runtime: *state.Runtime, raw: *RawValue, seen: *std.AutoHashMapUnmanaged(usize, Value)) anyerror!Value {
+    return convertFull(runtime, raw, seen, 0);
+}
+
 fn convertFull(
     runtime: *state.Runtime,
     raw: *RawValue,
@@ -399,13 +407,13 @@ fn convertFullObject(
         const name_z = try runtime.allocator.dupeSentinel(u8, name, 0);
         defer runtime.allocator.free(name_z);
         // キー生成に失敗した場合に item の所有権が未移転のまま漏れないよう、先に作る。
-        const key = try wtf8Value(runtime, name);
-        const item = compat.lnako_qjs_get_property(raw, name_z.ptr) orelse return conversionFailure(runtime, raw);
-        // キー文字列を root し、値の変換で GC が走っても回収されないようにする。
-        var roots = [_]Value{ key, .{} };
+        // キー文字列は get_property より前に root する。getter が Nako callback を
+        // 呼んで GC が走っても、未 root のキーが回収されないようにする。
+        var roots = [_]Value{ try wtf8Value(runtime, name), .{} };
         var entry_frame: state.RootFrame = .{};
         runtime.pushRoots(&entry_frame, &roots, roots.len);
         defer runtime.popRoots(&entry_frame);
+        const item = compat.lnako_qjs_get_property(raw, name_z.ptr) orelse return conversionFailure(runtime, raw);
         roots[1] = try convertFull(runtime, item, seen, depth + 1);
         try runtime.setDictionary(&result.object().?.payload.dictionary, roots[0], roots[1]);
     }
@@ -460,13 +468,13 @@ pub fn jsFunctionCallback(out: *Value, context: *anyopaque, arguments: ?[*]const
         return;
     }
     const engine_value = compat.ensureEngine() catch |failure| {
-        runtime.setFailure(failure);
+        compat.setFailureUnlessReported(runtime, failure);
         return;
     };
     // refresh が引数コンテナの payload を差し替えても安全なよう、実引数
     // スライスを複製して root する（interpreter の `externalCall` と同じ）。
     const snapshot = runtime.allocator.alloc(Value, len) catch |failure| {
-        runtime.setFailure(failure);
+        compat.setFailureUnlessReported(runtime, failure);
         return;
     };
     defer runtime.allocator.free(snapshot);
@@ -477,7 +485,7 @@ pub fn jsFunctionCallback(out: *Value, context: *anyopaque, arguments: ?[*]const
     var sync = SyncState{ .full_values = true };
     defer sync.deinit(runtime.allocator);
     const raw_arguments = runtime.allocator.alloc(*const RawValue, snapshot.len) catch |failure| {
-        runtime.setFailure(failure);
+        compat.setFailureUnlessReported(runtime, failure);
         return;
     };
     var initialized: usize = 0;
@@ -524,7 +532,7 @@ pub fn jsFunctionCallback(out: *Value, context: *anyopaque, arguments: ?[*]const
     // Promise は interpreter の `externalCall` と同じく await せず full 変換へ
     // 通す（`JS関数実行` の呼出し経路だけが解決値を待つ）。
     out.* = jsEvalResult(runtime, result) catch |failure| {
-        runtime.setFailure(failure);
+        compat.setFailureUnlessReported(runtime, failure);
         return;
     };
 }
@@ -716,13 +724,13 @@ fn convertResultDictionary(runtime: *state.Runtime, raw: *RawValue, seen: *std.A
         const name_z = try runtime.allocator.dupeSentinel(u8, name, 0);
         defer runtime.allocator.free(name_z);
         // キー生成に失敗した場合にitemの所有権が未移転のまま漏れないよう、先に作る。
-        const key = try wtf8Value(runtime, name);
-        const item = compat.lnako_qjs_get_property(raw, name_z.ptr) orelse return conversionFailure(runtime, raw);
-        // キー文字列をrootし、値の変換でGCが走っても回収されないようにする。
-        var roots = [_]Value{ key, .{} };
+        // キー文字列は get_property より前にrootする。getterがNako callbackを
+        // 呼んでGCが走っても、未rootのキーが回収されないようにする。
+        var roots = [_]Value{ try wtf8Value(runtime, name), .{} };
         var entry_frame: state.RootFrame = .{};
         runtime.pushRoots(&entry_frame, &roots, roots.len);
         defer runtime.popRoots(&entry_frame);
+        const item = compat.lnako_qjs_get_property(raw, name_z.ptr) orelse return conversionFailure(runtime, raw);
         roots[1] = try convertResult(runtime, item, seen, depth + 1);
         try runtime.setDictionary(&result.object().?.payload.dictionary, roots[0], roots[1]);
     }
