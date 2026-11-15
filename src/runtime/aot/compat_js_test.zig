@@ -14,6 +14,11 @@ const lnako_aot_compat_js_method_call = compat.lnako_aot_compat_js_method_call;
 const lnako_aot_compat_js_object_get = compat.lnako_aot_compat_js_object_get;
 const lnako_qjs_eval = compat.lnako_qjs_eval;
 const lnako_qjs_value_free = compat.lnako_qjs_value_free;
+const lnako_qjs_call = compat.lnako_qjs_call;
+const lnako_qjs_host_function = compat.lnako_qjs_host_function;
+const lnako_qjs_run_gc = compat.lnako_qjs_run_gc;
+const lnako_qjs_take_error = compat.lnako_qjs_take_error;
+const lnako_qjs_free_string = compat.lnako_qjs_free_string;
 
 const Value = state.Value;
 const Tag = state.Tag;
@@ -37,8 +42,8 @@ test "compat AOT runtimeはJS実行をQuickJSへdispatchする" {
     }
     const units = try std.unicode.utf8ToUtf16LeAlloc(std.testing.allocator, "1+2");
     defer std.testing.allocator.free(units);
-    var arguments = [_]Value{try state.active_runtime.?.createString(units)};
     var out: Value = .{};
+    var arguments = [_]Value{try state.active_runtime.?.createString(units)};
     lnako_aot_compat_js_eval(&out, &arguments, arguments.len);
     try std.testing.expectEqual(@as(u8, @backingInt(Tag.number)), out.tag);
     try std.testing.expectEqual(@as(f64, 3), @as(f64, @bitCast(out.payload)));
@@ -2495,10 +2500,13 @@ test "compat AOT runtimeはhostFunctionの登録失敗をロールバックす�
         failing.fail_index = fail_index;
         const registered = compat.hostFunction(&state.active_runtime.?, engine, roots[0]);
         if (registered) |raw| {
-            lnako_qjs_value_free(raw);
-            succeeded = true;
-            // 正常に返却できた登録だけがスロットを1個持つ。
+            // 正常に返却できた登録だけがスロットを1個持つ。JS 側の最後の参照を
+            // 落とすと finalizer が同期で解放通知を送る（QuickJS の zero-ref
+            // 回収）ため、保持中と解放後を分けて確認する。
             try std.testing.expectEqual(@as(usize, 1), compat.registeredHostFunctionCount());
+            lnako_qjs_value_free(raw);
+            try std.testing.expectEqual(@as(usize, 0), compat.registeredHostFunctionCount());
+            succeeded = true;
             break;
         } else |failure| {
             saw_failure = true;
@@ -2675,4 +2683,693 @@ test "compat AOT runtimeはJS関数実行の巨大配列引数をJS呼出し前�
 
     const called = try evalCompatJs(&state.active_runtime.?, "globalThis.__lnako_aot_called || 0");
     try std.testing.expectEqual(@as(f64, 0), @as(f64, @bitCast(called.payload)));
+}
+
+/// Issue #278: host 関数インスタンスの解放・参照カウント・世代・teardown と
+/// Function 意味論の回帰テスト。
+fn constant42Callback(out_value: *Value, _: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {
+    out_value.* = state.numberValue(42);
+}
+
+fn addOneCallback(out_value: *Value, _: *anyopaque, arguments: ?[*]const Value, count: usize) callconv(.c) void {
+    out_value.* = .{};
+    if (count == 0 or arguments == null) return;
+    const argument = arguments.?[0];
+    if (@as(Tag, @fromBackingInt(argument.tag)) != .number) return;
+    out_value.* = state.numberValue(@as(f64, @bitCast(argument.payload)) + 1);
+}
+
+test "compat AOT runtimeはhost関数の最後のJS参照で登録を解放しcaptureを回収する" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{} };
+    var frame: state.RootFrame = .{};
+    pushTestRoots(&state.active_runtime.?, &frame, &roots);
+    defer state.active_runtime.?.popRoots(&frame);
+    const engine_value = try ensureEngine();
+
+    const captured = try testString(&state.active_runtime.?, "captured");
+    var items = [_]Value{captured};
+    roots[0] = try state.active_runtime.?.createArray(&items);
+    roots[1] = try state.active_runtime.?.createNamedFunction(constant42Callback, 1, "callback", &.{roots[0]});
+    const objects_with_capture = state.active_runtime.?.object_count;
+
+    const raw = try compat.hostFunction(&state.active_runtime.?, engine_value, roots[1]);
+    try std.testing.expectEqual(@as(usize, 1), compat.registeredHostFunctionCount());
+    try std.testing.expectEqual(@as(usize, 1), compat.hostFunctionInstanceCount(roots[1]));
+    // JS 側の最後の参照を落とすと finalizer が登録を解放する。
+    lnako_qjs_value_free(raw);
+    lnako_qjs_run_gc(engine_value);
+    try std.testing.expectEqual(@as(usize, 0), compat.registeredHostFunctionCount());
+    try std.testing.expectEqual(@as(usize, 0), compat.hostFunctionInstanceCount(roots[1]));
+
+    // host 関数テーブルが mark しなくなったので、Nako GC はクロージャと
+    // capture（配列・文字列）を回収できる。
+    roots[0] = .{};
+    roots[1] = .{};
+    _ = state.active_runtime.?.collect();
+    try std.testing.expect(state.active_runtime.?.object_count < objects_with_capture);
+    try std.testing.expectEqual(@as(usize, 0), state.active_runtime.?.object_count);
+}
+
+test "compat AOT runtimeはhost関数の複数JSインスタンスを参照カウントする" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    var roots = [_]Value{.{}};
+    var frame: state.RootFrame = .{};
+    pushTestRoots(&state.active_runtime.?, &frame, &roots);
+    defer state.active_runtime.?.popRoots(&frame);
+    const engine_value = try ensureEngine();
+    roots[0] = try state.active_runtime.?.createNamedFunction(constant42Callback, 1, "callback", &.{});
+
+    const first = try compat.hostFunction(&state.active_runtime.?, engine_value, roots[0]);
+    const second = try compat.hostFunction(&state.active_runtime.?, engine_value, roots[0]);
+    try std.testing.expectEqual(@as(usize, 1), compat.registeredHostFunctionCount());
+    try std.testing.expectEqual(@as(usize, 2), compat.hostFunctionInstanceCount(roots[0]));
+
+    // 1個だけ解放してもスロットは生存し、残った JS 関数は呼べる。
+    lnako_qjs_value_free(first);
+    lnako_qjs_run_gc(engine_value);
+    try std.testing.expectEqual(@as(usize, 1), compat.registeredHostFunctionCount());
+    try std.testing.expectEqual(@as(usize, 1), compat.hostFunctionInstanceCount(roots[0]));
+    const result = lnako_qjs_call(engine_value, second, null, 0) orelse return error.TestUnexpectedResult;
+    defer lnako_qjs_value_free(result);
+    const converted = try compat.primitiveFromRaw(&state.active_runtime.?, result);
+    try std.testing.expectEqual(@as(f64, 42), @as(f64, @bitCast(converted.payload)));
+
+    // すべて解放するとスロットが消える。
+    lnako_qjs_value_free(second);
+    lnako_qjs_run_gc(engine_value);
+    try std.testing.expectEqual(@as(usize, 0), compat.registeredHostFunctionCount());
+}
+
+test "compat AOT runtimeはhost関数スロットを新世代で再利用し古いIDを拒否する" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{} };
+    var frame: state.RootFrame = .{};
+    pushTestRoots(&state.active_runtime.?, &frame, &roots);
+    defer state.active_runtime.?.popRoots(&frame);
+    const engine_value = try ensureEngine();
+    roots[0] = try state.active_runtime.?.createNamedFunction(constant42Callback, 1, "first", &.{});
+    roots[1] = try state.active_runtime.?.createNamedFunction(constant42Callback, 1, "second", &.{});
+
+    const raw_first = try compat.hostFunction(&state.active_runtime.?, engine_value, roots[0]);
+    const first_handle = compat.hostFunctionHandle(roots[0]) orelse return error.TestUnexpectedResult;
+    lnako_qjs_value_free(raw_first);
+    lnako_qjs_run_gc(engine_value);
+    try std.testing.expectEqual(@as(usize, 0), compat.registeredHostFunctionCount());
+
+    const raw_second = try compat.hostFunction(&state.active_runtime.?, engine_value, roots[1]);
+    defer lnako_qjs_value_free(raw_second);
+    const second_handle = compat.hostFunctionHandle(roots[1]) orelse return error.TestUnexpectedResult;
+    // 解放された index を再利用し、世代は単調に進む。
+    try std.testing.expectEqual(first_handle.index, second_handle.index);
+    try std.testing.expect(second_handle.generation > first_handle.generation);
+    try std.testing.expectEqual(@as(usize, 1), compat.registeredHostFunctionCount());
+
+    // 古い (index, generation) で作った JS 関数は新しいエントリを呼べない。
+    const stale = lnako_qjs_host_function(engine_value, first_handle.index, first_handle.generation, "stale") orelse
+        return error.TestUnexpectedResult;
+    defer lnako_qjs_value_free(stale);
+    const stale_result = lnako_qjs_call(engine_value, stale, null, 0);
+    try std.testing.expect(stale_result == null);
+    const message = lnako_qjs_take_error(engine_value) orelse return error.TestUnexpectedResult;
+    defer lnako_qjs_free_string(message);
+    try std.testing.expect(std.mem.indexOf(u8, std.mem.span(message), "InternalError") != null);
+    try std.testing.expectEqual(@as(usize, 1), compat.registeredHostFunctionCount());
+
+    // 新しい関数はそのまま呼べる。
+    const result = lnako_qjs_call(engine_value, raw_second, null, 0) orelse return error.TestUnexpectedResult;
+    defer lnako_qjs_value_free(result);
+    const converted = try compat.primitiveFromRaw(&state.active_runtime.?, result);
+    try std.testing.expectEqual(@as(f64, 42), @as(f64, @bitCast(converted.payload)));
+}
+
+test "compat AOT runtimeはhost関数のFunction意味論を維持する" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{} };
+    var frame: state.RootFrame = .{};
+    pushTestRoots(&state.active_runtime.?, &frame, &roots);
+    defer state.active_runtime.?.popRoots(&frame);
+    const engine_value = try ensureEngine();
+    roots[0] = try state.active_runtime.?.createMethodFunction(addOneCallback, 1, "callback", &.{});
+
+    const raw = try compat.hostFunction(&state.active_runtime.?, engine_value, roots[0]);
+    // `JS_NewCFunctionData` 版と同じく JS の function として観測される。
+    try std.testing.expectEqual(compat.Kind.function, compat.lnako_qjs_kind(raw));
+    // globalThis へ載せて raw を手放しても JS 側の参照を維持する。
+    const global = lnako_qjs_eval(engine_value, "globalThis", 10, "<global>") orelse return error.TestUnexpectedResult;
+    defer lnako_qjs_value_free(global);
+    try std.testing.expect(compat.lnako_qjs_set_property(global, "__lnako_semantics_f", raw) > 0);
+    lnako_qjs_value_free(raw);
+
+    const source =
+        "[" ++
+        "typeof __lnako_semantics_f," ++
+        " __lnako_semantics_f instanceof Function," ++
+        " __lnako_semantics_f.name," ++
+        " __lnako_semantics_f.length," ++
+        " __lnako_semantics_f(41)," ++
+        " __lnako_semantics_f.call(null, 41)," ++
+        " __lnako_semantics_f.apply(null, [41])," ++
+        " __lnako_semantics_f.bind(null, 41)()," ++
+        " __lnako_semantics_f.constructor === Function" ++
+        "].join(',')";
+    roots[1] = try evalCompatJs(&state.active_runtime.?, source);
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    const units = try state.valueUtf16Alloc(&state.active_runtime.?, roots[1]);
+    defer std.testing.allocator.free(units);
+    const expected = try std.unicode.utf8ToUtf16LeAlloc(std.testing.allocator, "function,true,callback,0,42,42,42,42,true");
+    defer std.testing.allocator.free(expected);
+    try std.testing.expectEqualSlices(u16, expected, units);
+}
+
+test "compat AOT runtimeはhost関数を残したままdeinitを先に呼んでも安全に終了する" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    state.active_runtime = runtime;
+    defer {
+        if (state.active_runtime != null) {
+            runtime = state.active_runtime.?;
+            state.active_runtime = null;
+        }
+    }
+    var roots = [_]Value{.{}};
+    var frame: state.RootFrame = .{};
+    pushTestRoots(&state.active_runtime.?, &frame, &roots);
+    const engine_value = try ensureEngine();
+    roots[0] = try state.active_runtime.?.createFunction(constant42Callback, 1, &.{});
+    const raw = try compat.hostFunction(&state.active_runtime.?, engine_value, roots[0]);
+    try std.testing.expectEqual(@as(usize, 1), compat.registeredHostFunctionCount());
+
+    // 未解放の JS 関数オブジェクトを残したまま compat deinit → runtime deinit。
+    lnako_aot_compat_deinit();
+    try std.testing.expect(compat.activeEngine() == null);
+    state.active_runtime.?.popRoots(&frame);
+    runtime = state.active_runtime.?;
+    state.active_runtime = null;
+    runtime.deinit();
+    // engine は wrapper が保持している。finalizer は解除済みの通知を呼ばない。
+    lnako_qjs_value_free(raw);
+}
+
+test "compat AOT runtimeはhost関数を残したままruntime deinitを先に呼んでも安全に終了する" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    state.active_runtime = runtime;
+    var roots = [_]Value{.{}};
+    var frame: state.RootFrame = .{};
+    pushTestRoots(&state.active_runtime.?, &frame, &roots);
+    const engine_value = try ensureEngine();
+    roots[0] = try state.active_runtime.?.createFunction(constant42Callback, 1, &.{});
+    const raw = try compat.hostFunction(&state.active_runtime.?, engine_value, roots[0]);
+    try std.testing.expectEqual(@as(usize, 1), compat.registeredHostFunctionCount());
+
+    // runtime.deinit が先。compat_deinit が通知とテーブルを解除する。
+    state.active_runtime.?.popRoots(&frame);
+    runtime = state.active_runtime.?;
+    state.active_runtime = null;
+    runtime.deinit();
+    lnako_qjs_value_free(raw);
+    lnako_aot_compat_deinit();
+    try std.testing.expect(compat.activeEngine() == null);
+}
+
+fn cycleCallback(out_value: *Value, context: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {
+    const object: *state.Object = @ptrCast(@alignCast(context));
+    out_value.* = .{};
+    if (object.payload.function.captures.len == 0) return;
+    var captured = object.payload.function.captures[0];
+    state.lnako_aot_function_call(out_value, &captured, null, 0);
+}
+
+test "compat AOT runtimeはJSとNakoの循環参照をteardownまで保持する" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    // Nako クロージャが JS 値（external binding）を capture し、JS 側がその
+    // Nako callback を global で保持する循環。Nako GC は JS→Nako 辺を見ない
+    // ため、host 関数テーブルが closure を root し続ける間はどちらも回収
+    // しない（クロス GC の cycle collector は持たない）。JS 側の参照を落とす
+    // と finalizer → 登録解除 → Nako GC の順で回収できる。
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, .{} };
+    var frame: state.RootFrame = .{};
+    pushTestRoots(&state.active_runtime.?, &frame, &roots);
+    defer state.active_runtime.?.popRoots(&frame);
+    var arguments = [_]Value{ .{}, .{} };
+    var out: Value = .{};
+    const engine_value = try ensureEngine();
+
+    roots[0] = try evalCompatJs(&state.active_runtime.?, "()=>7");
+    roots[1] = try state.active_runtime.?.createFunction(cycleCallback, 0, &.{roots[0]});
+    roots[2] = try evalCompatJs(&state.active_runtime.?, "(cb)=>{globalThis.__lnako_cycle_cb=cb;return 0;}");
+    arguments[0] = roots[2];
+    arguments[1] = roots[1];
+    state.lnako_aot_function_call(&out, &arguments[0], arguments[1..].ptr, 1);
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    try std.testing.expectEqual(@as(usize, 1), compat.registeredHostFunctionCount());
+
+    // Nako 側の root を落としても host テーブルが closure を mark し続ける。
+    roots[0] = .{};
+    roots[1] = .{};
+    roots[2] = .{};
+    var iteration: usize = 0;
+    while (iteration < 4) : (iteration += 1) _ = state.active_runtime.?.collect();
+    try std.testing.expect(compat.registeredHostFunctionCount() == 1);
+    const retained = try evalCompatJs(&state.active_runtime.?, "globalThis.__lnako_cycle_cb()");
+    try std.testing.expectEqual(@as(f64, 7), @as(f64, @bitCast(retained.payload)));
+
+    // JS 側の参照を落とすと finalizer が登録を解除し、次の Nako GC で
+    // closure・capture・external JS 値が回収される。
+    roots[0] = try evalCompatJs(&state.active_runtime.?, "globalThis.__lnako_cycle_cb = null; 0");
+    lnako_qjs_run_gc(engine_value);
+    try std.testing.expectEqual(@as(usize, 0), compat.registeredHostFunctionCount());
+    _ = state.active_runtime.?.collect();
+    try std.testing.expectEqual(@as(usize, 0), state.active_runtime.?.object_count);
+}
+
+// Issue #278 レビュー指摘: JS 自己循環内の callback は参照カウントゼロでは
+// 解放されず、QuickJS GC でのみ finalizer が走る。
+test "compat AOT runtimeはJS自己循環内のcallbackをQuickJS GCでのみ解放する" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{} };
+    var frame: state.RootFrame = .{};
+    pushTestRoots(&state.active_runtime.?, &frame, &roots);
+    defer state.active_runtime.?.popRoots(&frame);
+    const engine_value = try ensureEngine();
+
+    const captured = try testString(&state.active_runtime.?, "self-cycle-captured");
+    var items = [_]Value{captured};
+    roots[0] = try state.active_runtime.?.createArray(&items);
+    roots[1] = try state.active_runtime.?.createNamedFunction(constant42Callback, 1, "callback", &.{roots[0]});
+    const objects_with_capture = state.active_runtime.?.object_count;
+
+    const raw = try compat.hostFunction(&state.active_runtime.?, engine_value, roots[1]);
+    const global = lnako_qjs_eval(engine_value, "globalThis", 10, "<global>") orelse return error.TestUnexpectedResult;
+    defer lnako_qjs_value_free(global);
+    try std.testing.expect(compat.lnako_qjs_set_property(global, "__lnako_self_cycle_cb", raw) > 0);
+    lnako_qjs_value_free(raw);
+    // JS 側で自己循環を作り、wrapper と global の外部参照をすべて落とす。
+    const setup_source =
+        "{ const box = { cb: globalThis.__lnako_self_cycle_cb };" ++
+        " box.self = box;" ++
+        " globalThis.__lnako_self_cycle_cb = null;" ++
+        " 0 }";
+    const setup = lnako_qjs_eval(engine_value, setup_source.ptr, setup_source.len, "<self-cycle>") orelse
+        return error.TestUnexpectedResult;
+    lnako_qjs_value_free(setup);
+
+    // 参照カウントゼロ解放ではなく、自己循環が残っている間は生存する。
+    try std.testing.expectEqual(@as(usize, 1), compat.registeredHostFunctionCount());
+    try std.testing.expectEqual(@as(usize, 1), compat.hostFunctionInstanceCount(roots[1]));
+    roots[0] = .{};
+    roots[1] = .{};
+    _ = state.active_runtime.?.collect();
+    try std.testing.expectEqual(@as(usize, 1), compat.registeredHostFunctionCount());
+
+    // QuickJS GC で自己循環が回収され、finalizer が登録を解除する。
+    lnako_qjs_run_gc(engine_value);
+    try std.testing.expectEqual(@as(usize, 0), compat.registeredHostFunctionCount());
+    _ = state.active_runtime.?.collect();
+    try std.testing.expect(state.active_runtime.?.object_count < objects_with_capture);
+    try std.testing.expectEqual(@as(usize, 0), state.active_runtime.?.object_count);
+}
+
+// Issue #278 レビュー指摘: 2個目の生成が Zig 割当てで失敗しても、先予約
+// acquire の rollback が既存インスタンスとスロットを壊さない。
+test "compat AOT runtimeは新インスタンス生成失敗で既存インスタンスを保護する" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = std.math.maxInt(usize) });
+    var runtime = state.Runtime{ .allocator = failing.allocator() };
+    defer {
+        failing.fail_index = std.math.maxInt(usize);
+        lnako_aot_compat_deinit();
+        runtime.deinit();
+    }
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const engine_value = try ensureEngine();
+    var roots = [_]Value{.{}};
+    var frame: state.RootFrame = .{};
+    pushTestRoots(&state.active_runtime.?, &frame, &roots);
+    defer state.active_runtime.?.popRoots(&frame);
+    roots[0] = try state.active_runtime.?.createFunction(constant42Callback, 0, &.{});
+
+    const first = try compat.hostFunction(&state.active_runtime.?, engine_value, roots[0]);
+    try std.testing.expectEqual(@as(usize, 1), compat.registeredHostFunctionCount());
+    try std.testing.expectEqual(@as(usize, 1), compat.hostFunctionInstanceCount(roots[0]));
+
+    var saw_failure = false;
+    var fail_index: usize = 0;
+    while (fail_index < 2) : (fail_index += 1) {
+        failing.alloc_index = 0;
+        failing.fail_index = fail_index;
+        const second = compat.hostFunction(&state.active_runtime.?, engine_value, roots[0]);
+        if (second) |raw| {
+            lnako_qjs_value_free(raw);
+        } else |failure| {
+            saw_failure = true;
+            try std.testing.expectEqual(error.OutOfMemory, failure);
+        }
+        // 失敗しても既存インスタンスとスロットは維持される。
+        try std.testing.expectEqual(@as(usize, 1), compat.registeredHostFunctionCount());
+        try std.testing.expectEqual(@as(usize, 1), compat.hostFunctionInstanceCount(roots[0]));
+    }
+    failing.fail_index = std.math.maxInt(usize);
+    try std.testing.expect(saw_failure);
+
+    // 既存インスタンスはそのまま呼べる。
+    const result = lnako_qjs_call(engine_value, first, null, 0) orelse return error.TestUnexpectedResult;
+    defer lnako_qjs_value_free(result);
+    const converted = try compat.primitiveFromRaw(&state.active_runtime.?, result);
+    try std.testing.expectEqual(@as(f64, 42), @as(f64, @bitCast(converted.payload)));
+    lnako_qjs_value_free(first);
+    lnako_qjs_run_gc(engine_value);
+    try std.testing.expectEqual(@as(usize, 0), compat.registeredHostFunctionCount());
+}
+
+// Issue #278 レビュー指摘: 管理外 engine への登録を拒否し、既存テーブルと
+// 別 engine の teardown に影響を与えない。
+test "compat AOT runtimeは不一致engineのhostFunctionを拒否する" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const engine_value = try ensureEngine();
+    var roots = [_]Value{.{}};
+    var frame: state.RootFrame = .{};
+    pushTestRoots(&state.active_runtime.?, &frame, &roots);
+    defer state.active_runtime.?.popRoots(&frame);
+    roots[0] = try state.active_runtime.?.createFunction(constant42Callback, 0, &.{});
+
+    const foreign = compat.lnako_qjs_new() orelse return error.TestUnexpectedResult;
+    defer compat.lnako_qjs_release(foreign);
+    try std.testing.expectError(
+        error.QuickJsHostUnavailable,
+        compat.hostFunction(&state.active_runtime.?, foreign, roots[0]),
+    );
+    try std.testing.expectEqual(@as(usize, 0), compat.registeredHostFunctionCount());
+
+    // 既存 engine の登録は影響を受けない。
+    const raw = try compat.hostFunction(&state.active_runtime.?, engine_value, roots[0]);
+    try std.testing.expectEqual(@as(usize, 1), compat.registeredHostFunctionCount());
+    lnako_qjs_value_free(raw);
+    lnako_qjs_run_gc(engine_value);
+    try std.testing.expectEqual(@as(usize, 0), compat.registeredHostFunctionCount());
+}
+
+// Issue #278 レビュー指摘: engine 生成・破棄を繰り返してもプロセス共通の
+// class ID を消費し尽くさない。
+test "compat AOT runtimeは複数engineの生成破棄を繰り返してもclass IDを枯渇させない" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var iteration: usize = 0;
+    while (iteration < 256) : (iteration += 1) {
+        const created = compat.lnako_qjs_new() orelse return error.TestUnexpectedResult;
+        compat.lnako_qjs_release(created);
+    }
+
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const engine_value = try ensureEngine();
+    var roots = [_]Value{.{}};
+    var frame: state.RootFrame = .{};
+    pushTestRoots(&state.active_runtime.?, &frame, &roots);
+    defer state.active_runtime.?.popRoots(&frame);
+    roots[0] = try state.active_runtime.?.createFunction(constant42Callback, 0, &.{});
+    const raw = try compat.hostFunction(&state.active_runtime.?, engine_value, roots[0]);
+    lnako_qjs_value_free(raw);
+    lnako_qjs_run_gc(engine_value);
+    try std.testing.expectEqual(@as(usize, 0), compat.registeredHostFunctionCount());
+}
+
+// Issue #278 レビュー指摘: `globalThis.Function` を壊しても、生成した host
+// 関数は intrinsic な `Function.prototype` を継承し、call/apply/bind が壊れない。
+test "compat AOT runtimeはglobalThis.Function改変下でもhost関数の意味論を維持する" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{} };
+    var frame: state.RootFrame = .{};
+    pushTestRoots(&state.active_runtime.?, &frame, &roots);
+    defer state.active_runtime.?.popRoots(&frame);
+    const engine_value = try ensureEngine();
+
+    const break_source = "globalThis.Function = 0; 0";
+    const broken = lnako_qjs_eval(engine_value, break_source.ptr, break_source.len, "<break-function>") orelse
+        return error.TestUnexpectedResult;
+    lnako_qjs_value_free(broken);
+
+    roots[0] = try state.active_runtime.?.createMethodFunction(addOneCallback, 1, "callback", &.{});
+    const raw = try compat.hostFunction(&state.active_runtime.?, engine_value, roots[0]);
+    const global = lnako_qjs_eval(engine_value, "globalThis", 10, "<global>") orelse return error.TestUnexpectedResult;
+    defer lnako_qjs_value_free(global);
+    try std.testing.expect(compat.lnako_qjs_set_property(global, "__lnako_broken_f", raw) > 0);
+    lnako_qjs_value_free(raw);
+
+    const source =
+        "[" ++
+        "typeof __lnako_broken_f," ++
+        " typeof __lnako_broken_f.call," ++
+        " typeof __lnako_broken_f.apply," ++
+        " typeof __lnako_broken_f.bind," ++
+        " __lnako_broken_f.name," ++
+        " __lnako_broken_f(41)," ++
+        " __lnako_broken_f.call(null, 41)," ++
+        " __lnako_broken_f.apply(null, [41])," ++
+        " __lnako_broken_f.bind(null, 41)()" ++
+        "].join(',')";
+    roots[1] = try evalCompatJs(&state.active_runtime.?, source);
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    const units = try state.valueUtf16Alloc(&state.active_runtime.?, roots[1]);
+    defer std.testing.allocator.free(units);
+    const expected = try std.unicode.utf8ToUtf16LeAlloc(
+        std.testing.allocator,
+        "function,function,function,function,callback,42,42,42,42",
+    );
+    defer std.testing.allocator.free(expected);
+    try std.testing.expectEqualSlices(u16, expected, units);
+}
+
+fn cycleBoxCallback(out_value: *Value, _: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {
+    out_value.* = state.numberValue(7);
+}
+
+// 真のクロス GC 循環（Nako closure → capture(external box) → box.cb →
+// host_functions → Nako closure）を作る。Nako 側が external binding を保持する
+// 限り QuickJS は box を回収できないため、循環は teardown まで保持される。
+fn setupTrueCrossGcCycle(runtime: *state.Runtime, roots: []Value, arguments: []Value, out: *Value) !*compat.Engine {
+    const engine_value = try ensureEngine();
+    // Nako closure が JS オブジェクト box を capture する。
+    roots[0] = try evalCompatJs(runtime, "({v:7})");
+    roots[1] = try runtime.createFunction(cycleBoxCallback, 0, &.{roots[0]});
+    const raw = try compat.hostFunction(runtime, engine_value, roots[1]);
+    const global = lnako_qjs_eval(engine_value, "globalThis", 10, "<global>") orelse return error.TestUnexpectedResult;
+    defer lnako_qjs_value_free(global);
+    try std.testing.expect(compat.lnako_qjs_set_property(global, "__lnako_cycle_cb", raw) > 0);
+    lnako_qjs_value_free(raw);
+    // box を JS global に載せる。この時点の box は cb を持たないため、呼出し後の
+    // refresh が Nako 側へ cb を作ることはない。
+    roots[2] = try evalCompatJs(runtime, "(box)=>{globalThis.__lnako_cycle_box=box; return 0;}");
+    arguments[0] = roots[2];
+    arguments[1] = roots[0];
+    state.lnako_aot_function_call(out, &arguments[0], arguments[1..].ptr, 1);
+    try std.testing.expect(!runtime.has_pending_exception);
+    // Nako 引数を渡さずに box.cb へ host 関数を格納する（refresh を避け、
+    // Nako 側に cb の external binding を作らない）。
+    roots[2] = try evalCompatJs(
+        runtime,
+        "globalThis.__lnako_cycle_box.cb = globalThis.__lnako_cycle_cb;" ++
+            " globalThis.__lnako_cycle_cb = null; 0",
+    );
+    try std.testing.expectEqual(@as(usize, 1), compat.registeredHostFunctionCount());
+    return engine_value;
+}
+
+test "compat AOT runtimeは真のクロスGC循環をteardownまで保持する" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, .{} };
+    var frame: state.RootFrame = .{};
+    pushTestRoots(&state.active_runtime.?, &frame, &roots);
+    defer state.active_runtime.?.popRoots(&frame);
+    var arguments = [_]Value{ .{}, .{} };
+    var out: Value = .{};
+    const engine_value = try setupTrueCrossGcCycle(&state.active_runtime.?, &roots, &arguments, &out);
+
+    // Nako 側の root を落としても host テーブルが closure を mark し続ける。
+    roots[0] = .{};
+    roots[1] = .{};
+    roots[2] = .{};
+    var iteration: usize = 0;
+    while (iteration < 4) : (iteration += 1) _ = state.active_runtime.?.collect();
+    try std.testing.expectEqual(@as(usize, 1), compat.registeredHostFunctionCount());
+    // JS から到達可能な間は box.cb() を呼べる。
+    const retained = try evalCompatJs(&state.active_runtime.?, "globalThis.__lnako_cycle_box.cb()");
+    try std.testing.expectEqual(@as(f64, 7), @as(f64, @bitCast(retained.payload)));
+
+    // JS global から落として QuickJS GC しても、Nako の external binding が
+    // box を保持しているため循環は生き続ける（クロス GC cycle collector なし）。
+    roots[0] = try evalCompatJs(&state.active_runtime.?, "globalThis.__lnako_cycle_box = null; 0");
+    lnako_qjs_run_gc(engine_value);
+    try std.testing.expectEqual(@as(usize, 1), compat.registeredHostFunctionCount());
+    _ = state.active_runtime.?.collect();
+    try std.testing.expectEqual(@as(usize, 1), compat.registeredHostFunctionCount());
+    // 循環を残したまま teardown しても、defer の runtime.deinit と
+    // lnako_aot_compat_deinit がリーク・クラッシュなく解放する。
+}
+
+test "compat AOT runtimeはクロスGC循環の辺を切ると実行中に回収する" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, .{} };
+    var frame: state.RootFrame = .{};
+    pushTestRoots(&state.active_runtime.?, &frame, &roots);
+    defer state.active_runtime.?.popRoots(&frame);
+    var arguments = [_]Value{ .{}, .{} };
+    var out: Value = .{};
+    const engine_value = try setupTrueCrossGcCycle(&state.active_runtime.?, &roots, &arguments, &out);
+
+    // JS→Nako 辺（box.cb）と JS global を落として循環を切る。
+    roots[0] = try evalCompatJs(
+        &state.active_runtime.?,
+        "globalThis.__lnako_cycle_box.cb = null; globalThis.__lnako_cycle_box = null; 0",
+    );
+    lnako_qjs_run_gc(engine_value);
+    try std.testing.expectEqual(@as(usize, 0), compat.registeredHostFunctionCount());
+    // Nako GC で closure と capture（external box）が回収される。
+    roots[0] = .{};
+    roots[1] = .{};
+    _ = state.active_runtime.?.collect();
+    try std.testing.expectEqual(@as(usize, 0), state.active_runtime.?.object_count);
+}
+
+// Issue #278 再レビュー指摘: C 側の関数名文字列生成（JS_NewString）が OOM で
+// 失敗した場合に、例外を name に格納した半端な wrapper を返さず失敗し、
+// 先予約した参照カウントもロールバックして既存インスタンスを保護する。
+test "compat AOT runtimeはhostFunctionのJS側名前割当てOOM時に失敗し既存インスタンスを保護する" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const engine_value = try ensureEngine();
+
+    const large_name = try std.testing.allocator.alloc(u8, 1024 * 1024);
+    defer std.testing.allocator.free(large_name);
+    @memset(large_name, 'a');
+
+    var roots = [_]Value{ .{}, .{} };
+    var frame: state.RootFrame = .{};
+    pushTestRoots(&state.active_runtime.?, &frame, &roots);
+    defer state.active_runtime.?.popRoots(&frame);
+
+    roots[0] = try state.active_runtime.?.createNamedFunction(constant42Callback, 0, large_name, &.{});
+    roots[1] = try state.active_runtime.?.createNamedFunction(constant42Callback, 0, large_name, &.{});
+
+    const existing = try compat.hostFunction(&state.active_runtime.?, engine_value, roots[0]);
+    defer lnako_qjs_value_free(existing);
+    try std.testing.expectEqual(@as(usize, 1), compat.registeredHostFunctionCount());
+    try std.testing.expectEqual(@as(usize, 1), compat.hostFunctionInstanceCount(roots[0]));
+
+    compat.lnako_qjs_set_memory_limit(engine_value, 256 * 1024);
+    defer compat.lnako_qjs_set_memory_limit(engine_value, std.math.maxInt(usize));
+
+    try std.testing.expectError(error.OutOfMemory, compat.hostFunction(&state.active_runtime.?, engine_value, roots[0]));
+    if (compat.lnako_qjs_take_error(engine_value)) |err_text| compat.lnako_qjs_free_string(err_text);
+    try std.testing.expectEqual(@as(usize, 1), compat.registeredHostFunctionCount());
+    try std.testing.expectEqual(@as(usize, 1), compat.hostFunctionInstanceCount(roots[0]));
+
+    try std.testing.expectError(error.OutOfMemory, compat.hostFunction(&state.active_runtime.?, engine_value, roots[1]));
+    if (compat.lnako_qjs_take_error(engine_value)) |err_text| compat.lnako_qjs_free_string(err_text);
+    try std.testing.expectEqual(@as(usize, 1), compat.registeredHostFunctionCount());
+    try std.testing.expectEqual(@as(usize, 0), compat.hostFunctionInstanceCount(roots[1]));
+
+    compat.lnako_qjs_set_memory_limit(engine_value, std.math.maxInt(usize));
+    const global = lnako_qjs_eval(engine_value, "globalThis", 10, "<global>") orelse return error.TestUnexpectedResult;
+    defer lnako_qjs_value_free(global);
+    try std.testing.expect(compat.lnako_qjs_set_property(global, "__lnako_oom_existing", existing) > 0);
+    roots[0] = try evalCompatJs(&state.active_runtime.?, "globalThis.__lnako_oom_existing()");
+    try std.testing.expectEqual(@as(f64, 42), @as(f64, @bitCast(roots[0].payload)));
 }

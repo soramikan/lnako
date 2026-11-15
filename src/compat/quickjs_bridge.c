@@ -19,6 +19,15 @@ struct LnakoQuickJs {
     LnakoQuickJsHostSet host_set;
     LnakoQuickJsHostInvoke host_invoke;
     LnakoQuickJsHostExec host_exec;
+    LnakoQuickJsHostRelease host_release;
+    /// Nako 関数を JS 関数として表す class。`call` と `finalizer` を持ち、
+    /// `JS_IsFunction` は class の `call` が非NULLなら true を返す。
+    JSClassID host_function_class_id;
+    /// 生成した host 関数の proto に使う intrinsic な `Function.prototype`。
+    /// `globalThis.Function` はユーザーJSが差し替えられるため、生成時に
+    /// グローバル名前引きをしない。`JS_NewContext` 直後に一度だけ取得し、
+    /// `JS_FreeContext` の前に解放する。
+    JSValue host_function_proto;
     /// 非0ならhost_getがNULLを返した直接読み取りを未定義値ではなく
     /// 例外にする（AOT compatのように変数bridgeを持たないruntime用）。
     int strict_host_reads;
@@ -64,6 +73,19 @@ struct LnakoQuickJsKeys {
     size_t length;
     char **items;
     size_t *item_lengths;
+};
+
+/// `lnako_qjs_host_function` が生成する JS 関数1個分の状態。finalizer は
+/// この構造体を1回だけ解放し、host 側へ解放通知を1回送る。ここには Nako の
+/// 値や runtime を保持しない（finalizer 中の再入を避ける安全境界）。
+struct LnakoQuickJsHostFunctionInstance {
+    LnakoQuickJs *engine;
+    uintptr_t function_id;
+    uint64_t generation;
+    /// 呼出し側へ wrapper を返せたインスタンスだけ 1。生成途中で失敗した
+    /// インスタンスの finalizer は解放通知を送らない（成功済みインスタンスの
+    /// 参照カウントを誤って減らさない）。
+    int committed;
 };
 
 static char *copy_bytes(const char *source, size_t length) {
@@ -233,18 +255,90 @@ static JSValue host_exec(JSContext *context, JSValueConst this_value, int argc, 
     return take_host_result(context, engine, result);
 }
 
-static JSValue host_invoke(JSContext *context, JSValueConst this_value, int argc, JSValueConst *argv, int magic, JSValue *function_data) {
-    (void)this_value;
-    (void)magic;
+/// `JSClassDef.call`。`JS_NewCFunctionData` 版の `host_invoke` と同じく、
+/// 引数・例外・戻り値の変換規則をそのまま使う。`function_id` と `generation`
+/// は finalizer と同じインスタンスから取り出す。
+static JSValue host_function_call(JSContext *context, JSValueConst func_obj, JSValueConst this_val,
+                                  int argc, JSValueConst *argv, int flags) {
+    (void)this_val;
+    (void)flags;
     LnakoQuickJs *engine = JS_GetContextOpaque(context);
     if (!engine || !engine->host_invoke) return JS_ThrowInternalError(context, "lnako function bridge is unavailable");
-    int64_t function_id = 0;
-    if (JS_ToInt64(context, &function_id, function_data[0]) < 0 || function_id < 0) return JS_EXCEPTION;
+    struct LnakoQuickJsHostFunctionInstance *instance = JS_GetOpaque(func_obj, engine->host_function_class_id);
+    if (!instance) return JS_ThrowInternalError(context, "lnako function bridge is unavailable");
     LnakoQuickJsValue **arguments = borrow_host_arguments(engine, argc, argv);
     if (argc > 0 && !arguments) return JS_ThrowOutOfMemory(context);
-    LnakoQuickJsValue *result = engine->host_invoke(engine->host_opaque, (uintptr_t)function_id, (const LnakoQuickJsValue *const *)arguments, (size_t)argc);
+    LnakoQuickJsValue *result = engine->host_invoke(engine->host_opaque, instance->function_id, instance->generation,
+                                                    (const LnakoQuickJsValue *const *)arguments, (size_t)argc);
     free_borrowed_host_arguments(arguments);
     return take_host_result(context, engine, result);
+}
+
+/// class の finalizer。QuickJS の GC 中に走るため、ここから QuickJS API や
+/// Nako GC を呼ばない。`host_release` はホスト側の参照カウント減算とスロット
+/// 無効化だけを行う安全な通知で、teardown 中は NULL にされている。
+static void host_function_finalizer(JSRuntime *runtime, JSValue value) {
+    (void)runtime;
+    JSClassID class_id = 0;
+    struct LnakoQuickJsHostFunctionInstance *instance = JS_GetAnyOpaque(value, &class_id);
+    if (!instance) return;
+    LnakoQuickJs *engine = instance->engine;
+    uintptr_t function_id = instance->function_id;
+    uint64_t generation = instance->generation;
+    int instance_committed = instance->committed;
+    free(instance);
+    if (instance_committed && engine && engine->host_release)
+        engine->host_release(engine->host_opaque, function_id, generation);
+}
+
+/// プロセス共通の host 関数 class ID。`JS_NewClassID` はポインタ先が非0なら
+/// 同じ ID を返すため、engine を生成・破棄するたびに `js_class_id_alloc` を
+/// 消費しない（65536 回で枯渇するのを防ぐ）。
+static JSClassID shared_host_function_class_id = 0;
+
+/// `JSClassDef` を runtime へ登録する。class ID はプロセス共通で、runtime
+/// ごとに未登録なら `JS_NewClass` する。`JS_NewContext` はその時点の
+/// `rt->class_count` で `class_proto` を確保するため、この関数は
+/// `JS_NewRuntime` の後・`JS_NewContext` の前に呼ぶ。
+static int install_host_function_class(LnakoQuickJs *engine) {
+    JSClassID class_id = JS_NewClassID(&shared_host_function_class_id);
+    if (class_id == 0) return -1;
+    JSClassDef definition;
+    memset(&definition, 0, sizeof(definition));
+    definition.class_name = "LnakoHostFunction";
+    definition.finalizer = host_function_finalizer;
+    definition.call = host_function_call;
+    if (!JS_IsRegisteredClass(engine->runtime, class_id)) {
+        if (JS_NewClass(engine->runtime, class_id, &definition) < 0) return -1;
+    }
+    engine->host_function_class_id = class_id;
+    return 0;
+}
+
+/// `Function.prototype` をグローバル名前引きなしで取得するためのダミー C 関数。
+static JSValue host_function_probe(JSContext *context, JSValueConst this_val, int argc, JSValueConst *argv) {
+    (void)context;
+    (void)this_val;
+    (void)argc;
+    (void)argv;
+    return JS_UNDEFINED;
+}
+
+/// intrinsic な `Function.prototype` を engine に保持する。`JS_NewContext` 直後
+/// （ユーザーコードや `install_host_bridge` より前）に呼ぶ。
+static int init_host_function_proto(LnakoQuickJs *engine) {
+    JSContext *context = engine->context;
+    JSValue probe = JS_NewCFunction(context, host_function_probe, "", 0);
+    if (JS_IsException(probe)) return -1;
+    JSValue proto = JS_GetPrototype(context, probe);
+    JS_FreeValue(context, probe);
+    if (JS_IsException(proto)) return -1;
+    if (!JS_IsObject(proto)) {
+        JS_FreeValue(context, proto);
+        return -1;
+    }
+    engine->host_function_proto = proto;
+    return 0;
 }
 
 static int install_host_bridge(LnakoQuickJs *engine) {
@@ -654,8 +748,16 @@ static JSClassID probe_class_id(JSContext *context, const char *source) {
 LnakoQuickJs *lnako_qjs_new(void) {
     LnakoQuickJs *engine = calloc(1, sizeof(*engine));
     if (!engine) return NULL;
+    engine->host_function_proto = JS_UNDEFINED;
     engine->runtime = JS_NewRuntime();
     if (!engine->runtime) {
+        free(engine);
+        return NULL;
+    }
+    // `JS_NewContext` は現在の `rt->class_count` で `class_proto` を確保する。
+    // host 関数 class は context 生成より前に runtime へ登録する。
+    if (install_host_function_class(engine) < 0) {
+        JS_FreeRuntime(engine->runtime);
         free(engine);
         return NULL;
     }
@@ -666,6 +768,12 @@ LnakoQuickJs *lnako_qjs_new(void) {
         return NULL;
     }
     JS_SetContextOpaque(engine->context, engine);
+    if (init_host_function_proto(engine) < 0) {
+        JS_FreeContext(engine->context);
+        JS_FreeRuntime(engine->runtime);
+        free(engine);
+        return NULL;
+    }
     // 型付き配列のclass IDはUint8ClampedArray..Float64Arrayで連続するため、
     // 両端を記録して範囲判定する（detached/OOBでもclassは変わらない）。
     engine->typed_array_class_min = probe_class_id(engine->context, "new Uint8ClampedArray(0)");
@@ -675,6 +783,7 @@ LnakoQuickJs *lnako_qjs_new(void) {
     engine->dataview_class_id = probe_class_id(engine->context, "new DataView(new ArrayBuffer(0))");
     JS_SetModuleLoaderFunc(engine->runtime, module_normalize, module_loader, engine);
     if (install_host_bridge(engine) < 0) {
+        JS_FreeValue(engine->context, engine->host_function_proto);
         JS_FreeContext(engine->context);
         JS_FreeRuntime(engine->runtime);
         free(engine);
@@ -697,12 +806,20 @@ void lnako_qjs_set_host_strict(LnakoQuickJs *engine, int strict) {
     if (engine) engine->strict_host_reads = strict != 0;
 }
 
+void lnako_qjs_set_host_release(LnakoQuickJs *engine, LnakoQuickJsHostRelease release) {
+    if (engine) engine->host_release = release;
+}
+
 void lnako_qjs_retain(LnakoQuickJs *engine) {
     if (engine) engine->references++;
 }
 
 void lnako_qjs_release(LnakoQuickJs *engine) {
     if (!engine || --engine->references) return;
+    // QuickJS の finalizer は JS_FreeContext / JS_FreeRuntime の中で走る。
+    // 先に通知を解除し、破棄済みの host テーブルへ触れないようにする。
+    engine->host_release = NULL;
+    engine->host_opaque = NULL;
     while (engine->module_sources) {
         struct LnakoQuickJsModuleSource *item = engine->module_sources;
         engine->module_sources = item->next;
@@ -720,6 +837,8 @@ void lnako_qjs_release(LnakoQuickJs *engine) {
         free(item);
     }
     free(engine->last_error);
+    // context を破棄する前に、保持している intrinsic proto を解放する。
+    JS_FreeValue(engine->context, engine->host_function_proto);
     JS_FreeContext(engine->context);
     JS_FreeRuntime(engine->runtime);
     free(engine);
@@ -952,14 +1071,58 @@ LnakoQuickJsValue *lnako_qjs_bigint(LnakoQuickJs *engine, const char *decimal, s
 LnakoQuickJsValue *lnako_qjs_array(LnakoQuickJs *engine) { return engine ? wrap_owned(engine, JS_NewArray(engine->context)) : NULL; }
 LnakoQuickJsValue *lnako_qjs_object(LnakoQuickJs *engine) { return engine ? wrap_owned(engine, JS_NewObject(engine->context)) : NULL; }
 
-LnakoQuickJsValue *lnako_qjs_host_function(LnakoQuickJs *engine, uintptr_t function_id, const char *name) {
-    if (!engine) return NULL;
-    JSValue data = JS_NewInt64(engine->context, (int64_t)function_id);
-    JSValue function = JS_NewCFunctionData(engine->context, host_invoke, 0, 0, 1, &data);
-    JS_FreeValue(engine->context, data);
+LnakoQuickJsValue *lnako_qjs_host_function(LnakoQuickJs *engine, uintptr_t function_id, uint64_t generation, const char *name) {
+    if (!engine || engine->host_function_class_id == 0) return NULL;
+    JSContext *context = engine->context;
+    // 通常の関数と同じ intrinsic な `Function.prototype` を継承させる。
+    // `globalThis.Function` はユーザーJSが差し替えられるため、生成時に
+    // グローバル名前引きをしない。保持している proto は engine が所有し、
+    // `JS_NewObjectProtoClass` は内部で dup する。
+    JSValue function = JS_NewObjectProtoClass(context, engine->host_function_proto, engine->host_function_class_id);
     if (JS_IsException(function)) return wrap_owned(engine, function);
-    if (name) JS_DefinePropertyValueStr(engine->context, function, "name", JS_NewString(engine->context, name), JS_PROP_CONFIGURABLE);
-    return wrap_owned(engine, function);
+    struct LnakoQuickJsHostFunctionInstance *instance = malloc(sizeof(*instance));
+    if (!instance) {
+        JS_FreeValue(context, function);
+        return NULL;
+    }
+    instance->engine = engine;
+    instance->function_id = function_id;
+    instance->generation = generation;
+    instance->committed = 0;
+    JS_SetOpaque(function, instance);
+    // `JS_NewCFunctionData` が設定していた own プロパティを明示的に揃える。
+    if (JS_DefinePropertyValueStr(context, function, "length", JS_NewInt32(context, 0), JS_PROP_CONFIGURABLE) < 0) {
+        set_error(engine);
+        JS_FreeValue(context, function);
+        return NULL;
+    }
+    if (name) {
+        JSValue js_name = JS_NewString(context, name);
+        if (JS_IsException(js_name)) {
+            set_error(engine);
+            JS_FreeValue(context, function);
+            return NULL;
+        }
+        if (JS_DefinePropertyValueStr(context, function, "name", js_name, JS_PROP_CONFIGURABLE) < 0) {
+            set_error(engine);
+            JS_FreeValue(context, function);
+            return NULL;
+        }
+    }
+    LnakoQuickJsValue *wrapped = wrap_owned(engine, function);
+    if (!wrapped) return NULL;
+    // wrapper を返せた時点で初めて解放通知の対象にする。ここより前の失敗は
+    // 呼出し側がまだ参照カウントを加算していないため通知してはならない。
+    instance->committed = 1;
+    return wrapped;
+}
+
+void lnako_qjs_run_gc(LnakoQuickJs *engine) {
+    if (engine && engine->runtime) JS_RunGC(engine->runtime);
+}
+
+void lnako_qjs_set_memory_limit(LnakoQuickJs *engine, size_t limit) {
+    if (engine && engine->runtime) JS_SetMemoryLimit(engine->runtime, limit);
 }
 
 LnakoQuickJsValue *lnako_qjs_dup(const LnakoQuickJsValue *value) {

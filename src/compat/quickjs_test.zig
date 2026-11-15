@@ -32,6 +32,9 @@ fn initState(runtime: *Runtime, engine: *Engine) q.State {
 }
 
 fn deinitState(state: *q.State) void {
+    // この helper は engine を呼出し側が所有する形にするため、State.deinit より
+    // 先に解放通知を外す（engine は後から release され、finalizer が走る）。
+    if (state.engine) |engine| q.lnako_qjs_set_host_release(engine, null);
     state.engine = null;
     state.deinit();
 }
@@ -775,4 +778,487 @@ test "interpreterはキー列挙中のJS例外文言を保持する" {
     runtime.clearFailureMessage();
     try std.testing.expectError(error.QuickJsExecutionFailed, conversion.refresh(refresh_dictionary, refresh_raw));
     try expectFailureContains(&runtime, "keys-boom");
+}
+
+/// Issue #278: interpreter 側 host 関数スロットの解放・参照カウント・世代・
+/// Function 意味論・teardown 安全性の回帰テスト。
+const empty_call_arguments: [0]*const RawValue = .{};
+
+fn nativeEffectsInvoke(context: *anyopaque, callable: Value, arguments: []const Value) anyerror!Value {
+    const runtime: *Runtime = @ptrCast(@alignCast(context));
+    if (callable != .function) return error.QuickJsValueNotCallable;
+    return switch (callable.function.kind) {
+        .native => |callback| callback(runtime, arguments),
+        else => error.QuickJsValueNotCallable,
+    };
+}
+
+fn nativeAddOne(_: *Runtime, arguments: []const Value) anyerror!Value {
+    if (arguments.len == 0 or arguments[0] != .number) return .undefined;
+    return .{ .number = arguments[0].number + 1 };
+}
+
+fn nativeConstant42(_: *Runtime, _: []const Value) anyerror!Value {
+    return .{ .number = 42 };
+}
+
+test "interpreterはhostFunctionの最後のJS参照で登録を解放する" {
+    if (!build_options.quickjs_enabled) return error.SkipZigTest;
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    const engine = try newEngine();
+    defer q.lnako_qjs_release(engine);
+    var state = initState(&runtime, engine);
+    defer deinitState(&state);
+    const name = try key(&runtime, "callback");
+    const callback = try runtime.createNativeFunction(name, 1, nativeAddOne, &.{});
+
+    const raw = try state.hostFunction(engine, callback);
+    try std.testing.expectEqual(@as(usize, 1), state.registeredHostFunctionCount());
+    try std.testing.expectEqual(@as(usize, 1), state.hostFunctionInstanceCount(callback));
+    q.lnako_qjs_value_free(raw);
+    q.lnako_qjs_run_gc(engine);
+    try std.testing.expectEqual(@as(usize, 0), state.registeredHostFunctionCount());
+    try std.testing.expectEqual(@as(usize, 0), state.hostFunctionInstanceCount(callback));
+}
+
+test "interpreterはhostFunctionの複数JSインスタンスを参照カウントする" {
+    if (!build_options.quickjs_enabled) return error.SkipZigTest;
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    const engine = try newEngine();
+    defer q.lnako_qjs_release(engine);
+    var state = initState(&runtime, engine);
+    defer deinitState(&state);
+    const name = try key(&runtime, "callback");
+    const callback = try runtime.createNativeFunction(name, 1, nativeConstant42, &.{});
+    state.effects = q.Effects{
+        .context = @ptrCast(&runtime),
+        .invokeFn = nativeEffectsInvoke,
+        .resolveFn = stubResolve,
+        .getGlobalFn = stubGetGlobal,
+        .setGlobalFn = stubSetGlobal,
+        .execFn = stubExec,
+    };
+
+    const first = try state.hostFunction(engine, callback);
+    const second = try state.hostFunction(engine, callback);
+    try std.testing.expectEqual(@as(usize, 1), state.registeredHostFunctionCount());
+    try std.testing.expectEqual(@as(usize, 2), state.hostFunctionInstanceCount(callback));
+
+    q.lnako_qjs_value_free(first);
+    q.lnako_qjs_run_gc(engine);
+    try std.testing.expectEqual(@as(usize, 1), state.registeredHostFunctionCount());
+    try std.testing.expectEqual(@as(usize, 1), state.hostFunctionInstanceCount(callback));
+    const result = q.lnako_qjs_call(engine, second, &empty_call_arguments, 0) orelse return error.TestUnexpectedResult;
+    // `fromRaw` は RawValue の所有権を消費する（二重解放しない）。
+    const converted = q.fromRaw(&state, &runtime, result) catch |failure| {
+        q.lnako_qjs_value_free(result);
+        return failure;
+    };
+    try std.testing.expectEqual(@as(f64, 42), converted.number);
+
+    q.lnako_qjs_value_free(second);
+    q.lnako_qjs_run_gc(engine);
+    try std.testing.expectEqual(@as(usize, 0), state.registeredHostFunctionCount());
+}
+
+test "interpreterはhostFunctionスロットを新世代で再利用し古いIDを拒否する" {
+    if (!build_options.quickjs_enabled) return error.SkipZigTest;
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    const engine = try newEngine();
+    defer q.lnako_qjs_release(engine);
+    var state = initState(&runtime, engine);
+    defer deinitState(&state);
+    state.effects = q.Effects{
+        .context = @ptrCast(&runtime),
+        .invokeFn = nativeEffectsInvoke,
+        .resolveFn = stubResolve,
+        .getGlobalFn = stubGetGlobal,
+        .setGlobalFn = stubSetGlobal,
+        .execFn = stubExec,
+    };
+    const first_name = try key(&runtime, "first");
+    const second_name = try key(&runtime, "second");
+    const first_value = try runtime.createNativeFunction(first_name, 0, nativeConstant42, &.{});
+    const second_value = try runtime.createNativeFunction(second_name, 0, nativeConstant42, &.{});
+
+    const raw_first = try state.hostFunction(engine, first_value);
+    const first_handle = state.hostFunctionHandle(first_value) orelse return error.TestUnexpectedResult;
+    q.lnako_qjs_value_free(raw_first);
+    q.lnako_qjs_run_gc(engine);
+    try std.testing.expectEqual(@as(usize, 0), state.registeredHostFunctionCount());
+
+    const raw_second = try state.hostFunction(engine, second_value);
+    defer q.lnako_qjs_value_free(raw_second);
+    const second_handle = state.hostFunctionHandle(second_value) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(first_handle.index, second_handle.index);
+    try std.testing.expect(second_handle.generation > first_handle.generation);
+
+    const stale = q.lnako_qjs_host_function(engine, first_handle.index, first_handle.generation, "stale") orelse
+        return error.TestUnexpectedResult;
+    defer q.lnako_qjs_value_free(stale);
+    try std.testing.expect(q.lnako_qjs_call(engine, stale, &empty_call_arguments, 0) == null);
+    const message = q.lnako_qjs_take_error(engine) orelse return error.TestUnexpectedResult;
+    defer q.lnako_qjs_free_string(message);
+    try std.testing.expect(std.mem.indexOf(u8, std.mem.span(message), "InternalError") != null);
+    try std.testing.expectEqual(@as(usize, 1), state.registeredHostFunctionCount());
+
+    const result = q.lnako_qjs_call(engine, raw_second, &empty_call_arguments, 0) orelse return error.TestUnexpectedResult;
+    const converted = q.fromRaw(&state, &runtime, result) catch |failure| {
+        q.lnako_qjs_value_free(result);
+        return failure;
+    };
+    try std.testing.expectEqual(@as(f64, 42), converted.number);
+}
+
+test "interpreterはhostFunctionのFunction意味論とJS生存期間を維持する" {
+    if (!build_options.quickjs_enabled) return error.SkipZigTest;
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    const engine = try newEngine();
+    defer q.lnako_qjs_release(engine);
+    var state = initState(&runtime, engine);
+    defer deinitState(&state);
+    const name = try key(&runtime, "callback");
+    const callback = try runtime.createNativeFunction(name, 1, nativeAddOne, &.{});
+    state.effects = q.Effects{
+        .context = @ptrCast(&runtime),
+        .invokeFn = nativeEffectsInvoke,
+        .resolveFn = stubResolve,
+        .getGlobalFn = stubGetGlobal,
+        .setGlobalFn = stubSetGlobal,
+        .execFn = stubExec,
+    };
+
+    const result = try callJs(
+        &state,
+        &runtime,
+        engine,
+        "(f)=>{globalThis.__interp_cb=f;return [typeof f,f instanceof Function,f.name,f.length," ++
+            "f(41),f.call(null,41),f.apply(null,[41]),f.bind(null,41)(),f.constructor===Function].join(',');}",
+        &.{callback},
+    );
+    try expectString(result, "function,true,callback,0,42,42,42,42,true");
+    // JS 側 global が保持している間はスロットが生存する。
+    try std.testing.expectEqual(@as(usize, 1), state.registeredHostFunctionCount());
+    const drop = try evalRaw(engine, "globalThis.__interp_cb = null; 0");
+    q.lnako_qjs_value_free(drop);
+    q.lnako_qjs_run_gc(engine);
+    try std.testing.expectEqual(@as(usize, 0), state.registeredHostFunctionCount());
+}
+
+test "interpreterはhostFunctionを残したままState deinitしても安全に終了する" {
+    if (!build_options.quickjs_enabled) return error.SkipZigTest;
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    const engine = try newEngine();
+    var state = initState(&runtime, engine);
+    const name = try key(&runtime, "callback");
+    const callback = try runtime.createNativeFunction(name, 0, nativeConstant42, &.{});
+    const raw = try state.hostFunction(engine, callback);
+    try std.testing.expectEqual(@as(usize, 1), state.registeredHostFunctionCount());
+
+    // State.deinit が通知とテーブルを解除して engine 参照を1つ落とす。
+    state.deinit();
+    // engine は wrapper が保持している。finalizer は解除済みの通知を呼ばない。
+    q.lnako_qjs_value_free(raw);
+}
+
+// Issue #278 レビュー指摘: JS 自己循環内の callback は参照カウントゼロでは
+// 解放されず、QuickJS GC でのみ finalizer が走る。
+test "interpreterはJS自己循環内のcallbackをQuickJS GCでのみ解放する" {
+    if (!build_options.quickjs_enabled) return error.SkipZigTest;
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    const engine = try newEngine();
+    defer q.lnako_qjs_release(engine);
+    var state = initState(&runtime, engine);
+    defer deinitState(&state);
+    const name = try key(&runtime, "callback");
+    const callback = try runtime.createNativeFunction(name, 0, nativeConstant42, &.{});
+    state.effects = q.Effects{
+        .context = @ptrCast(&runtime),
+        .invokeFn = nativeEffectsInvoke,
+        .resolveFn = stubResolve,
+        .getGlobalFn = stubGetGlobal,
+        .setGlobalFn = stubSetGlobal,
+        .execFn = stubExec,
+    };
+
+    const result = try callJs(
+        &state,
+        &runtime,
+        engine,
+        "(f)=>{ const box = { cb: f }; box.self = box; return 0; }",
+        &.{callback},
+    );
+    try std.testing.expectEqual(@as(f64, 0), result.number);
+    // 自己循環が残っている間は生存する。
+    try std.testing.expectEqual(@as(usize, 1), state.registeredHostFunctionCount());
+    try std.testing.expectEqual(@as(usize, 1), state.hostFunctionInstanceCount(callback));
+    q.lnako_qjs_run_gc(engine);
+    try std.testing.expectEqual(@as(usize, 0), state.registeredHostFunctionCount());
+    try std.testing.expectEqual(@as(usize, 0), state.hostFunctionInstanceCount(callback));
+}
+
+// Issue #278 レビュー指摘: 2個目の生成が Zig 割当てで失敗しても、先予約
+// acquire の rollback が既存インスタンスとスロットを壊さない。
+test "interpreterは新インスタンス生成失敗で既存インスタンスを保護する" {
+    if (!build_options.quickjs_enabled) return error.SkipZigTest;
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = std.math.maxInt(usize) });
+    var runtime = Runtime.init(failing.allocator());
+    defer {
+        failing.fail_index = std.math.maxInt(usize);
+        runtime.deinit();
+    }
+    const engine = try newEngine();
+    defer q.lnako_qjs_release(engine);
+    var state = initState(&runtime, engine);
+    defer deinitState(&state);
+    const name = try key(&runtime, "callback");
+    const callback = try runtime.createNativeFunction(name, 0, nativeConstant42, &.{});
+    state.effects = q.Effects{
+        .context = @ptrCast(&runtime),
+        .invokeFn = nativeEffectsInvoke,
+        .resolveFn = stubResolve,
+        .getGlobalFn = stubGetGlobal,
+        .setGlobalFn = stubSetGlobal,
+        .execFn = stubExec,
+    };
+
+    const first = try state.hostFunction(engine, callback);
+    try std.testing.expectEqual(@as(usize, 1), state.registeredHostFunctionCount());
+    try std.testing.expectEqual(@as(usize, 1), state.hostFunctionInstanceCount(callback));
+
+    var saw_failure = false;
+    var fail_index: usize = 0;
+    while (fail_index < 2) : (fail_index += 1) {
+        failing.alloc_index = 0;
+        failing.fail_index = fail_index;
+        const second = state.hostFunction(engine, callback);
+        if (second) |raw| {
+            q.lnako_qjs_value_free(raw);
+        } else |failure| {
+            saw_failure = true;
+            try std.testing.expectEqual(error.OutOfMemory, failure);
+        }
+        try std.testing.expectEqual(@as(usize, 1), state.registeredHostFunctionCount());
+        try std.testing.expectEqual(@as(usize, 1), state.hostFunctionInstanceCount(callback));
+    }
+    failing.fail_index = std.math.maxInt(usize);
+    try std.testing.expect(saw_failure);
+
+    const result = q.lnako_qjs_call(engine, first, &empty_call_arguments, 0) orelse return error.TestUnexpectedResult;
+    const converted = q.fromRaw(&state, &runtime, result) catch |failure| {
+        q.lnako_qjs_value_free(result);
+        return failure;
+    };
+    try std.testing.expectEqual(@as(f64, 42), converted.number);
+    q.lnako_qjs_value_free(first);
+    q.lnako_qjs_run_gc(engine);
+    try std.testing.expectEqual(@as(usize, 0), state.registeredHostFunctionCount());
+}
+
+fn traceQuickJsState(context: *anyopaque, runtime: *Runtime) anyerror!void {
+    const state: *q.State = @ptrCast(@alignCast(context));
+    try state.trace(runtime);
+}
+
+// Issue #278 レビュー指摘: capture した Nako オブジェクトは JS 保持中は
+// Nako GC でも生存し、JS 参照破棄 + QuickJS GC 後の Nako GC で回収される。
+test "interpreterはhostFunctionのcaptureをJS保持中は維持し解放後に回収する" {
+    if (!build_options.quickjs_enabled) return error.SkipZigTest;
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    const engine = try newEngine();
+    defer q.lnako_qjs_release(engine);
+    var state = initState(&runtime, engine);
+    defer deinitState(&state);
+    try runtime.registerRootProvider(.{ .context = &state, .traceFn = traceQuickJsState });
+    defer runtime.unregisterRootProvider(&state);
+    state.effects = q.Effects{
+        .context = @ptrCast(&runtime),
+        .invokeFn = nativeEffectsInvoke,
+        .resolveFn = stubResolve,
+        .getGlobalFn = stubGetGlobal,
+        .setGlobalFn = stubSetGlobal,
+        .execFn = stubExec,
+    };
+
+    const name = try key(&runtime, "callback");
+    const capture_name = try key(&runtime, "captured");
+    const base = runtime.objectCount();
+    const captured_text = try runtime.stringUtf8("captured-value");
+    var captured_array = try runtime.createArray();
+    _ = try captured_array.array.push(captured_text);
+    const callback = try runtime.createNativeFunction(
+        name,
+        0,
+        nativeConstant42,
+        &.{.{ .name = capture_name, .value = captured_array }},
+    );
+
+    const result = try callJs(
+        &state,
+        &runtime,
+        engine,
+        "(f)=>{globalThis.__interp_capture_cb=f;return 0;}",
+        &.{callback},
+    );
+    try std.testing.expectEqual(@as(f64, 0), result.number);
+    try std.testing.expectEqual(@as(usize, 1), state.registeredHostFunctionCount());
+
+    // Nako 側の root を落としても、JS が保持している間は capture が生存する。
+    _ = try runtime.collect();
+    try std.testing.expect(runtime.objectCount() > base);
+    try std.testing.expectEqual(@as(usize, 1), state.registeredHostFunctionCount());
+
+    // JS 側の参照を落として QuickJS GC を回すと finalizer が登録を解除し、
+    // 次の Nako GC で closure と capture が回収される。
+    const drop = try evalRaw(engine, "globalThis.__interp_capture_cb = null; 0");
+    q.lnako_qjs_value_free(drop);
+    q.lnako_qjs_run_gc(engine);
+    try std.testing.expectEqual(@as(usize, 0), state.registeredHostFunctionCount());
+    _ = try runtime.collect();
+    try std.testing.expect(runtime.objectCount() <= base);
+}
+
+// Issue #278 レビュー指摘: 管理外 engine への登録を拒否し、既存テーブルと
+// 別 engine の teardown に影響を与えない。
+test "interpreterは不一致engineのhostFunctionを拒否する" {
+    if (!build_options.quickjs_enabled) return error.SkipZigTest;
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    const engine = try newEngine();
+    defer q.lnako_qjs_release(engine);
+    var state = initState(&runtime, engine);
+    defer deinitState(&state);
+    const name = try key(&runtime, "callback");
+    const callback = try runtime.createNativeFunction(name, 0, nativeConstant42, &.{});
+
+    const foreign = try newEngine();
+    defer q.lnako_qjs_release(foreign);
+    try std.testing.expectError(error.QuickJsHostUnavailable, state.hostFunction(foreign, callback));
+    try std.testing.expectEqual(@as(usize, 0), state.registeredHostFunctionCount());
+
+    const raw = try state.hostFunction(engine, callback);
+    try std.testing.expectEqual(@as(usize, 1), state.registeredHostFunctionCount());
+    q.lnako_qjs_value_free(raw);
+    q.lnako_qjs_run_gc(engine);
+    try std.testing.expectEqual(@as(usize, 0), state.registeredHostFunctionCount());
+}
+
+// Issue #278 レビュー指摘: engine 生成・破棄を繰り返してもプロセス共通の
+// class ID を消費し尽くさない。
+test "interpreterは複数engineの生成破棄を繰り返してもclass IDを枯渇させない" {
+    if (!build_options.quickjs_enabled) return error.SkipZigTest;
+    var iteration: usize = 0;
+    while (iteration < 256) : (iteration += 1) {
+        const created = try newEngine();
+        q.lnako_qjs_release(created);
+    }
+
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    const engine = try newEngine();
+    defer q.lnako_qjs_release(engine);
+    var state = initState(&runtime, engine);
+    defer deinitState(&state);
+    const name = try key(&runtime, "callback");
+    const callback = try runtime.createNativeFunction(name, 0, nativeConstant42, &.{});
+    const raw = try state.hostFunction(engine, callback);
+    q.lnako_qjs_value_free(raw);
+    q.lnako_qjs_run_gc(engine);
+    try std.testing.expectEqual(@as(usize, 0), state.registeredHostFunctionCount());
+}
+
+// Issue #278 レビュー指摘: `globalThis.Function` を壊しても、生成した host
+// 関数は intrinsic な `Function.prototype` を継承し、call/apply/bind が壊れない。
+test "interpreterはglobalThis.Function改変下でもhost関数の意味論を維持する" {
+    if (!build_options.quickjs_enabled) return error.SkipZigTest;
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    const engine = try newEngine();
+    defer q.lnako_qjs_release(engine);
+    var state = initState(&runtime, engine);
+    defer deinitState(&state);
+    const name = try key(&runtime, "callback");
+    const callback = try runtime.createNativeFunction(name, 1, nativeAddOne, &.{});
+    state.effects = q.Effects{
+        .context = @ptrCast(&runtime),
+        .invokeFn = nativeEffectsInvoke,
+        .resolveFn = stubResolve,
+        .getGlobalFn = stubGetGlobal,
+        .setGlobalFn = stubSetGlobal,
+        .execFn = stubExec,
+    };
+
+    const broken = try evalRaw(engine, "globalThis.Function = 0; 0");
+    q.lnako_qjs_value_free(broken);
+    const result = try callJs(
+        &state,
+        &runtime,
+        engine,
+        "(f)=>{globalThis.__interp_broken_f=f;return [typeof f,typeof f.call,typeof f.apply," ++
+            "typeof f.bind,f.name,f(41),f.call(null,41),f.apply(null,[41]),f.bind(null,41)()].join(',');}",
+        &.{callback},
+    );
+    try expectString(result, "function,function,function,function,callback,42,42,42,42");
+}
+
+// Issue #278 再レビュー指摘: C 側の関数名文字列生成（JS_NewString）が OOM で
+// 失敗した場合に、例外を name に格納した半端な wrapper を返さず失敗し、
+// 先予約した参照カウントもロールバックして既存インスタンスを保護する。
+test "interpreterはhostFunctionのJS側名前割当てOOM時に失敗し既存インスタンスを保護する" {
+    if (!build_options.quickjs_enabled) return error.SkipZigTest;
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    const engine = try newEngine();
+    defer q.lnako_qjs_release(engine);
+    var state = initState(&runtime, engine);
+    defer deinitState(&state);
+    state.effects = q.Effects{
+        .context = @ptrCast(&runtime),
+        .invokeFn = nativeEffectsInvoke,
+        .resolveFn = stubResolve,
+        .getGlobalFn = stubGetGlobal,
+        .setGlobalFn = stubSetGlobal,
+        .execFn = stubExec,
+    };
+
+    const large_name_bytes = try std.testing.allocator.alloc(u8, 1024 * 1024);
+    defer std.testing.allocator.free(large_name_bytes);
+    @memset(large_name_bytes, 'a');
+    const large_name = try key(&runtime, large_name_bytes);
+    const first_fn = try runtime.createNativeFunction(large_name, 0, nativeConstant42, &.{});
+    const second_fn = try runtime.createNativeFunction(large_name, 0, nativeConstant42, &.{});
+
+    // 既存インスタンスを 1 つ登録した状態で QuickJS メモリ上限を絞る。
+    const existing = try state.hostFunction(engine, first_fn);
+    defer q.lnako_qjs_value_free(existing);
+    try std.testing.expectEqual(@as(usize, 1), state.registeredHostFunctionCount());
+    try std.testing.expectEqual(@as(usize, 1), state.hostFunctionInstanceCount(first_fn));
+
+    q.lnako_qjs_set_memory_limit(engine, 256 * 1024);
+    defer q.lnako_qjs_set_memory_limit(engine, std.math.maxInt(usize));
+
+    try std.testing.expectError(error.OutOfMemory, state.hostFunction(engine, first_fn));
+    if (q.lnako_qjs_take_error(engine)) |err_text| q.lnako_qjs_free_string(err_text);
+    try std.testing.expectEqual(@as(usize, 1), state.registeredHostFunctionCount());
+    try std.testing.expectEqual(@as(usize, 1), state.hostFunctionInstanceCount(first_fn));
+
+    try std.testing.expectError(error.OutOfMemory, state.hostFunction(engine, second_fn));
+    if (q.lnako_qjs_take_error(engine)) |err_text| q.lnako_qjs_free_string(err_text);
+    try std.testing.expectEqual(@as(usize, 1), state.registeredHostFunctionCount());
+    try std.testing.expectEqual(@as(usize, 0), state.hostFunctionInstanceCount(second_fn));
+
+    q.lnako_qjs_set_memory_limit(engine, std.math.maxInt(usize));
+    const call_res = q.lnako_qjs_call(engine, existing, &empty_call_arguments, 0) orelse return error.TestUnexpectedResult;
+    const converted = q.fromRaw(&state, &runtime, call_res) catch |failure| {
+        q.lnako_qjs_value_free(call_res);
+        return failure;
+    };
+    try std.testing.expectEqual(@as(f64, 42), converted.number);
 }

@@ -9,7 +9,12 @@ typedef struct LnakoQuickJsValue LnakoQuickJsValue;
 typedef struct LnakoQuickJsKeys LnakoQuickJsKeys;
 typedef LnakoQuickJsValue *(*LnakoQuickJsHostGet)(void *opaque, const char *name, int find_variable);
 typedef int (*LnakoQuickJsHostSet)(void *opaque, const char *name, const LnakoQuickJsValue *value);
-typedef LnakoQuickJsValue *(*LnakoQuickJsHostInvoke)(void *opaque, uintptr_t function_id, const LnakoQuickJsValue *const *arguments, size_t count);
+typedef LnakoQuickJsValue *(*LnakoQuickJsHostInvoke)(void *opaque, uintptr_t function_id, uint64_t generation, const LnakoQuickJsValue *const *arguments, size_t count);
+/// host 関数インスタンスの finalizer から呼ばれる解放通知。`function_id` と
+/// `generation` は `lnako_qjs_host_function` に渡した組をそのまま返す。
+/// QuickJS の finalizer 実行中に呼ばれるため、このコールバックから QuickJS の
+/// API（JS_RunGC / JS_FreeValue / eval 等）や Nako GC を再入させてはならない。
+typedef void (*LnakoQuickJsHostRelease)(void *opaque, uintptr_t function_id, uint64_t generation);
 typedef LnakoQuickJsValue *(*LnakoQuickJsHostExec)(void *opaque, const char *name, const LnakoQuickJsValue *const *arguments, size_t count);
 
 enum LnakoQuickJsKind {
@@ -27,6 +32,9 @@ enum LnakoQuickJsKind {
 
 LnakoQuickJs *lnako_qjs_new(void);
 void lnako_qjs_set_host(LnakoQuickJs *engine, void *opaque, LnakoQuickJsHostGet get, LnakoQuickJsHostSet set, LnakoQuickJsHostInvoke invoke, LnakoQuickJsHostExec exec);
+/// host 関数インスタンスの解放通知を登録する。NULL で解除でき、解除後は
+/// QuickJS の finalizer が走っても host 側へ通知しない（teardown の安全境界）。
+void lnako_qjs_set_host_release(LnakoQuickJs *engine, LnakoQuickJsHostRelease release);
 /// 非0ならhost_getがNULLを返した直接読み取り（`sys.__getSysVar`）を
 /// 未定義値ではなくJS例外にする。`sys.__findVar` の探索は従来どおり。
 void lnako_qjs_set_host_strict(LnakoQuickJs *engine, int strict);
@@ -58,7 +66,16 @@ LnakoQuickJsValue *lnako_qjs_string(LnakoQuickJs *engine, const char *value, siz
 LnakoQuickJsValue *lnako_qjs_bigint(LnakoQuickJs *engine, const char *decimal, size_t length);
 LnakoQuickJsValue *lnako_qjs_array(LnakoQuickJs *engine);
 LnakoQuickJsValue *lnako_qjs_object(LnakoQuickJs *engine);
-LnakoQuickJsValue *lnako_qjs_host_function(LnakoQuickJs *engine, uintptr_t function_id, const char *name);
+/// Nako 関数を呼び出す JS 関数オブジェクトを1個生成する。同じ
+/// `function_id` / `generation` に対して複数回呼ぶと、それぞれ独立した JS
+/// 関数インスタンスになる。各インスタンスの finalizer は1回ずつ
+/// `LnakoQuickJsHostRelease` を呼ぶため、呼出し側は成功した生成回数と解放通知
+/// 回数で参照カウントできる。`generation` は 32bit 環境でも切り捨てない。
+LnakoQuickJsValue *lnako_qjs_host_function(LnakoQuickJs *engine, uintptr_t function_id, uint64_t generation, const char *name);
+/// QuickJS の GC を明示実行する（テスト・診断用）。finalizer はこの中で走り得る。
+void lnako_qjs_run_gc(LnakoQuickJs *engine);
+/// QuickJS のメモリ上限を設定する（テスト・診断用）。
+void lnako_qjs_set_memory_limit(LnakoQuickJs *engine, size_t limit);
 LnakoQuickJsValue *lnako_qjs_dup(const LnakoQuickJsValue *value);
 LnakoQuickJs *lnako_qjs_value_engine(const LnakoQuickJsValue *value);
 void lnako_qjs_value_free(LnakoQuickJsValue *value);
