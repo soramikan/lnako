@@ -111,6 +111,41 @@ try {
   const evalResults = traceEvents.filter((event) => event.phase === "dispatch-result" && event.route === "JS実行");
   if (evalResults.length === 0) fail("compat AOTのdispatch traceにJS実行が記録されていません");
 
+  // Issue #55 Unit 2: Nako→JS callback（hostFunction / hostInvoke）のE2E。
+  // NakoクロージャをJS関数値へ直接・`{cb: fn}`・`[fn]` で渡し、Promise.then と
+  // GC誘発ループを挟んでもcaptureが更新されること、BigInt・循環オブジェクト・
+  // 配列/辞書が往復することを、AOT/interpreterの完全一致で固定する。
+  const nakoCallbackFixtures = [
+    [
+      "Nako callback（高階・Promise・GC）",
+      "compat-js-nako-callback.nako3",
+      "33\n2\n10\n4\n22\n6\n17\n7\n15\n8",
+    ],
+    [
+      "Nako callback（BigInt・循環・配列/辞書）",
+      "compat-js-nako-callback-values.nako3",
+      "9007199254740994\n42\ntrue\n2,42\n1,99\n[object Object]\n1,42\n1,99\n[object Object]",
+    ],
+  ];
+  for (const [index, [label, fixture, expected]] of nakoCallbackFixtures.entries()) {
+    const fixturePath = join(root, "tests", "fixtures", fixture);
+    const interpreterCallback = spawnSync(compiler, ["run", fixturePath, "--compat-js"], { encoding: "utf8" });
+    if (interpreterCallback.status !== 0) {
+      fail(`${label}fixtureのインタプリタ実行が失敗しました: ${interpreterCallback.stdout}${interpreterCallback.stderr}`);
+    }
+    const callbackBinary = join(work, `compat-js-nako-callback-${index}`);
+    runCompiler(fixturePath, callbackBinary, ["--compat-js", "--backend", "aot"]);
+    const callbackSymbols = listSymbols(callbackBinary);
+    for (const required of ["lnako_qjs_host_function", "lnako_aot_compat_js_call"]) {
+      if (!callbackSymbols.some((symbol) => symbol.includes(required))) {
+        fail(`${label}のcompat AOT成果物に ${required} がありません`);
+      }
+    }
+    const callbackOutput = runBinary(callbackBinary);
+    expectEqual(callbackOutput, interpreterCallback.stdout.trim(), `${label}のAOT/インタプリタ一致`);
+    expectEqual(callbackOutput, expected, `${label}の期待出力`);
+  }
+
   // `JSオブジェクト取得` / `JSメソッド実行`: JS関数実行が返した配列/辞書を
   // external binding（JS参照）として保持し、AOTとインタプリタが同じ結果を返すこと。
   const objectFixture = join(root, "tests", "fixtures", "compat-js-object-binding.nako3");
@@ -259,14 +294,20 @@ try {
     }
   }
 
-  // BigIntはAOT側に値の生成経路がまだ無いため、interpreterで同じ明示エラーに
-  // なることだけを固定する（AOTの判定はcompat_js.zigの単体テスト）。
+  // BigInt: `JS実行` が返したBigIntはAOTでも値として保持できるため、
+  // `JS関数実行` の浅い引数規則でAOT/interpreterが同じ文言で失敗することを固定する。
   const bigintSource = join(work, "compat-js-unsupported-argument-bigint.nako3");
   writeFileSync(bigintSource, 'B=JS実行("1n")\nJS関数実行("x => x", B)を表示\n');
-  const bigint = spawnSync(compiler, ["run", bigintSource, "--compat-js"], { encoding: "utf8" });
-  const bigintOutput = `${bigint.stdout ?? ""}${bigint.stderr ?? ""}`;
-  if (bigint.status === 0 || !bigintOutput.includes(unsupportedArgumentMessage)) {
-    fail(`BigIntの未対応引数がインタプリタで明示エラーになりません: status=${bigint.status}\n${bigintOutput}`);
+  const bigintBinary = join(work, "compat-js-unsupported-argument-bigint");
+  runCompiler(bigintSource, bigintBinary, ["--compat-js", "--backend", "aot"]);
+  for (const [kind, result] of [
+    ["AOT", spawnSync(bigintBinary, [], { encoding: "utf8" })],
+    ["インタプリタ", spawnSync(compiler, ["run", bigintSource, "--compat-js"], { encoding: "utf8" })],
+  ]) {
+    const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
+    if (result.status === 0 || !output.includes(unsupportedArgumentMessage)) {
+      fail(`BigIntの未対応引数が${kind}で明示エラーになりません: status=${result.status}\n${output}`);
+    }
   }
 
   // 既定の `--compat-js` は従来の同梱実行ファイル方式（embedded）へ戻っている。

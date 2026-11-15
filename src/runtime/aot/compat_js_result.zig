@@ -228,9 +228,10 @@ fn syncContents(runtime: *state.Runtime, engine_value: *Engine, value: Value, ra
 
 /// 同期用のJS値変換（interpreterのtoRaw相当）。JS関数値は元のJS参照を渡し、
 /// 配列・辞書はexternal bindingの有無にかかわらず同じ変換経路で中身を同期する
-/// （ネストしたexternalコンテナのNako側変更もJSへ書き戻す）。変換できない値
-/// （Nako関数・BigInt・bytes・Promise）は明示エラーにする。ただし
-/// `sync.full_values` のcallback経路だけはBigIntとbytesを変換する。
+/// （ネストしたexternalコンテナのNako側変更もJSへ書き戻す）。Nako関数・
+/// クロージャは `compat.hostFunction` でQuickJSのC関数値へ登録し、JSから
+/// 同期呼出しできるようにする。BigIntは常に、bytesは `sync.full_values` の
+/// callback経路だけ変換する。
 pub fn syncValueRaw(runtime: *state.Runtime, engine_value: *Engine, value: Value, sync: *SyncState, depth: usize) anyerror!*RawValue {
     if (depth >= max_interop_conversion_depth) return error.QuickJsNestingTooDeep;
     const tag = @as(Tag, @fromBackingInt(value.tag));
@@ -239,7 +240,7 @@ pub fn syncValueRaw(runtime: *state.Runtime, engine_value: *Engine, value: Value
             errdefer compat.lnako_qjs_value_free(raw);
             return raw;
         }
-        return error.QuickJsUnsupportedArgument;
+        return compat.hostFunction(runtime, engine_value, value);
     }
     if (tag != .array and tag != .dictionary) {
         if (tag == .bigint or (sync.full_values and tag == .byte_buffer))

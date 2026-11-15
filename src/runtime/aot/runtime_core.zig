@@ -435,6 +435,11 @@ pub const Runtime = struct {
     dynamic_deinit: ?*const fn (*Runtime) void = null,
     dynamic_drain: ?*const fn (*Runtime) anyerror!bool = null,
     dynamic_forget_handle: ?*const fn (*Runtime, u64) void = null,
+    // compat JS（`--compat-js`）のhost関数テーブルは compat_js.zig が登録する
+    // 間接呼び出しで GC trace / deinit する。通常 AOT では null のままで
+    // QuickJS を一切静的参照しない。
+    compat_trace: ?*const fn (*Runtime) void = null,
+    compat_deinit: ?*const fn (*Runtime) void = null,
     dynamic_promise_bridges: std.ArrayList(*DynamicPromiseBridge) = .empty,
     dynamic_function_bridges: std.ArrayList(*AotFunctionBridge) = .empty,
     standard_property_cache: std.ArrayList(StandardPropertyCacheEntry) = .empty,
@@ -484,6 +489,9 @@ pub const Runtime = struct {
         self.low_level_handle_ids.deinit(self.allocator);
         self.low_level_handle_by_id.deinit(self.allocator);
         if (self.dynamic_deinit) |deinit_dynamic| deinit_dynamic(self);
+        // compat JSのhost関数テーブルはObject解放より先に解除する。登録された
+        // ValueはObjectを参照するため、Objectを破棄した後に触れてはならない。
+        if (self.compat_deinit) |deinit_compat| deinit_compat(self);
         for (self.dynamic_promise_bridges.items) |bridge| self.allocator.destroy(bridge);
         self.dynamic_promise_bridges.deinit(self.allocator);
         for (self.dynamic_function_bridges.items) |bridge| self.allocator.destroy(bridge);
@@ -1097,6 +1105,9 @@ pub const Runtime = struct {
         while (low_level_handles.next()) |entry| {
             self.markValue(.{ .tag = @backingInt(Tag.dictionary), .payload = entry.key_ptr.* });
         }
+        // compat JSのhost関数テーブルは通常AOTではnull。`--compat-js` だけが
+        // 登録する間接呼び出しで、JSへ渡したNako関数とcaptureを生存させる。
+        if (self.compat_trace) |trace_compat| trace_compat(self);
         while (self.grey) |object| {
             self.grey = object.grey_next;
             object.grey_next = null;
