@@ -79,10 +79,7 @@
 | Node / Host | 任意の実network topology、外部Internet/TLS/proxy、実GUI launcher、任意7z実装、未fixtureのWindows特殊path/argv | [#6](https://github.com/soramikan/lnako/issues/6) |
 | Buffer family | descriptor、未束縛method receiver、全view identityを含むNode object model完全互換 | [#7](https://github.com/soramikan/lnako/issues/7) |
 | QuickJS | 4 JS固有命令の成功・期待失敗範囲を越えるエラー本文完全互換 | [#8](https://github.com/soramikan/lnako/issues/8) |
-| npm ESM subpath | `exports` を持たない package の `name/sub` 従来解決（安全側で `BareNotFound`） | [#54](https://github.com/soramikan/lnako/issues/54) |
-| npm ESM package root | `package_root` の symlink canonicalization（`module_graph` の realpath 比較との整合、follow-up） | [#54](https://github.com/soramikan/lnako/issues/54) |
-| npm ESM registry | root 入口を registry 構築時に解決するため、root target の `EntryNotFound` / `PackageJsonInvalid` を保持できず `BareNotFound` に丸まる（遅延解決は follow-up。サブパスと他 package の解決は継続する） | [#54](https://github.com/soramikan/lnako/issues/54) |
-| npm ESM target 字句 | exports target と wildcard 一致部分（specifier 側）の字句を Node より厳しく拒否する（空セグメント・trailing slash・`:`・制御文字・`\`。安全側の意図的差異。一致部分の `..`/`.`/`node_modules` は Node と同じ） | [#54](https://github.com/soramikan/lnako/issues/54) |
+| npm ESM target 字句 | `exports` の target 自体の不正字句（空セグメント・trailing slash・`\`・`:`・制御文字・`.`/`..`/`node_modules` 等）は `PackageJsonInvalid`。wildcard の一致部分（specifier 側）の不正字句は `InvalidSpecifier` で拒否し、一致部分の `..`/`.`/`node_modules` は Node と同じ判定（Node は `ERR_INVALID_MODULE_SPECIFIER`）。`exports` 無し `name/sub` は分類が分かれ、空セグメント・trailing slash・`\`・`.`・`..`・NUL は `parseBareSpecifier`／`subpathIsSafe` が `BareNotFound`（Node の「未公開 subpath」相当）にし、NUL を除く制御文字・`:`・Windows drive letter・symlink 脱出は `InvalidSpecifier`（Node より厳しい安全側の意図的差異） | [#54](https://github.com/soramikan/lnako/issues/54) |
 | npm ESM exports 深度 | exports の配列・条件オブジェクトの再帰を 64 段に制限し、超過は `PackageJsonInvalid` で fail-closed（Node 24/26 は上限なしで深いネストも解決する） | [#54](https://github.com/soramikan/lnako/issues/54) |
 | npm ESM wildcard 展開 | wildcard target の `*` 置換後サイズを 1 MiB に制限し、超過は `InvalidSpecifier` で fail-closed（Node は上限なし） | [#54](https://github.com/soramikan/lnako/issues/54) |
 | npm ESM 条件未解決 | 条件不一致（`browser` 等、本実装では未選択）で wildcard 一致部分が不正な場合、Node は `ERR_PACKAGE_PATH_NOT_EXPORTED`、本実装は `InvalidSpecifier` で fail-closed（`node` 条件を暗黙有効にしないための差異） | [#54](https://github.com/soramikan/lnako/issues/54) |
@@ -143,7 +140,7 @@ Project [#2](https://github.com/users/soramikan/projects/2)、label `package-sys
 | package import（#50） | 部分実装 | cnako 共通 fixture の両処理系受理（#210、cnako 本体は #61）。AOT O0〜O3 の 3 OS 実行検証は CI の native route（`compare_package_import_aot_oracle.mjs`）で稼働中 |
 | 命令 metadata の静的検査（#52） | 完了 | なし（declared command 接続・OS 条件の照合表示・名前空間 check・`check --load-plugins` の JS/native 実登録照合は #211/#227/#251/#259 で実装済み） |
 | npm 取得（#53） | 部分実装 | Node lifecycle script は対象外（cache 欠落時の sync 側 tarball 取得は実装済み） |
-| QuickJS ESM（#54） | 部分実装 | 下記の npm ESM 境界。QuickJS ESM の実行は `--compat-js` のみ。lock context 別の複数 version 解決・importer scope・cache miss の instance 単位診断は #258 で実装済み |
+| QuickJS ESM（#54） | 部分実装 | 下記の npm ESM 境界（字句 fail-closed・exports 再帰 64 段/wildcard 展開 1 MiB の上限・legacy `main`/`module` の拡張子補完・`module` 優先・exports target の URL 非デコード・`node` 条件の非暗黙化）。`exports` 無し `name/sub` の従来解決、`package_root`/入口の symlink canonicalization、registry の root 入口遅延解決（エラー分類の保持）は実装済み。QuickJS ESM の実行は `--compat-js` のみ。lock context 別の複数 version 解決・importer scope・cache miss の instance 単位診断は #258 で実装済み |
 | AOT + QuickJS（#55） | 部分実装 | `JSメソッド実行`/`JSオブジェクト取得` の AOT は #256、AOT dispatch trace（compat JS 4命令）は #263、ESM plugin 命令の AOT codegen は #271、ESM plugin の実行時 invoke は #275 で実装済み。Unit 1 で `JS実行` の full 変換（BigInt・関数値・配列・辞書・循環）と JS 関数値の保持・呼出しを実装し、Unit 2 で Nako→JS callback（`hostFunction`/`hostInvoke`）・GC trace/deinit hook・Promise/BigInt/ByteBuffer の callback 変換・AOT/interpreter E2E を接続済み。Unit 3 で `JS関数実行` の実引数・戻り値を full 変換（ネスト/循環/疎配列・関数値・BigInt・bytes・Promise 解決値）へ揃え、`JSオブジェクト取得`/`JSメソッド実行` の external でないコンテナも full 変換（ネスト配列/辞書・関数値・BigInt）にしました。残る意図的境界はトップレベル（およびコンテナ内）の Promise/bytes 拒否、AOT の1引数 `JSオブジェクト取得`（変数 bridge 不在）、Windows x86_64 の compat AOT リンク（`quickjs_win32_shim` を追加済みだが CI 検証待ち） |
 | 依存同梱（#56） | 完了 | なし（payload・移動可能 loader・SBOM 一致・source-only 依存・推移的動的 library 依存の検出/複製/`bundle.json` 記録/先読み、in-place 書換は #260/#268/#269 と本変更で実装済み） |
 | publish（#57） | 部分実装 | dry-run と static registry への冪等 PUT は #252、publish→取得 E2E は #257、実 registry backend への upload と `index.json` 登録は本変更で実装済み。target 適合の要求範囲は PUBLISHING.md §4.1 で確定。version record の `artifacts` に収録実装（source/native/ESM）を記録するよう本変更で修正済み。残りは中央 publication API（認証付き一括登録） |
@@ -160,7 +157,7 @@ Project [#2](https://github.com/users/soramikan/projects/2)、label `package-sys
 - 初回 P0 の主鎖は #52 残ゲートと #53 残を並行しつつ、#50 残ゲート → #54 → #55 → #56 → #57 → #58/#61 です。
 - 配布拡張 P1: native source build（#59）、AOT 静的 plugin 同梱（#11）、workspace（#60）。
 - 他処理系・後続: wnako（#62）、cnako Node 拡充（#63）、cross build（#64）、WASM PoC（#65）、cnako Node 完結依存管理（#70）、階層名前空間「の」（#182）。
-- npm ESM の境界: `exports` を持たない package の `name/sub` 従来解決、`package_root` の symlink canonicalization、registry 構築時の root 入口解決、exports target と wildcard 一致部分の字句検査、exports の再帰 64 段と wildcard 展開 1 MiB の上限、legacy `main`/`module` の拡張子補完、`module` の優先、exports target の URL 解釈は、現行では安全側の意図的差異または未対応として残しています。個別の差異は上の「明示的に非対応とする境界」の表を参照してください。
+- npm ESM の境界: exports target・wildcard 一致部分・`exports` 無し `name/sub` の字句検査、exports の再帰 64 段と wildcard 展開 1 MiB の上限、legacy `main`/`module` の拡張子補完、`module` の優先、exports target の URL 解釈（非デコード）、`node` 条件の非暗黙化は、現行では安全側の意図的差異または未対応として残しています。`exports` を持たない package の `name/sub` 従来解決、`package_root` と入口の symlink canonicalization、registry の root 入口遅延解決は実装済みです。個別の差異は上の「明示的に非対応とする境界」の表を参照してください。
 
 - **低レイヤーAPI・ストリームI/O**：
   - カタログ63命令をすべて実装済み（#27–#38, #36 等）。正本は [`docs/low-level-api/catalog.json`](low-level-api/catalog.json)、現状の一覧は [`docs/low-level-api/IMPLEMENTATION_STATUS.md`](low-level-api/IMPLEMENTATION_STATUS.md)。
