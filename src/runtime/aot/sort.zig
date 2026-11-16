@@ -4,6 +4,7 @@ const shared = @import("shared.zig");
 
 const aot_builtin = shared.aot_builtin;
 const Runtime = aot_state.Runtime;
+const Object = aot_state.Object;
 const Value = aot_state.Value;
 const Tag = aot_state.Tag;
 const RootFrame = aot_state.RootFrame;
@@ -960,19 +961,47 @@ pub fn invokeAotCallback(runtime: *Runtime, callable: Value, arguments: ?[*]cons
     return result;
 }
 
+fn namedFunctionValue(object: *Object) Value {
+    return .{ .tag = @backingInt(Tag.function), .payload = @intFromPtr(object) };
+}
+
+/// 名前文字列から登録済みの関数値を解決する。
+///
+/// 解決規則はインタプリタ（`src/runtime/interpreter/state.zig` の
+/// `quickJsResolve`）と一致させる:
+/// 1. 完全一致を優先し、同一修飾名が複数登録されている場合は後勝ち。
+/// 2. 完全一致が無い場合のみ `{module}__{name}` のサフィックス一致を走査する。
+///    同一修飾名の再登録（Issue #73 の循環参照再展開）は後勝ちだが、
+///    異なる修飾名で複数一致した場合は `error.AmbiguousGlobal` を返す。
+/// 3. 一致が無ければ `null` を返す。
+pub fn resolveNamedFunctionValue(runtime: *Runtime, name: []const u8) !?Value {
+    var exact: ?*Object = null;
+    for (runtime.named_functions.items) |registered| {
+        if (!std.mem.eql(u8, registered.name, name)) continue;
+        exact = registered.object;
+    }
+    if (exact) |object| return namedFunctionValue(object);
+
+    var match: ?*Object = null;
+    var match_name: ?[]const u8 = null;
+    for (runtime.named_functions.items) |registered| {
+        const separator = std.mem.lastIndexOf(u8, registered.name, "__") orelse continue;
+        if (!std.mem.eql(u8, registered.name[separator + 2 ..], name)) continue;
+        if (match_name) |previous| {
+            if (!std.mem.eql(u8, previous, registered.name)) return error.AmbiguousGlobal;
+        }
+        match = registered.object;
+        match_name = registered.name;
+    }
+    return if (match) |object| namedFunctionValue(object) else null;
+}
+
 pub fn resolveAotCallback(runtime: *Runtime, value: Value) !Value {
     if (value.tag == @backingInt(Tag.function)) return value;
     if (!isString(value)) return error.NotCallable;
     const name = try stringUtf8Alloc(runtime, value);
     defer runtime.allocator.free(name);
-
-    var match: ?Value = null;
-    for (runtime.named_functions.items) |registered| {
-        if (!registeredFunctionMatches(registered.name, name)) continue;
-        if (match != null) return error.UnknownFunction;
-        match = .{ .tag = @backingInt(Tag.function), .payload = @intFromPtr(registered.object) };
-    }
-    return match orelse error.UnknownFunction;
+    return (try resolveNamedFunctionValue(runtime, name)) orelse error.UnknownFunction;
 }
 
 pub fn registeredFunctionMatches(registered_name: []const u8, requested_name: []const u8) bool {

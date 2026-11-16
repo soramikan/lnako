@@ -588,6 +588,7 @@ pub const v8MergeForceCollapseArrayCallback = sort_module.v8MergeForceCollapseAr
 pub const v8TimSortArrayCallback = sort_module.v8TimSortArrayCallback;
 pub const compareAotCallback = sort_module.compareAotCallback;
 pub const invokeAotCallback = sort_module.invokeAotCallback;
+pub const resolveNamedFunctionValue = sort_module.resolveNamedFunctionValue;
 pub const resolveAotCallback = sort_module.resolveAotCallback;
 pub const registeredFunctionMatches = sort_module.registeredFunctionMatches;
 pub const stableArraySort = sort_module.stableArraySort;
