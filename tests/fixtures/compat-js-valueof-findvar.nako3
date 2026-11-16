@@ -1,0 +1,12 @@
+# Issue #55 レビュー回帰: `.binary`（減算）の ToPrimitive が呼ぶ JS
+# `valueOf` から `sys.__findVar` で関数ローカルを解決できること。
+# AOT が `AotVarFrame` を省略すると fallback の -1 が使われ `-2` になる。
+# interpreter と AOT の2者一致は
+# tools/check_aot_quickjs_separation.mjs が確認する。
+オブジェクト=JS実行(『({valueOf: function() { return sys.__findVar("ローカル", -1); }})』)
+F=関数(Oを)
+  ローカル=7
+  結果=O-1
+  結果を表示
+ここまで
+F(オブジェクト)

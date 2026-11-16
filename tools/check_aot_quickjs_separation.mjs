@@ -289,6 +289,21 @@ try {
     expectEqual(output, expected, `${label}の期待出力`);
   }
 
+  // Issue #55 レビュー回帰: `.binary`（減算）の ToPrimitive はオブジェクトの
+  // JS `valueOf` を呼び得る。その中から `sys.__findVar` で関数ローカルを
+  // 解決できるよう、AOT は `.binary` を含む関数でも `AotVarFrame` を省略
+  // しない。フレーム省略時は fallback の -1 が使われ `-2` になる。
+  const valueOfFixture = join(root, "tests", "fixtures", "compat-js-valueof-findvar.nako3");
+  const valueOfInterpreter = spawnSync(compiler, ["run", valueOfFixture, "--compat-js"], { encoding: "utf8" });
+  if (valueOfInterpreter.status !== 0) {
+    fail(`valueOf変数解決fixtureのインタプリタ実行が失敗しました: ${valueOfInterpreter.stdout}${valueOfInterpreter.stderr}`);
+  }
+  const valueOfBinary = join(work, "compat-js-valueof-findvar");
+  runCompiler(valueOfFixture, valueOfBinary, ["--compat-js", "--backend", "aot"]);
+  const valueOfOutput = runBinary(valueOfBinary);
+  expectEqual(valueOfOutput, valueOfInterpreter.stdout.trim(), "valueOfからのローカル解決のAOT/インタプリタ一致");
+  expectEqual(valueOfOutput, "6", "valueOfからのローカル解決結果");
+
   // `sys.__exec`（組み込み命令の文字列dispatch）はAOTでは未対応のまま
   // 明示エラーにする。interpreterは公式と同じく組み込み命令を呼べる。
   const hostExecSource = join(work, "compat-js-host-exec.nako3");
