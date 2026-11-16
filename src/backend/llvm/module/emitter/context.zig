@@ -433,9 +433,28 @@ pub fn isNamedGlobalFunction(name: []const u8) bool {
 /// 関数の実行中にQuickJS互換命令・任意の関数呼び出しへ到達し得るか。
 /// 呼び出しを一切含まないリーフ関数は、その実行中に変数bridgeから
 /// ローカル変数を観測されないため `AotVarFrame` を省略できる。
+///
+/// 明示的な呼び出しだけでなく、runtime 側で `valueToPrimitive` /
+/// `valueUtf16Alloc` / `propertyKey` / `valueToNumberRuntime` を経由する
+/// 演算も対象にする。これらはオブジェクトの `valueOf` / `toString` /
+/// プロパティgetterを呼び、その中のJSから `sys.__findVar` や
+/// `JSオブジェクト取得` でローカル変数を観測し得るため、フレームを省略
+/// してはならない。
 pub fn functionMayInvokeBridge(function: ir.Function) bool {
     for (function.blocks) |block| for (block.instructions) |instruction| switch (instruction.opcode) {
-        .call, .call_value, .iterator_begin, .iterator_has_next, .iterator_next => return true,
+        .call,
+        .call_value,
+        .iterator_begin,
+        .iterator_has_next,
+        .iterator_next,
+        .binary,
+        .unary,
+        .increment_values,
+        .array_get,
+        .property_get,
+        .element_set,
+        .init_array_index,
+        => return true,
         else => {},
     };
     return false;

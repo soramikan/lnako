@@ -422,13 +422,18 @@ test "compat-js AOTは変数bridgeのフレーム・未束縛初期化・ロー�
         "  Qで戻る\n" ++
         "ここまで\n" ++
         "●リーフ(Lを)\n" ++
+        "  R=L\n" ++
+        "  Rで戻る\n" ++
+        "ここまで\n" ++
+        "●演算(Lを)\n" ++
         "  R=L+1\n" ++
         "  Rで戻る\n" ++
         "ここまで\n" ++
         "加算(2)を表示\n" ++
         "捕捉処理(3)を表示\n" ++
         "例外伝播(4)を表示\n" ++
-        "リーフ(5)を表示\n";
+        "リーフ(5)を表示\n" ++
+        "演算(6)を表示\n";
 
     var parsed = try parser.parse(std.testing.allocator, source, "main.nako3");
     defer parsed.deinit();
@@ -449,6 +454,7 @@ test "compat-js AOTは変数bridgeのフレーム・未束縛初期化・ロー�
     const uncaught_fn = findIrFunctionBySuffix(program, "__未捕捉送出") orelse findIrFunctionBySuffix(program, "未捕捉送出") orelse return error.TestUnexpectedResult;
     const prop_fn = findIrFunctionBySuffix(program, "__例外伝播") orelse findIrFunctionBySuffix(program, "例外伝播") orelse return error.TestUnexpectedResult;
     const leaf_fn = findIrFunctionBySuffix(program, "__リーフ") orelse findIrFunctionBySuffix(program, "リーフ") orelse return error.TestUnexpectedResult;
+    const operation_fn = findIrFunctionBySuffix(program, "__演算") orelse findIrFunctionBySuffix(program, "演算") orelse return error.TestUnexpectedResult;
 
     for ([_]bool{ false, true }) |optimized| {
         var module = try generate(std.testing.allocator, program, "main.nako3", optimized);
@@ -493,6 +499,12 @@ test "compat-js AOTは変数bridgeのフレーム・未束縛初期化・ロー�
         const leaf_ir = try extractDefinedFunction(text, leaf_fn.id);
         try std.testing.expect(std.mem.indexOf(u8, leaf_ir, "lnako_aot_push_var_frame") == null);
         try std.testing.expect(std.mem.indexOf(u8, leaf_ir, "lnako_aot_pop_var_frame") == null);
+
+        // 6) `.binary` を持つ関数: valueOf/toString 経由でJSからローカル変数を
+        //    観測され得るため、リーフでも var.frame を省略しない。
+        const operation_ir = try extractDefinedFunction(text, operation_fn.id);
+        try std.testing.expectEqual(@as(usize, 1), countSubstring(operation_ir, "call void @lnako_aot_push_var_frame("));
+        try std.testing.expectEqual(countSubstring(operation_ir, "ret %lnako.Value"), countSubstring(operation_ir, "call void @lnako_aot_pop_var_frame(ptr %var.frame)\n  call void @lnako_aot_pop_roots(ptr %root.frame)"));
     }
 }
 
