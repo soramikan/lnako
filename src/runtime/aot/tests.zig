@@ -13,6 +13,8 @@ pub const lnako_aot_node_mother_path_init = debug.lnako_aot_node_mother_path_ini
 pub const lnako_aot_push_roots = debug.lnako_aot_push_roots;
 pub const lnako_aot_node_constants_init = debug.lnako_aot_node_constants_init;
 pub const lnako_aot_pop_roots = debug.lnako_aot_pop_roots;
+pub const lnako_aot_push_var_frame = debug.lnako_aot_push_var_frame;
+pub const lnako_aot_pop_var_frame = debug.lnako_aot_pop_var_frame;
 pub const lnako_aot_node_constants_init_wide = debug.lnako_aot_node_constants_init_wide;
 pub const lnako_aot_collect = debug.lnako_aot_collect;
 pub const lnako_aot_runtime_init = debug.lnako_aot_runtime_init;
@@ -22,6 +24,8 @@ pub const lnako_aot_node_directory_constants_init = debug.lnako_aot_node_directo
 const AotClientHttpBodyKind = state.AotClientHttpBodyKind;
 const AotClientHttpResult = state.AotClientHttpResult;
 const AotHttpRoute = state.AotHttpRoute;
+const AotVarEntry = state.AotVarEntry;
+const AotVarFrame = state.AotVarFrame;
 const AotPromiseState = state.AotPromiseState;
 const Arithmetic = state.Arithmetic;
 const UnaryOperator = state.UnaryOperator;
@@ -9084,4 +9088,313 @@ test "AOT汎用call siteは専用ABI命令をhasGenericCallSiteDispatchで拒否
     lnako_aot_builtin_call(&roots[0], @ptrCast(&roots[1]), 1, @backingInt(aot_builtin.Command.to_string));
     try std.testing.expect(!state.active_runtime.?.has_pending_exception);
     try std.testing.expectEqualSlices(u16, &.{ 'a', 'b', 'c' }, roots[0].object().?.payload.utf16_string);
+}
+
+fn expectAotValueEqual(expected: Value, actual: Value) !void {
+    try std.testing.expectEqual(expected.tag, actual.tag);
+    try std.testing.expectEqual(expected.payload, actual.payload);
+}
+
+fn testNoopCallback(_: *Value, _: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {}
+
+fn runtimeContainsObject(runtime: *Runtime, target: *Object) bool {
+    var current = runtime.objects;
+    while (current) |object| : (current = object.next) {
+        if (object == target) return true;
+    }
+    return false;
+}
+
+test "AOT変数フレームは内側から外側へ解決し未束縛と明示undefinedを区別する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+
+    var storage = [_]Value{
+        numberValue(1), // outer 共有
+        numberValue(2), // inner 共有
+        Value.unboundValue(), // inner 未束縛
+        numberValue(7), // outer 未束縛 / outer 未束縛セル
+        Value{}, // inner 明示 (undefined payload 0)
+        numberValue(9), // outer 明示
+        .{}, // inner セル (BindingCell)
+        .{}, // inner 未束縛セル (BindingCell)
+    };
+    var roots = RootFrame{};
+    active.pushRoots(&roots, &storage, storage.len);
+    defer active.popRoots(&roots);
+    storage[6] = try active.createBindingCell(numberValue(42));
+    storage[7] = try active.createBindingCell(Value.unboundValue());
+
+    var outer_entries = [_]AotVarEntry{
+        .{ .name_ptr = "共有".ptr, .name_len = "共有".len },
+        .{ .name_ptr = "未束縛".ptr, .name_len = "未束縛".len },
+        .{ .name_ptr = "未束縛セル".ptr, .name_len = "未束縛セル".len },
+        .{ .name_ptr = "明示".ptr, .name_len = "明示".len },
+    };
+    var outer_slots = [_]*const Value{ &storage[0], &storage[3], &storage[3], &storage[5] };
+    var inner_entries = [_]AotVarEntry{
+        .{ .name_ptr = "共有".ptr, .name_len = "共有".len },
+        .{ .name_ptr = "未束縛".ptr, .name_len = "未束縛".len },
+        .{ .name_ptr = "未束縛セル".ptr, .name_len = "未束縛セル".len },
+        .{ .name_ptr = "明示".ptr, .name_len = "明示".len },
+        .{ .name_ptr = "セル".ptr, .name_len = "セル".len },
+    };
+    var inner_slots = [_]*const Value{ &storage[1], &storage[2], &storage[7], &storage[4], &storage[6] };
+
+    // フレームが無ければグローバル・システム定数にも無い名前はnull。
+    try std.testing.expectEqual(@as(?Value, null), try active.aotCompatResolve("共有"));
+
+    var outer_frame = AotVarFrame{};
+    lnako_aot_push_var_frame(&outer_frame, &outer_entries, outer_entries.len, &outer_slots);
+    defer lnako_aot_pop_var_frame(&outer_frame);
+    try expectAotValueEqual(storage[0], (try active.aotCompatResolve("共有")).?);
+    try expectAotValueEqual(storage[3], (try active.aotCompatResolve("未束縛")).?);
+
+    var inner_frame = AotVarFrame{};
+    lnako_aot_push_var_frame(&inner_frame, &inner_entries, inner_entries.len, &inner_slots);
+    defer lnako_aot_pop_var_frame(&inner_frame);
+    // 内側の束縛が外側をシャドーイングする。
+    try expectAotValueEqual(storage[1], (try active.aotCompatResolve("共有")).?);
+    // 未束縛の内側ローカルはスキップし、外側の束縛済み値へフォールバック。
+    try expectAotValueEqual(storage[3], (try active.aotCompatResolve("未束縛")).?);
+    // 明示的な`未定義`({0,0})は束縛済みとして返り、外側へ落ちない。
+    const explicit = (try active.aotCompatResolve("明示")).?;
+    try expectAotValueEqual(Value{}, explicit);
+    try std.testing.expect(!explicit.isUnbound());
+    // クロージャcaptureのBindingCellは内側の値をアンラップして返す。
+    try expectAotValueEqual(numberValue(42), (try active.aotCompatResolve("セル")).?);
+    // 未束縛のBindingCellも通常の未束縛スロットと同じくスキップし、
+    // 外側の束縛済み値へフォールバックする。
+    try expectAotValueEqual(storage[3], (try active.aotCompatResolve("未束縛セル")).?);
+
+    lnako_aot_pop_var_frame(&inner_frame);
+    try expectAotValueEqual(storage[0], (try active.aotCompatResolve("共有")).?);
+    try expectAotValueEqual(storage[5], (try active.aotCompatResolve("明示")).?);
+    try std.testing.expectEqual(@as(?Value, null), try active.aotCompatResolve("セル"));
+}
+
+test "AOT変数フレームのpopはLIFO整合性を検証し重複popで壊れない" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+
+    var value = numberValue(1);
+    var entries = [_]AotVarEntry{.{ .name_ptr = "X".ptr, .name_len = "X".len }};
+    var slots = [_]*const Value{&value};
+    var frame_a = AotVarFrame{};
+    var frame_b = AotVarFrame{};
+    lnako_aot_push_var_frame(&frame_a, &entries, entries.len, &slots);
+    try std.testing.expectEqual(@as(?*AotVarFrame, &frame_a), active.var_frames);
+    lnako_aot_push_var_frame(&frame_b, &entries, entries.len, &slots);
+    try std.testing.expectEqual(@as(?*AotVarFrame, &frame_b), active.var_frames);
+
+    // 例外巻戻し等による重複popは現在のフレームを壊さない。
+    lnako_aot_pop_var_frame(&frame_b);
+    lnako_aot_pop_var_frame(&frame_b);
+    try std.testing.expectEqual(@as(?*AotVarFrame, &frame_a), active.var_frames);
+    try expectAotValueEqual(value, (try active.aotCompatResolve("X")).?);
+
+    // 未pushのフレームをpopしても現在のフレームは変わらない。
+    var foreign = AotVarFrame{};
+    lnako_aot_pop_var_frame(&foreign);
+    try std.testing.expectEqual(@as(?*AotVarFrame, &frame_a), active.var_frames);
+    lnako_aot_pop_var_frame(&frame_a);
+    try std.testing.expectEqual(@as(?*AotVarFrame, null), active.var_frames);
+}
+
+test "AOT compat解決はdynamic_globalsの完全一致とモジュールサフィックスを解決する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+
+    try state.upsertDynamicGlobal(active, "完全一致", numberValue(3));
+    try state.upsertDynamicGlobal(active, "modA__サフィックス", numberValue(4));
+    try expectAotValueEqual(numberValue(3), (try active.aotCompatResolve("完全一致")).?);
+    try expectAotValueEqual(numberValue(4), (try active.aotCompatResolve("サフィックス")).?);
+
+    // 異なるモジュールの同名は先勝ちにせず曖昧性エラーにする。
+    try state.upsertDynamicGlobal(active, "modB__サフィックス", numberValue(5));
+    try std.testing.expectError(error.AmbiguousGlobal, active.aotCompatResolve("サフィックス"));
+
+    // slotを持つ未代入グローバルはスキップし、globalThis等へフォールバックする。
+    var pending_slot = Value.unboundValue();
+    const pending_name = try active.allocator.dupe(u8, "未代入");
+    try active.dynamic_globals.append(active.allocator, .{ .name = pending_name, .slot = &pending_slot, .value = .{} });
+    try std.testing.expectEqual(@as(?Value, null), try active.aotCompatResolve("未代入"));
+    pending_slot = numberValue(6);
+    try expectAotValueEqual(numberValue(6), (try active.aotCompatResolve("未代入")).?);
+}
+
+test "AOT dynamic_globalsはslotを正本とし古いentry.valueをGCルートに残さない" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+
+    var slot = Value{};
+    var roots = RootFrame{};
+    active.pushRoots(&roots, @ptrCast(&slot), 1);
+    defer active.popRoots(&roots);
+
+    const stale = try active.createArray(&.{});
+    const stale_object = stale.object().?;
+    slot = stale;
+    state.lnako_aot_dynamic_global_register("グローバル".ptr, "グローバル".len, &slot);
+    const entry = state.dynamicGlobal(active, "グローバル").?;
+    // slotが正本であり、entry.valueへは複製しない。
+    try std.testing.expect(!entry.value.isUnbound());
+    try std.testing.expectEqual(@as(u64, 0), entry.value.payload);
+    try std.testing.expectEqual(@backingInt(Tag.undefined), entry.value.tag);
+
+    slot = try active.createArray(&.{});
+    const reclaimed = active.collect();
+    try std.testing.expect(reclaimed >= 1);
+    try std.testing.expect(!runtimeContainsObject(active, stale_object));
+    try expectAotValueEqual(slot, (try active.aotCompatResolve("グローバル")).?);
+
+    // 動的追加（slot無し）のentryは従来通りentry.valueをmarkする。
+    try state.upsertDynamicGlobal(active, "動的", numberValue(1));
+    try expectAotValueEqual(numberValue(1), (try active.aotCompatResolve("動的")).?);
+}
+
+test "AOT compat解決は名前付き関数を既存Closureで解決し曖昧性を検出する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+
+    var roots = RootFrame{};
+    var function_value = Value{};
+    var mod_b_value = Value{};
+    active.pushRoots(&roots, @ptrCast(&function_value), 1);
+    defer active.popRoots(&roots);
+    lnako_aot_function_new_named(&function_value, testNoopCallback, 0, "modA__関数".ptr, "modA__関数".len, null, 0);
+    try expectAotValueEqual(function_value, (try active.aotCompatResolve("modA__関数")).?);
+    // サフィックス一致も同じClosureオブジェクトを返す。
+    try expectAotValueEqual(function_value, (try active.aotCompatResolve("関数")).?);
+
+    // 別モジュールに同名が現れたら非修飾名は曖昧性エラー。
+    var mod_b_roots = RootFrame{};
+    active.pushRoots(&mod_b_roots, @ptrCast(&mod_b_value), 1);
+    defer active.popRoots(&mod_b_roots);
+    lnako_aot_function_new_named(&mod_b_value, testNoopCallback, 0, "modB__関数".ptr, "modB__関数".len, null, 0);
+    try std.testing.expectError(error.AmbiguousGlobal, active.aotCompatResolve("関数"));
+    // 修飾名は引き続き一意に解決できる。
+    try expectAotValueEqual(mod_b_value, (try active.aotCompatResolve("modB__関数")).?);
+}
+
+test "AOT compat解決はシステム定数へフォールバックする" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+
+    // 数値・真偽値・null・undefinedのスカラー定数。
+    const pi = (try active.aotCompatResolve("PI")).?;
+    try std.testing.expectEqual(@backingInt(Tag.number), pi.tag);
+    try std.testing.expectEqual(std.math.pi, @as(f64, @bitCast(pi.payload)));
+    try expectAotValueEqual(Value{}, (try active.aotCompatResolve("未定義")).?);
+    try std.testing.expectEqual(@backingInt(Tag.null_value), (try active.aotCompatResolve("NULL")).?.tag);
+    try std.testing.expectEqual(@as(u64, 1), (try active.aotCompatResolve("真")).?.payload);
+
+    // 文字列定数。
+    const version = (try active.aotCompatResolve("ナデシコバージョン")).?;
+    try std.testing.expectEqual(@backingInt(Tag.utf16_string), version.tag);
+    try std.testing.expectEqualSlices(u16, &.{ '3', '.', '7', '.', '2', '4' }, version.object().?.payload.utf16_string);
+
+    // 配列・辞書・元号データはシステム定数表の分類に従う。
+    try std.testing.expectEqual(@backingInt(Tag.array), (try active.aotCompatResolve("抽出文字列")).?.tag);
+    try std.testing.expectEqual(@backingInt(Tag.dictionary), (try active.aotCompatResolve("ブラウザ名変換表")).?.tag);
+    try std.testing.expectEqual(@backingInt(Tag.array), (try active.aotCompatResolve("元号データ")).?.tag);
+
+    // 実行環境依存定数・AJAX:ONERRORのフォールバック。
+    try std.testing.expectEqual(@backingInt(Tag.null_value), (try active.aotCompatResolve("AJAX:ONERROR")).?.tag);
+    try std.testing.expectEqual(@as(?Value, null), try active.aotCompatResolve("母艦パス"));
+    try active.setAotSourceDirectory("/tmp/lnako-app");
+    const mother_path = (try active.aotCompatResolve("母艦パス")).?;
+    try std.testing.expectEqual(@backingInt(Tag.utf16_string), mother_path.tag);
+    try expectUtf16String(active, mother_path, "/tmp/lnako-app");
+    const temp_dir = (try active.aotCompatResolve("テンポラリフォルダ")).?;
+    try std.testing.expectEqual(@backingInt(Tag.utf16_string), temp_dir.tag);
+
+    try std.testing.expectEqual(@as(?Value, null), try active.aotCompatResolve("存在しない定数"));
+}
+
+test "AOT compat解決は変数と関数のモジュールサフィックス衝突で変数を優先する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+
+    var roots = [_]Value{ .{}, .{} };
+    var frame = RootFrame{};
+    active.pushRoots(&frame, &roots, roots.len);
+    defer active.popRoots(&frame);
+
+    lnako_aot_function_new_named(&roots[0], testNoopCallback, 0, "modB__衝突".ptr, "modB__衝突".len, null, 0);
+    try state.upsertDynamicGlobal(active, "modA__衝突", numberValue(77));
+    // 変数と関数が別モジュールで同じサフィックスを持っていても変数が優先される。
+    try expectAotValueEqual(numberValue(77), (try active.aotCompatResolve("衝突")).?);
+
+    // 未代入の変数スロットはスキップされ、別モジュールの名前付き関数へ到達する。
+    lnako_aot_function_new_named(&roots[1], testNoopCallback, 0, "modB__未束縛衝突".ptr, "modB__未束縛衝突".len, null, 0);
+    var unbound_slot = Value.unboundValue();
+    const unbound_name = try active.allocator.dupe(u8, "modA__未束縛衝突");
+    try active.dynamic_globals.append(active.allocator, .{ .name = unbound_name, .slot = &unbound_slot, .value = .{} });
+    try expectAotValueEqual(roots[1], (try active.aotCompatResolve("未束縛衝突")).?);
+
+    // 関数と同名への動的変数代入は関数登録を壊さず別エントリとして解決される。
+    try state.upsertDynamicGlobal(active, "modB__衝突", numberValue(99));
+    try expectAotValueEqual(numberValue(99), (try active.aotCompatResolve("modB__衝突")).?);
+    try expectAotValueEqual(roots[0], (try resolveNamedFunctionValue(active, "modB__衝突")).?);
+}
+
+test "AOT compatシステム文字列定数の解決はOOM時に二重解放やリークを起こさない" {
+    var fail_index: usize = 0;
+    while (fail_index < 32) : (fail_index += 1) {
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = fail_index });
+        var runtime = Runtime{ .allocator = failing.allocator() };
+        defer runtime.deinit();
+
+        const resolved = runtime.aotCompatResolve("ナデシコバージョン") catch |failure| {
+            try std.testing.expectEqual(error.OutOfMemory, failure);
+            continue;
+        };
+        const value = resolved orelse return error.TestUnexpectedResult;
+        try std.testing.expectEqual(@backingInt(Tag.utf16_string), value.tag);
+        try std.testing.expectEqualSlices(u16, &.{ '3', '.', '7', '.', '2', '4' }, value.object().?.payload.utf16_string);
+        break;
+    } else return error.TestUnexpectedResult;
 }

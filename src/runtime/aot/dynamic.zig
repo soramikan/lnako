@@ -196,8 +196,9 @@ pub fn dynamicGlobal(runtime: *Runtime, name: []const u8) ?*DynamicGlobal {
 
 pub fn upsertDynamicGlobal(runtime: *Runtime, name: []const u8, value: Value) !void {
     if (dynamicGlobal(runtime, name)) |entry| {
-        entry.value = value;
-        if (entry.slot) |slot| slot.* = value;
+        // slotを持つ静的グローバルはslotだけが正本。entry.valueにも複製する
+        // と、なでしこ側の上書き後も古い値がGCルートとして残り続ける。
+        if (entry.slot) |slot| slot.* = value else entry.value = value;
         return;
     }
     const owned_name = try runtime.allocator.dupe(u8, name);
@@ -444,11 +445,24 @@ fn dynamicToAotValueDepth(state: *DynamicInterpreterState, value: dynamic_value.
 pub fn prepareDynamic(context: *anyopaque, interpreter: *dynamic_interpreter.Interpreter) anyerror!void {
     const state: *DynamicInterpreterState = @ptrCast(@alignCast(context));
     const owner = state.owner;
-    for (owner.dynamic_globals.items) |*entry| {
-        if (entry.slot) |slot| entry.value = slot.*;
+    for (owner.named_functions.items) |registered| {
+        const fn_value = Value{ .tag = @backingInt(Tag.function), .payload = @intFromPtr(registered.object) };
+        var value = aotToDynamicValue(state, fn_value) catch |failure| switch (failure) {
+            error.DynamicValueUnsupported => continue,
+            else => return failure,
+        };
+        var roots = state.value_runtime.rootFrame();
+        defer roots.deinit();
+        try roots.protect(&value);
+        try interpreter.setGlobalValue(registered.name, value);
     }
     for (owner.dynamic_globals.items) |entry| {
-        var value = aotToDynamicValue(state, entry.value) catch |failure| switch (failure) {
+        // slotを持つ静的グローバルはslotだけを読み、entry.valueへは複製
+        // しない（GCが古い値を保持し続けるのを防ぐ）。
+        const raw = if (entry.slot) |slot| slot.* else entry.value;
+        // 未代入のグローバルは動的側へ渡さない（globalThisのシャドウ防止）。
+        if (raw.isUnbound()) continue;
+        var value = aotToDynamicValue(state, raw) catch |failure| switch (failure) {
             error.DynamicValueUnsupported => continue,
             else => return failure,
         };
@@ -596,8 +610,8 @@ pub fn dynamicBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments
 
     var previous_log: Value = .{};
     if (dynamicGlobal(runtime, "表示ログ")) |entry| {
-        if (entry.slot) |slot| entry.value = slot.*;
-        previous_log = entry.value;
+        // 正本はslot（あれば）。entry.valueは書き換えない。
+        previous_log = if (entry.slot) |slot| slot.* else entry.value;
     }
     var previous_roots = RootFrame{};
     runtime.pushRoots(&previous_roots, @ptrCast(&previous_log), 1);

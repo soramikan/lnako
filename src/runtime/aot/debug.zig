@@ -162,6 +162,21 @@ pub export fn lnako_aot_pop_roots(frame: *state.RootFrame) callconv(.c) void {
     if (state.active_runtime) |*runtime| runtime.popRoots(frame);
 }
 
+/// `--compat-js` 変数bridge: 関数ローカルの名前とスロットの対応を実行中の
+/// Runtimeへpushする。通常AOTはこのABIを呼ばない。
+pub export fn lnako_aot_push_var_frame(
+    frame: *state.AotVarFrame,
+    entries: ?[*]const state.AotVarEntry,
+    len: usize,
+    slots: ?[*]const *const state.Value,
+) callconv(.c) void {
+    if (state.active_runtime) |*runtime| runtime.pushVarFrame(frame, entries, len, slots);
+}
+
+pub export fn lnako_aot_pop_var_frame(frame: *state.AotVarFrame) callconv(.c) void {
+    if (state.active_runtime) |*runtime| runtime.popVarFrame(frame);
+}
+
 pub export fn lnako_aot_collect() callconv(.c) usize {
     return if (state.active_runtime) |*runtime| runtime.collect() else 0;
 }

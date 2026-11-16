@@ -340,3 +340,257 @@ test "compat-js AOTは4つのJS命令を許可し、通常AOTは拒否する" {
         try std.testing.expect(std.mem.indexOf(u8, module.text, call) != null);
     }
 }
+
+/// `--compat-js` を有効化したAOTモジュールテキストを生成する。
+fn compatJsModuleText(allocator: std.mem.Allocator, source: []const u8, optimized: bool) ![]u8 {
+    var parsed = try parser.parse(allocator, source, "main.nako3");
+    defer parsed.deinit();
+    try std.testing.expect(parsed.succeeded());
+    var analyzed = try semantic.analyze(allocator, parsed.root.?, "main.nako3");
+    defer analyzed.deinit();
+    try std.testing.expect(analyzed.succeeded());
+    var hir_program = try hir.lowerSingle(allocator, parsed.root.?, "main", "main.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower.lower(allocator, hir_program);
+    defer program.deinit();
+    // compat専用命令は通常AOTでは未対応のまま。
+    try std.testing.expect(findUnsupported(program) != null);
+    program.compat_js = true;
+    try std.testing.expect(findUnsupported(program) == null);
+    var module = try generate(allocator, program, "main.nako3", optimized);
+    defer module.deinit(allocator);
+    return allocator.dupe(u8, module.text);
+}
+
+fn extractDefinedFunction(module_text: []const u8, id: ir.FunctionId) ![]const u8 {
+    var header_buf: [64]u8 = undefined;
+    const header = try std.fmt.bufPrint(&header_buf, "define internal %lnako.Value @lnako.fn.{d}(", .{id});
+    const start = std.mem.indexOf(u8, module_text, header) orelse return error.TestUnexpectedResult;
+    const end = std.mem.indexOfPos(u8, module_text, start, "\n}\n") orelse return error.TestUnexpectedResult;
+    return module_text[start .. end + 3];
+}
+
+fn findIrFunctionBySuffix(program: ir.Program, suffix: []const u8) ?ir.Function {
+    for (program.functions) |function| {
+        if (std.mem.eql(u8, function.name, suffix) or std.mem.endsWith(u8, function.name, suffix)) return function;
+    }
+    return null;
+}
+
+fn countSubstring(haystack: []const u8, needle: []const u8) usize {
+    var count: usize = 0;
+    var pos: usize = 0;
+    while (std.mem.indexOfPos(u8, haystack, pos, needle)) |found| {
+        count += 1;
+        pos = found + needle.len;
+    }
+    return count;
+}
+
+test "compat-js AOTは変数bridgeのフレーム・未束縛初期化・ロード正規化を最適化有無双方でemitする" {
+    // 1) capture + JS実行（正常return）、2) 捕捉ありthrow + 継続、
+    // 3) 未捕捉throw（throw_value target==null）、4) 例外伝播（propagate_exception）、
+    // 5) 呼び出しの無いリーフ関数（var.frame省略）を1プログラムで検証する。
+    const source =
+        "●加算(Aを)\n" ++
+        "  B=A+1\n" ++
+        "  F=関数()\n" ++
+        "    Bで戻る\n" ++
+        "  ここまで\n" ++
+        "  JS実行(\"1+2\")を表示\n" ++
+        "  Bで戻る\n" ++
+        "ここまで\n" ++
+        "●捕捉処理(Xを)\n" ++
+        "  Y=X+1\n" ++
+        "  エラー監視\n" ++
+        "    \"err\"のエラー発生\n" ++
+        "  エラーならば\n" ++
+        "    Y=Y+10\n" ++
+        "  ここまで\n" ++
+        "  JS実行(\"1\")を表示\n" ++
+        "  Yで戻る\n" ++
+        "ここまで\n" ++
+        "●未捕捉送出(Zを)\n" ++
+        "  W=Z+1\n" ++
+        "  JS実行(\"1\")を表示\n" ++
+        "  \"boom\"のエラー発生\n" ++
+        "  Wで戻る\n" ++
+        "ここまで\n" ++
+        "●例外伝播(Pを)\n" ++
+        "  Q=P+1\n" ++
+        "  未捕捉送出(Q)を表示\n" ++
+        "  Qで戻る\n" ++
+        "ここまで\n" ++
+        "●リーフ(Lを)\n" ++
+        "  R=L+1\n" ++
+        "  Rで戻る\n" ++
+        "ここまで\n" ++
+        "加算(2)を表示\n" ++
+        "捕捉処理(3)を表示\n" ++
+        "例外伝播(4)を表示\n" ++
+        "リーフ(5)を表示\n";
+
+    var parsed = try parser.parse(std.testing.allocator, source, "main.nako3");
+    defer parsed.deinit();
+    try std.testing.expect(parsed.succeeded());
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "main.nako3");
+    defer analyzed.deinit();
+    try std.testing.expect(analyzed.succeeded());
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "main", "main.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower.lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+    try std.testing.expect(findUnsupported(program) != null);
+    program.compat_js = true;
+    try std.testing.expect(findUnsupported(program) == null);
+
+    const add_fn = findIrFunctionBySuffix(program, "__加算") orelse findIrFunctionBySuffix(program, "加算") orelse return error.TestUnexpectedResult;
+    const catch_fn = findIrFunctionBySuffix(program, "__捕捉処理") orelse findIrFunctionBySuffix(program, "捕捉処理") orelse return error.TestUnexpectedResult;
+    const uncaught_fn = findIrFunctionBySuffix(program, "__未捕捉送出") orelse findIrFunctionBySuffix(program, "未捕捉送出") orelse return error.TestUnexpectedResult;
+    const prop_fn = findIrFunctionBySuffix(program, "__例外伝播") orelse findIrFunctionBySuffix(program, "例外伝播") orelse return error.TestUnexpectedResult;
+    const leaf_fn = findIrFunctionBySuffix(program, "__リーフ") orelse findIrFunctionBySuffix(program, "リーフ") orelse return error.TestUnexpectedResult;
+
+    for ([_]bool{ false, true }) |optimized| {
+        var module = try generate(std.testing.allocator, program, "main.nako3", optimized);
+        defer module.deinit(std.testing.allocator);
+        const text = module.text;
+
+        try std.testing.expect(std.mem.indexOf(u8, text, "%lnako.AotVarEntry = type { ptr, i64 }") != null);
+        try std.testing.expect(std.mem.indexOf(u8, text, "%lnako.AotVarFrame = type { ptr, ptr, i64, ptr }") != null);
+        try std.testing.expect(std.mem.indexOf(u8, text, "declare void @lnako_aot_push_var_frame(ptr, ptr, i64, ptr)") != null);
+        try std.testing.expect(std.mem.indexOf(u8, text, "declare void @lnako_aot_pop_var_frame(ptr)") != null);
+        try std.testing.expect(std.mem.indexOf(u8, text, "store %lnako.Value { i8 0, i64 1 }, ptr %root.slot.") != null);
+        try std.testing.expect(std.mem.indexOf(u8, text, "%runtime.unbound = alloca %lnako.Value") != null);
+        try std.testing.expect(std.mem.indexOf(u8, text, "%v.unbound.is-undefined.") != null);
+        try std.testing.expect(std.mem.indexOf(u8, text, "select i1 %v.unbound.is-undefined.") != null);
+
+        // 1) 加算（capture + 正常return）: push 1回、全 ret 前に pop_var_frame -> pop_roots
+        const add_ir = try extractDefinedFunction(text, add_fn.id);
+        try std.testing.expectEqual(@as(usize, 1), countSubstring(add_ir, "call void @lnako_aot_push_var_frame("));
+        try std.testing.expectEqual(countSubstring(add_ir, "ret %lnako.Value"), countSubstring(add_ir, "call void @lnako_aot_pop_var_frame(ptr %var.frame)\n  call void @lnako_aot_pop_roots(ptr %root.frame)"));
+
+        // 2) 捕捉処理（エラー監視内のthrow_value target!=null）: catch分岐前でpopしない
+        const catch_ir = try extractDefinedFunction(text, catch_fn.id);
+        try std.testing.expectEqual(@as(usize, 1), countSubstring(catch_ir, "call void @lnako_aot_push_var_frame("));
+        const catch_set_pos = std.mem.indexOf(u8, catch_ir, "call void @lnako_aot_exception_set") orelse return error.TestUnexpectedResult;
+        const catch_branch_pos = std.mem.indexOfPos(u8, catch_ir, catch_set_pos, "  br label %bb") orelse return error.TestUnexpectedResult;
+        try std.testing.expect(std.mem.indexOf(u8, catch_ir[catch_set_pos..catch_branch_pos], "lnako_aot_pop_var_frame") == null);
+        try std.testing.expectEqual(countSubstring(catch_ir, "ret %lnako.Value"), countSubstring(catch_ir, "call void @lnako_aot_pop_var_frame(ptr %var.frame)\n  call void @lnako_aot_pop_roots(ptr %root.frame)"));
+
+        // 3) 未捕捉送出（throw_value target==null）: throw後もpop_var_frame -> pop_roots
+        const uncaught_ir = try extractDefinedFunction(text, uncaught_fn.id);
+        try std.testing.expectEqual(@as(usize, 1), countSubstring(uncaught_ir, "call void @lnako_aot_push_var_frame("));
+        try std.testing.expect(countSubstring(uncaught_ir, "ret %lnako.Value") >= 2);
+        try std.testing.expectEqual(countSubstring(uncaught_ir, "ret %lnako.Value"), countSubstring(uncaught_ir, "call void @lnako_aot_pop_var_frame(ptr %var.frame)\n  call void @lnako_aot_pop_roots(ptr %root.frame)"));
+
+        // 4) 例外伝播（propagate_exception）: 伝播脱出経路もpop_var_frame -> pop_roots
+        const prop_ir = try extractDefinedFunction(text, prop_fn.id);
+        try std.testing.expectEqual(@as(usize, 1), countSubstring(prop_ir, "call void @lnako_aot_push_var_frame("));
+        try std.testing.expect(countSubstring(prop_ir, "ret %lnako.Value") >= 2);
+        try std.testing.expectEqual(countSubstring(prop_ir, "ret %lnako.Value"), countSubstring(prop_ir, "call void @lnako_aot_pop_var_frame(ptr %var.frame)\n  call void @lnako_aot_pop_roots(ptr %root.frame)"));
+
+        // 5) リーフ関数: 呼び出しが無いため var.frame を出力しない
+        const leaf_ir = try extractDefinedFunction(text, leaf_fn.id);
+        try std.testing.expect(std.mem.indexOf(u8, leaf_ir, "lnako_aot_push_var_frame") == null);
+        try std.testing.expect(std.mem.indexOf(u8, leaf_ir, "lnako_aot_pop_var_frame") == null);
+    }
+}
+
+test "通常AOTは変数bridgeの型・シンボル・未束縛初期化を一切emitしない" {
+    var parsed = try parser.parse(std.testing.allocator, "●加算(Aを)\n  B=A+1\n  Bで戻る\nここまで\n加算(2)を表示\n", "main.nako3");
+    defer parsed.deinit();
+    try std.testing.expect(parsed.succeeded());
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "main.nako3");
+    defer analyzed.deinit();
+    try std.testing.expect(analyzed.succeeded());
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "main", "main.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower.lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+    var module = try generate(std.testing.allocator, program, "main.nako3", false);
+    defer module.deinit(std.testing.allocator);
+
+    for ([_][]const u8{
+        "lnako_aot_push_var_frame",
+        "lnako_aot_pop_var_frame",
+        "%lnako.AotVarEntry",
+        "%lnako.AotVarFrame",
+        ".var.names",
+        "%runtime.unbound",
+        "%v.unbound.",
+        "{ i8 0, i64 1 }",
+    }) |forbidden| {
+        try std.testing.expect(std.mem.indexOf(u8, module.text, forbidden) == null);
+    }
+}
+
+test "compat-js AOTはESM登録前に変数・実行環境定数を登録し名前付き関数専用スロットを除外する" {
+    var parsed = try parser.parse(
+        std.testing.allocator,
+        "●補助(Xを)\n  X+1で戻る\nここまで\nユーザー変数=42\nJS実行(\"1+2\")を表示\n",
+        "main.nako3",
+    );
+    defer parsed.deinit();
+    try std.testing.expect(parsed.succeeded());
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "main.nako3");
+    defer analyzed.deinit();
+    try std.testing.expect(analyzed.succeeded());
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "main", "main.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower.lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+    program.compat_js = true;
+    const js_modules = try program.arena.allocator().alloc(ir.JavaScriptModule, 1);
+    js_modules[0] = .{
+        .path = "mod.mjs",
+        .source = "export function add(a, b) { return a + b; }",
+        .is_plugin = false,
+        .namespaces = &.{},
+        .package_root = null,
+        .bare_aliases = &.{},
+    };
+    program.javascript_modules = js_modules;
+    var module = try generate(std.testing.allocator, program, "main.nako3", false);
+    defer module.deinit(std.testing.allocator);
+
+    const register_index = std.mem.indexOf(u8, module.text, "call void @lnako_aot_dynamic_global_register(") orelse return error.TestUnexpectedResult;
+    const node_constants_index = std.mem.indexOf(u8, module.text, "call void @lnako_aot_node_constants_init") orelse return error.TestUnexpectedResult;
+    const dir_constants_index = std.mem.indexOf(u8, module.text, "call void @lnako_aot_node_directory_constants_init(") orelse return error.TestUnexpectedResult;
+    const mother_path_index = std.mem.indexOf(u8, module.text, "call void @lnako_aot_node_mother_path_init(") orelse return error.TestUnexpectedResult;
+    const system_index = std.mem.indexOf(u8, module.text, "call void @lnako_aot_string_new(") orelse return error.TestUnexpectedResult;
+    const esm_index = std.mem.indexOf(u8, module.text, "call void @lnako_aot_compat_esm_register(") orelse return error.TestUnexpectedResult;
+    const entry_index = std.mem.indexOf(u8, module.text, "%entry.result = call %lnako.Value @lnako.fn.") orelse return error.TestUnexpectedResult;
+    // グローバル登録・実行環境システム定数初期化がESM登録より前、ESM登録が
+    // トップレベル評価より前であること。
+    try std.testing.expect(register_index < esm_index);
+    try std.testing.expect(node_constants_index < esm_index);
+    try std.testing.expect(dir_constants_index < esm_index);
+    try std.testing.expect(mother_path_index < esm_index);
+    try std.testing.expect(system_index < esm_index);
+    try std.testing.expect(esm_index < entry_index);
+
+    // 名前付き関数生成スロットは `dynamic_globals` へ登録せず、ユーザー変数スロットは登録する。
+    const helper_fn = findIrFunctionBySuffix(program, "__補助") orelse findIrFunctionBySuffix(program, "補助") orelse return error.TestUnexpectedResult;
+    const helper_decl = try std.fmt.allocPrint(std.testing.allocator, "ptr @lnako.function.name.{d}", .{helper_fn.id});
+    defer std.testing.allocator.free(helper_decl);
+    const fn_init_line_pos = std.mem.indexOf(u8, module.text, helper_decl) orelse return error.TestUnexpectedResult;
+    const line_start = if (std.mem.lastIndexOfScalar(u8, module.text[0..fn_init_line_pos], '\n')) |pos| pos + 1 else 0;
+    const fn_init_line = module.text[line_start..fn_init_line_pos];
+    const slot_prefix = "call void @lnako_aot_function_new_generated(ptr @lnako.global.";
+    const slot_prefix_pos = std.mem.indexOf(u8, fn_init_line, slot_prefix) orelse return error.TestUnexpectedResult;
+    const slot_num_start = slot_prefix_pos + slot_prefix.len;
+    const slot_num_end = std.mem.indexOfScalarPos(u8, fn_init_line, slot_num_start, ',') orelse return error.TestUnexpectedResult;
+    const helper_slot = fn_init_line[slot_num_start..slot_num_end];
+    const forbidden_reg = try std.fmt.allocPrint(std.testing.allocator, "ptr @lnako.global.{s})", .{helper_slot});
+    defer std.testing.allocator.free(forbidden_reg);
+    const main_start = std.mem.indexOf(u8, module.text, "define i32 @main(") orelse std.mem.indexOf(u8, module.text, "define i32 @wmain(") orelse return error.TestUnexpectedResult;
+    const main_text = module.text[main_start..];
+    var search_pos: usize = 0;
+    while (std.mem.indexOfPos(u8, main_text, search_pos, "call void @lnako_aot_dynamic_global_register(")) |pos| {
+        const line_end = std.mem.indexOfScalarPos(u8, main_text, pos, '\n') orelse main_text.len;
+        try std.testing.expect(std.mem.indexOf(u8, main_text[pos..line_end], forbidden_reg) == null);
+        search_pos = line_end;
+    }
+    const optimized_text = try compatJsModuleText(std.testing.allocator, "X=1\nJS実行(\"1\")を表示\n", true);
+    defer std.testing.allocator.free(optimized_text);
+}

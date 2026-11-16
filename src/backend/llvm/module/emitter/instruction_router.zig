@@ -32,6 +32,23 @@ const functions_mod = @import("functions.zig");
 const preamble_mod = @import("preamble.zig");
 const declarations_mod = @import("declarations.zig");
 
+/// `--compat-js` 変数bridgeがスロットへ置く未束縛sentinel
+/// (`tag=undefined, payload=1`) を、通常の`未定義` (`payload=0`) へ正規化
+/// したSSA値 `%v{id}` を定義する。後続の命令は常に `%v{id}` を読む。
+fn writeCompatUnboundNormalization(emitter: *Emitter, id: ir.ValueId, span: ast.Span, scope: usize) !void {
+    const writer = &emitter.output.writer;
+    try writer.print("  %v.unbound.tag.{d} = extractvalue %lnako.Value %v.raw.{d}, 0", .{ id, id });
+    try emitter.debugSuffix(span, scope);
+    try writer.print("  %v.unbound.is-undefined.{d} = icmp eq i8 %v.unbound.tag.{d}, 0", .{ id, id });
+    try emitter.debugSuffix(span, scope);
+    try writer.print("  %v.unbound.payload.{d} = extractvalue %lnako.Value %v.raw.{d}, 1", .{ id, id });
+    try emitter.debugSuffix(span, scope);
+    try writer.print("  %v.unbound.normalized.{d} = select i1 %v.unbound.is-undefined.{d}, i64 0, i64 %v.unbound.payload.{d}", .{ id, id, id });
+    try emitter.debugSuffix(span, scope);
+    try writer.print("  %v{d} = insertvalue %lnako.Value %v.raw.{d}, i64 %v.unbound.normalized.{d}, 1", .{ id, id, id });
+    try emitter.debugSuffix(span, scope);
+}
+
 pub fn writeInstruction(emitter: *Emitter, function: ir.Function, locals: []const []const u8, instruction: ir.Instruction, scope: usize, aggregate_count: usize) !void {
     const result = instruction.result;
     switch (instruction.opcode) {
@@ -75,8 +92,17 @@ pub fn writeInstruction(emitter: *Emitter, function: ir.Function, locals: []cons
                 try emitter.output.writer.print("  call void @lnako_aot_global_read_site(i64 {d})", .{site_id});
                 try emitter.debugSuffix(instruction.span, scope);
             }
-            try emitter.output.writer.print("  %v{d} = load %lnako.Value, ptr @lnako.global.{d}", .{ result orelse return error.MissingInstructionResult, index });
-            try emitter.debugSuffix(instruction.span, scope);
+            const id = result orelse return error.MissingInstructionResult;
+            if (emitter.hasCompatJsVariableBridge()) {
+                // unbound sentinelのpayloadがSSA値としてプログラム側へ
+                // 漏れないよう、tag==undefinedのpayloadを0へ正規化する。
+                try emitter.output.writer.print("  %v.raw.{d} = load %lnako.Value, ptr @lnako.global.{d}", .{ id, index });
+                try emitter.debugSuffix(instruction.span, scope);
+                try writeCompatUnboundNormalization(emitter, id, instruction.span, scope);
+            } else {
+                try emitter.output.writer.print("  %v{d} = load %lnako.Value, ptr @lnako.global.{d}", .{ id, index });
+                try emitter.debugSuffix(instruction.span, scope);
+            }
         },
         .store_global => {
             const index = emitter.globalIndex(instruction.name) orelse return error.UnknownGlobal;
@@ -94,8 +120,16 @@ pub fn writeInstruction(emitter: *Emitter, function: ir.Function, locals: []cons
         },
         .load_local => {
             const index = context.nameIndex(locals, instruction.name) orelse return error.UnknownLocal;
-            try emitter.output.writer.print("  %v{d} = load %lnako.Value, ptr %local.{d}", .{ result orelse return error.MissingInstructionResult, index });
-            try emitter.debugSuffix(instruction.span, scope);
+            const id = result orelse return error.MissingInstructionResult;
+            if (emitter.hasCompatJsVariableBridge()) {
+                // load_globalと同じく未束縛sentinelを通常の`未定義`へ揃える。
+                try emitter.output.writer.print("  %v.raw.{d} = load %lnako.Value, ptr %local.{d}", .{ id, index });
+                try emitter.debugSuffix(instruction.span, scope);
+                try writeCompatUnboundNormalization(emitter, id, instruction.span, scope);
+            } else {
+                try emitter.output.writer.print("  %v{d} = load %lnako.Value, ptr %local.{d}", .{ id, index });
+                try emitter.debugSuffix(instruction.span, scope);
+            }
         },
         .store_local => {
             const index = context.nameIndex(locals, instruction.name) orelse return error.UnknownLocal;

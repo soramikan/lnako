@@ -155,7 +155,13 @@ pub fn emitPreamble(emitter: *Emitter) !void {
         // 通常AOTのruntimeには存在しないcompat専用ABI。生成物は
         // liblnako_runtime_compat.a とだけリンクする。
         try writer.writeAll(
-            "declare void @lnako_aot_compat_js_eval(ptr, ptr, i64)\n" ++
+            // `--compat-js` の変数bridge専用型/ABI。通常AOTはこの型も宣言も
+            // 一切出力しない。
+            "%lnako.AotVarEntry = type { ptr, i64 }\n" ++
+                "%lnako.AotVarFrame = type { ptr, ptr, i64, ptr }\n" ++
+                "declare void @lnako_aot_push_var_frame(ptr, ptr, i64, ptr)\n" ++
+                "declare void @lnako_aot_pop_var_frame(ptr)\n" ++
+                "declare void @lnako_aot_compat_js_eval(ptr, ptr, i64)\n" ++
                 "declare void @lnako_aot_compat_js_call(ptr, ptr, i64)\n" ++
                 "declare void @lnako_aot_compat_js_object_get(ptr, ptr, i64)\n" ++
                 "declare void @lnako_aot_compat_js_method_call(ptr, ptr, i64)\n" ++
@@ -296,6 +302,23 @@ pub fn collectModuleData(emitter: *Emitter) !void {
             }
         };
     }
+    if (emitter.hasCompatJsVariableBridge()) {
+        // `--compat-js` ではソース内で直接参照されない実行環境依存定数も
+        // JS実行・`JSオブジェクト取得` から参照され得るため、スロットと
+        // 起動時初期化を必ず確保する（通常AOTには影響しない）。
+        for ([_][]const u8{
+            "コマンドライン",
+            "ナデシコランタイム",
+            "ナデシコランタイムパス",
+            "デスクトップ",
+            "マイドキュメント",
+            "テンポラリフォルダ",
+            "母艦パス",
+            "名前空間",
+        }) |name| {
+            if (emitter.globalIndex(name) == null) try emitter.appendGlobal(name);
+        }
+    }
     for (emitter.globals.items, 0..) |name, global_index| if (emitter.systemStringValue(name)) |value| {
         const units = try std.unicode.utf8ToUtf16LeAlloc(emitter.allocator, value);
         emitter.system_strings.append(emitter.allocator, .{ .global_index = global_index, .units = units }) catch |failure| {
@@ -376,24 +399,38 @@ pub fn emitDeclarations(emitter: *Emitter) !void {
     const writer = &emitter.output.writer;
     for (emitter.globals.items, 0..) |name, index| {
         try writer.print("@lnako.global.{d} = internal global %lnako.Value ", .{index});
-        try context.writeScalarInitializer(writer, system_constant.lookupScalar(name));
+        // compat変数bridgeでは未代入ユーザーグローバルを`unboundValue`で
+        // 初期化し、明示的な`未定義`代入({0,0})と区別する。`それ` は
+        // 関数スコープの開始値を常に束縛済みとする。文字列・配列等の
+        // システム定数はwriteMainが初期化するため後から束縛済みになる。
+        if (emitter.hasCompatJsVariableBridge() and
+            !std.mem.eql(u8, name, "それ") and
+            system_constant.lookupScalar(name) == null)
+        {
+            try writer.writeAll("{ i8 0, i64 1 }");
+        } else try context.writeScalarInitializer(writer, system_constant.lookupScalar(name));
         try writer.writeByte('\n');
     }
     if (emitter.globals.items.len > 0) try writer.writeByte('\n');
-    if (try emitter.hasDynamicBuiltin()) for (emitter.globals.items, 0..) |name, index| {
-        try writer.print("@lnako.global.name.{d} = private unnamed_addr constant [{d} x i8] ", .{ index, name.len });
-        if (name.len == 0) {
-            try writer.writeAll("zeroinitializer\n");
-        } else {
-            try writer.writeByte('[');
-            for (name, 0..) |byte, byte_index| {
-                if (byte_index > 0) try writer.writeAll(", ");
-                try writer.print("i8 {d}", .{byte});
+    if ((try emitter.hasDynamicBuiltin()) or emitter.hasCompatJsVariableBridge()) {
+        var emitted_global_name = false;
+        for (emitter.globals.items, 0..) |name, index| {
+            if (emitter.hasCompatJsVariableBridge() and (try emitter.isNamedFunctionOnlyGlobal(name))) continue;
+            emitted_global_name = true;
+            try writer.print("@lnako.global.name.{d} = private unnamed_addr constant [{d} x i8] ", .{ index, name.len });
+            if (name.len == 0) {
+                try writer.writeAll("zeroinitializer\n");
+            } else {
+                try writer.writeByte('[');
+                for (name, 0..) |byte, byte_index| {
+                    if (byte_index > 0) try writer.writeAll(", ");
+                    try writer.print("i8 {d}", .{byte});
+                }
+                try writer.writeAll("]\n");
             }
-            try writer.writeAll("]\n");
         }
-    };
-    if (try emitter.hasDynamicBuiltin() and emitter.globals.items.len > 0) try writer.writeByte('\n');
+        if (emitted_global_name) try writer.writeByte('\n');
+    }
     for (emitter.native_plugin_names.items, 0..) |name, index| {
         try writer.print("@lnako.native.plugin.name.{d} = private unnamed_addr constant [{d} x i8] ", .{ index, name.len });
         if (name.len == 0) {
@@ -489,6 +526,9 @@ pub fn emitDeclarations(emitter: *Emitter) !void {
         }
     }
     if (emitter.program.functions.len > 0) try writer.writeByte('\n');
+    if (emitter.hasCompatJsVariableBridge()) {
+        for (emitter.program.functions) |function| try emitCompatVarNames(emitter, function);
+    }
     for (emitter.builtin_closure_names.items, 0..) |name, index| {
         try writer.print("@lnako.builtin.name.{d} = private unnamed_addr constant [{d} x i8] ", .{ index, name.len });
         if (name.len == 0) {
@@ -551,6 +591,35 @@ pub fn emitDeclarations(emitter: *Emitter) !void {
         try writeLlvmByteString(writer, manifest);
         try writer.writeAll("\"\n\n");
     }
+}
+
+/// `--compat-js` 変数bridge用の静的ローカル名テーブル。関数のローカル数と
+/// 呼び出し包含条件が一致する場合だけ、`%lnako.AotVarEntry` の配列定数を
+/// 出力する。実行時の文字列アロケーションや名前コピーは行わない。
+fn emitCompatVarNames(emitter: *Emitter, function: ir.Function) !void {
+    const locals = try emitter.localNames(function);
+    defer emitter.allocator.free(locals);
+    if (locals.len == 0 or !context.functionMayInvokeBridge(function)) return;
+    const writer = &emitter.output.writer;
+    for (locals, 0..) |name, index| {
+        try writer.print("@lnako.fn.{d}.var.name.{d} = private unnamed_addr constant [{d} x i8] ", .{ function.id, index, name.len });
+        if (name.len == 0) {
+            try writer.writeAll("zeroinitializer\n");
+        } else {
+            try writer.writeByte('[');
+            for (name, 0..) |byte, byte_index| {
+                if (byte_index > 0) try writer.writeAll(", ");
+                try writer.print("i8 {d}", .{byte});
+            }
+            try writer.writeAll("]\n");
+        }
+    }
+    try writer.print("@lnako.fn.{d}.var.names = private unnamed_addr constant [{d} x %lnako.AotVarEntry] [", .{ function.id, locals.len });
+    for (locals, 0..) |name, index| {
+        if (index > 0) try writer.writeAll(", ");
+        try writer.print("%lnako.AotVarEntry {{ ptr @lnako.fn.{d}.var.name.{d}, i64 {d} }}", .{ function.id, index, name.len });
+    }
+    try writer.writeAll("]\n");
 }
 
 /// LLVM IRのc"..."リテラルへバイト列を書き出す。JSONの `"` と `\` を含む
