@@ -763,6 +763,34 @@ test "バイト列の添字・更新・反復をUint8Array互換で実行する"
     try std.testing.expectEqualStrings("0\n3\n0\n2\n2\n1\n", host.written());
 }
 
+test "バイト列の数値文字列キーはTypedArrayの要素規則に従う" {
+    const TestNode = struct {
+        pub fn cwd(_: *anyopaque, allocator: std.mem.Allocator) ![]u8 {
+            return allocator.dupe(u8, ".");
+        }
+
+        pub fn randomBytes(_: *anyopaque, output: []u8) !void {
+            for (output, 0..) |*byte, index| byte.* = @intCast(index);
+        }
+    };
+    const source = "B=5のランダム配列生成\nB[\"2\"]=88\nB[2]=66\nB[\"2\"]を表示\nB[2]を表示\nB[\"99\"]=7\nB[\"02\"]=7\nB[\"-1\"]=7\nB[\"1.5\"]=7\nB[\"-0\"]=7\nB[\"2.0\"]=7\nB[\"1e3\"]=7\nB[\"\"]=7\nB[\"4294967295\"]=7\nBを反復\n対象を表示\nここまで\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var runtime_host = host.host();
+    runtime_host.node_context = .{ .context = &host, .cwdFn = TestNode.cwd, .randomBytesFn = TestNode.randomBytes };
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, runtime_host);
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("66\n66\n0\n1\n66\n3\n4\n7\n7\n7\n7\n", host.written());
+}
+
 test "連続表示は公式処理系と同じく改行する" {
     var fixture = try compileForTest(std.testing.allocator, "\"100%安全%s\"を連続表示\n\"次\"を表示\n");
     defer fixture.ir_program.deinit();

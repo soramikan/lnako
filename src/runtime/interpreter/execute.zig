@@ -12,6 +12,7 @@ const lower_ssa = @import("../../ir/lower_ssa.zig");
 const verifier = @import("../../ir/verifier.zig");
 const error_message = @import("../error_message.zig");
 const value_mod = @import("../value.zig");
+const typed_array_key = @import("../typed_array_key.zig");
 const operators = @import("../operators.zig");
 const plugin_system = @import("../../plugins/system.zig");
 const plugin_math = @import("../../plugins/math.zig");
@@ -1196,14 +1197,25 @@ fn setOne(self: *Interpreter, container: Value, key: Value, value: Value) !void 
         for (&rooted) |*root| try roots.protect(root);
         rooted[3] = try self.runtime.valueToString(rooted[1]);
         const key_units = rooted[3].string.units;
-        if (rooted[0].bytes.kind != .array_buffer) if (interpreterArrayIndex(key_units)) |position| {
-            const number = try self.runtime.valueToNumber(rooted[2]);
-            const byte: u8 = if (!std.math.isFinite(number) or number == 0)
-                0
-            else
-                @intFromFloat(@mod(@trunc(number), 256));
-            rooted[0].bytes.set(position, byte);
-            return;
+        // TypedArray's integer-indexed [[Set]] runs before ordinary own
+        // properties: canonical numeric strings address a byte, while
+        // negatives, fractions, NaN, Infinity and out-of-range indices are
+        // ignored instead of becoming own properties.  Non-canonical names
+        // such as "02" still use the ordinary property path below.
+        if (rooted[0].bytes.kind != .array_buffer) switch (try typed_array_key.classifyAlloc(key_units, self.allocator)) {
+            .index => |index| {
+                const position = std.math.cast(usize, index) orelse return;
+                if (position >= rooted[0].bytes.bytes.len) return;
+                const number = try self.runtime.valueToNumber(rooted[2]);
+                const byte: u8 = if (!std.math.isFinite(number) or number == 0)
+                    0
+                else
+                    @intFromFloat(@mod(@trunc(number), 256));
+                rooted[0].bytes.set(position, byte);
+                return;
+            },
+            .ignored => return,
+            .property => {},
         };
         if (std.mem.eql(u16, key_units, &.{ '_', '_', 'p', 'r', 'o', 't', 'o', '_', '_' }) and
             ownProperty(rooted[0].bytes.properties.items, key_units) == null)

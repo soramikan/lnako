@@ -6030,7 +6030,56 @@ test "AOT byte bufferの数値添字はキー生成なしで読む" {
     try std.testing.expectEqual(@as(f64, 8), valueToNumber(runtime.indexGet(roots[1], numberValue(1))));
 }
 
-test "AOT byte bufferの数値添字よりownプロパティを優先する" {
+test "AOT byte bufferの数値文字列キーはTypedArrayの要素規則に従う" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = @as([3]Value, @splat(.{}));
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createBytes(&.{ 1, 2, 3, 4, 5 });
+    roots[1] = try runtime.createUint8Array(&.{ 1, 2, 3 });
+    roots[2] = try runtime.createArrayBuffer(&.{ 1, 2, 3 });
+
+    // 正準な非負整数文字列はownプロパティを作らず要素を書き換える。
+    try runtime.indexSet(roots[0], staticStringValue("2"), numberValue(88));
+    try std.testing.expectEqual(@as(usize, 0), roots[0].object().?.array_properties.entries.items.len);
+    try std.testing.expectEqual(@as(f64, 88), valueToNumber(runtime.indexGet(roots[0], staticStringValue("2"))));
+    try runtime.indexSet(roots[0], numberValue(2), numberValue(66));
+    try std.testing.expectEqual(@as(f64, 66), valueToNumber(runtime.indexGet(roots[0], staticStringValue("2"))));
+    try std.testing.expectEqual(@as(f64, 66), valueToNumber(runtime.indexGet(roots[0], numberValue(2))));
+
+    // 負数・小数・NaN・Infinity・範囲外の正準数値文字列はno-op。
+    const ignored = [_][:0]const u8{ "99", "-1", "-0", "1.5", "NaN", "Infinity", "-Infinity", "4294967295", "9007199254740992" };
+    inline for (ignored) |text| {
+        try runtime.indexSet(roots[0], staticStringValue(text), numberValue(7));
+        try std.testing.expectEqual(@as(usize, 0), roots[0].object().?.array_properties.entries.items.len);
+        try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(runtime.indexGet(roots[0], staticStringValue(text)).tag))));
+    }
+
+    // 非正準の数値風文字列はTypedArrayでも通常のownプロパティになる。
+    const properties = [_][:0]const u8{ "02", "2.0", "1e3", "", "0x2", "9007199254740993" };
+    inline for (properties, 0..) |text, index| {
+        const value = numberValue(@floatFromInt(index + 1));
+        try runtime.indexSet(roots[0], staticStringValue(text), value);
+        try std.testing.expectEqual(@as(usize, index + 1), roots[0].object().?.array_properties.entries.items.len);
+        try std.testing.expectEqual(valueToNumber(value), valueToNumber(runtime.indexGet(roots[0], staticStringValue(text))));
+    }
+    try std.testing.expectEqual(@as(f64, 66), valueToNumber(runtime.indexGet(roots[0], numberValue(2))));
+
+    // Uint8Arrayも同じ規則で、array_bufferだけは通常のownプロパティになる。
+    try runtime.indexSet(roots[1], staticStringValue("1"), numberValue(200));
+    try std.testing.expectEqual(@as(f64, 200), valueToNumber(runtime.indexGet(roots[1], numberValue(1))));
+    try runtime.indexSet(roots[1], staticStringValue("-1"), numberValue(7));
+    try std.testing.expectEqual(@as(usize, 0), roots[1].object().?.array_properties.entries.items.len);
+
+    try runtime.indexSet(roots[2], staticStringValue("2"), numberValue(7));
+    try std.testing.expectEqual(@as(usize, 1), roots[2].object().?.array_properties.entries.items.len);
+    try std.testing.expectEqual(@as(f64, 7), valueToNumber(runtime.indexGet(roots[2], staticStringValue("2"))));
+}
+
+test "AOT byte bufferの非正準キーと内部ownプロパティを要素から分離する" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
     var roots = @as([2]Value, @splat(.{}));
@@ -6039,15 +6088,16 @@ test "AOT byte bufferの数値添字よりownプロパティを優先する" {
     defer runtime.popRoots(&frame);
 
     roots[0] = try runtime.createBytes(&.{ 1, 2, 3, 4, 5, 6 });
-    try runtime.indexSet(roots[0], staticStringValue("5"), numberValue(99));
+    // "02"は正準インデックスではないためownプロパティになり、数値添字5は
+    // 引き続きバイト6を返す。
+    try runtime.indexSet(roots[0], staticStringValue("02"), numberValue(99));
     try std.testing.expectEqual(@as(usize, 1), roots[0].object().?.array_properties.entries.items.len);
-
-    try std.testing.expectEqual(@as(f64, 99), valueToNumber(runtime.indexGet(roots[0], numberValue(5))));
-    // ownプロパティを持たない添字は引き続きバイトを返す。
+    try std.testing.expectEqual(@as(f64, 99), valueToNumber(runtime.indexGet(roots[0], staticStringValue("02"))));
+    try std.testing.expectEqual(@as(f64, 6), valueToNumber(runtime.indexGet(roots[0], numberValue(5))));
     try std.testing.expectEqual(@as(f64, 1), valueToNumber(runtime.indexGet(roots[0], numberValue(0))));
 
-    // indexSet以外のownプロパティ設定経路でも数値名はarray_propertiesに
-    // 入り、fast pathを無効化する（ownプロパティ格納先の不変条件）。
+    // indexSet以外の内部ownプロパティ設定経路は従来どおり数値名も
+    // array_propertiesへ入れ、fast pathを無効化する。
     roots[1] = try runtime.createBytes(&.{ 7, 8, 9 });
     try runtime.setAotOwnProperty(roots[1], roots[1].object().?, numberValue(1), numberValue(70));
     try std.testing.expectEqual(@as(usize, 1), roots[1].object().?.array_properties.entries.items.len);
