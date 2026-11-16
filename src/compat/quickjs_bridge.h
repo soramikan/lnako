@@ -37,6 +37,8 @@ void lnako_qjs_set_host(LnakoQuickJs *engine, void *opaque, LnakoQuickJsHostGet 
 void lnako_qjs_set_host_release(LnakoQuickJs *engine, LnakoQuickJsHostRelease release);
 /// 非0ならhost_getがNULLを返した直接読み取り（`sys.__getSysVar`）を
 /// 未定義値ではなくJS例外にする。`sys.__findVar` の探索は従来どおり。
+/// 変数bridgeを持たないruntime向けの任意機能で、lnakoのAOT compat runtimeは
+/// 使用しない（host変数bridgeを接続済み）。
 void lnako_qjs_set_host_strict(LnakoQuickJs *engine, int strict);
 /// package_root: このmoduleを所有するpackageのroot。非NULLの場合、この
 /// module（およびroot配下で読まれたmodule）からのimportはroot内への包含が

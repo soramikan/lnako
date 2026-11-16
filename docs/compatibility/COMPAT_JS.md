@@ -288,9 +288,21 @@ Nako側の`Array.properties`は相互に同期しません。外部関数値のg
 `hostFunction` / `hostInvoke` 経由でJSから同期呼出しできます。
 また、書き戻し途中で失敗したJSオブジェクトは一部だけ更新された状態になり得ます
 （Nako側の再同期は一時領域へ構築してから差し替えるため、Nako側の内容は保持されます）。
-またAOT compat runtimeは
-interpreterのhost値bridgeを持たないため、`sys.__getSysVar`等はstrict stubとして
-失敗し、`console`などinterpreterがbootstrapするグローバルは存在しません。
+AOT compat runtimeはinterpreterと同じホスト変数bridge（`sys.__getSysVar` /
+`sys.__findVar` / `sys.__setSysVar` / `sys.__getSore` / `sys.__setSore`）を
+接続します。`sys.__getSysVar` は動的グローバルの完全一致（未束縛ならシステム
+定数）だけを返し、falsyを既定値へ落としません。`sys.__findVar` はローカル
+フレーム→動的グローバル（`{module}__{name}` のサフィックスを含む）→名前付き
+関数→システム定数の順に解決し、公式と同じtruthiness判定でfalsyを既定値へ
+落とします。`sys.__setSysVar` は動的グローバルを更新し、slot付き
+（`@lnako.global`）の既存変数はslotだけを書き換えます。読み取り側の変換失敗は
+AOT例外を残さず既定値／`undefined`へフォールバックし、書き込み側（`sys.__setSysVar`）の
+変換・更新失敗はJS側の`InternalError`として報告します。teardownではhost
+コールバックを先に遮断します。
+一方、`sys.__exec`（文字列による組み込み命令の動的dispatch）はAOTでは
+未対応で、`lnako host command bridge is unavailable` の明示エラーになります
+（フォローアップIssueで追跡）。`console`などinterpreterがbootstrapする
+グローバルはAOTに存在しません。
 
 ### npm bare import と ESM plugin
 

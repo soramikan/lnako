@@ -1,0 +1,29 @@
+# lnako の変数bridge契約のうち、cnako3 3.7.24 と意図的に異なる部分を
+# `lnako run --compat-js`（interpreter）と `lnako build --compat-js
+# --backend aot`（AOT）の2者一致で固定するfixture。
+# tools/check_aot_quickjs_separation.mjs が両者を実行して比較する。
+#
+# cnako3 と差が出る理由:
+# 1. 無修飾 `sys.__setSysVar("X", v)` は cnako3 では `__v0` に入るが、
+#    `sys.__findVar("X")` は `{module}__X` を探すため見つからない。
+#    lnako は interpreter の統合解決に合わせて無修飾名でも解決する。
+# 2. 関数内ローカルは cnako3 3.7.24 では `__nako_scope_enter` のスコープ
+#    スタックへ入り `__self.__locals` が更新されないため、`sys.__findVar`
+#    から見えない。lnako は interpreter の `Effects.resolve` に合わせて
+#    ローカルフレームを解決する（互換性quirksの契約）。
+# 3. トップレベルの Nako 変数は両者とも `{module}__X` で保持されるため、
+#    無修飾 `__setSysVar` では書き換わらない（これは cnako3 とも一致する）。
+動的変数=0
+F=関数(A)
+  動的変数=1
+  JS実行(『sys.__findVar("A",0)』)を表示
+  B=42+A
+  JS実行(『sys.__findVar("B",0)』)を表示
+ここまで
+F(1)
+動的変数を表示
+JS実行(『sys.__setSysVar("動的変数",123); "ok"』)を表示
+JS実行(『sys.__getSysVar("動的変数","miss")』)を表示
+JS実行(『sys.__findVar("動的変数","miss")』)を表示
+JSオブジェクト取得("動的変数")を表示
+動的変数を表示

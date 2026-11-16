@@ -1,0 +1,68 @@
+# QuickJS ホスト変数 bridge（`sys.__getSysVar` / `sys.__findVar` /
+# `sys.__setSysVar` / `sys.__getSore` / `sys.__setSore`）の3者一致fixture。
+#
+# cnako3 3.7.24・`lnako run --compat-js`・`lnako build --compat-js
+# --backend aot` の3者が同じstdoutを返すことを
+# tools/compare_compat_js_oracle.mjs と tools/check_aot_quickjs_separation.mjs が
+# 検証する。cnako3 の `__findVar` は「現在のローカル → `{module}__{name}`」を
+# 探索し、`__getSysVar` は非修飾のシステム変数（`__v0`）だけを探すため、
+# 両者の差をそのまま固定する。
+#
+# なお cnako3 3.7.24 は関数スコープを `__nako_scope_enter` のスタックで分離し
+# `__self.__locals` を更新しないため、関数内ローカルは `sys.__findVar` から
+# 見えない。lnako は interpreter の `Effects.resolve` に合わせてローカルを
+# 解決する（互換性quirksの`sys.__findVar`契約）。この意図的な差と、
+# 無修飾 `__setSysVar` の値が無修飾 `__findVar` に見える lnako の挙動は
+# 3者fixtureに混ぜず、tools/check_aot_quickjs_separation.mjs の
+# interpreter/AOT 2者一致で固定する。
+
+# 1. トップレベル変数: __getSysVar は見つけず、__findVar は module 修飾名で
+#    見つける（X=5 は `compat-js-var-bridge__X` として登録される）。
+X=5
+JS実行(『sys.__getSysVar("X","missing")』)を表示
+JS実行(『sys.__findVar("X",99)』)を表示
+
+# 2. falsy 値は __findVar では「無い」扱いになり、第2引数へ落ちる。
+Z=0
+S=""
+B2=false
+JS実行(『sys.__findVar("Z",99)』)を表示
+JS実行(『sys.__findVar("S","default")』)を表示
+JS実行(『sys.__findVar("B2","default")』)を表示
+
+# 3. 未定義名は既定値へ落ちる。
+JS実行(『sys.__findVar("存在しない","fallback")』)を表示
+
+# 4. システム変数「対象」への書き込みは Nako 側の参照にも見える。
+JS実行(『sys.__setSysVar("対象",9); sys.__getSysVar("対象")』)を表示
+対象を表示
+
+# 5. 新しい動的変数。cnako3 の `__findVar` は `__setSysVar` が作る無修飾の
+#    `__v0` キーを探索しない（`{module}__{name}` を探す）ため、公式と同じ
+#    module 修飾名で設定してから無修飾名の解決を固定する。
+JS実行(『sys.__setSysVar("compat-js-var-bridge__動的変数",123); "ok"』)を表示
+JS実行(『sys.__getSysVar("動的変数","miss")』)を表示
+JS実行(『sys.__getSysVar("compat-js-var-bridge__動的変数","miss")』)を表示
+JS実行(『sys.__findVar("動的変数","miss")』)を表示
+JSオブジェクト取得("動的変数")を表示
+
+# 6. __getSysVar は falsy を既定値へ落とさない（0 は 0 のまま）。
+JS実行(『sys.__setSysVar("ゼロsys",0); sys.__getSysVar("ゼロsys","miss")』)を表示
+
+# 7. システム定数は __getSysVar からも読める。
+JS実行(『sys.__getSysVar("ナデシコバージョン")』)を表示
+JS実行(『sys.__getSysVar("ナデシコ種類")』)を表示
+
+# 8. 名前付き関数は JS 関数として取得・呼出しできる。
+●Add2(AとBを)
+  それはA+B
+ここまで
+JS実行(『sys.__findVar("Add2",null)(4,9)』)を表示
+JS実行(『typeof sys.__findVar("Add2",null)』)を表示
+
+# 9. それ の読み書きは __getSore / __setSore と Nako 側で一致する。
+JS実行(『sys.__setSore(77); sys.__getSore()』)を表示
+それを表示
+
+# 10. BigInt は型を保ったまま往復する。
+JS実行(『sys.__setSysVar("B",123n); typeof sys.__getSysVar("B")』)を表示
