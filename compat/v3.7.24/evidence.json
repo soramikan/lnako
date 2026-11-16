@@ -8,9 +8,9 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 803,
-    "nativeAot": 442,
-    "interpreter": 371,
+    "total": 805,
+    "nativeAot": 443,
+    "interpreter": 372,
     "compatJs": 9
   },
   "fixtureCoverageStates": {
@@ -16742,6 +16742,7 @@
         "native-system-array-callback-order-large",
         "native-system-array-to-primitive",
         "native-system-byte-buffer-backing-identity",
+        "native-system-byte-buffer-numeric-string-keys",
         "native-system-dictionary-to-primitive",
         "native-system-object-to-primitive-byte-prototype",
         "native-system-object-to-primitive-host-properties",
@@ -16779,6 +16780,9 @@
             "fixture.commands"
           ],
           "native-system-byte-buffer-backing-identity": [
+            "fixture.commands"
+          ],
+          "native-system-byte-buffer-numeric-string-keys": [
             "fixture.commands"
           ],
           "native-system-dictionary-to-primitive": [
@@ -25953,6 +25957,7 @@
         "native-system-byte-buffer-direct-properties",
         "native-system-byte-buffer-method-calls",
         "native-system-byte-buffer-null-prototype",
+        "native-system-byte-buffer-numeric-string-keys",
         "native-system-byte-buffer-property",
         "native-system-dictionary-buffer-enumerable-properties",
         "native-system-dictionary-byte-buffer-enumeration",
@@ -26003,6 +26008,9 @@
             "fixture.commands"
           ],
           "native-system-byte-buffer-null-prototype": [
+            "fixture.commands"
+          ],
+          "native-system-byte-buffer-numeric-string-keys": [
             "fixture.commands"
           ],
           "native-system-byte-buffer-property": [

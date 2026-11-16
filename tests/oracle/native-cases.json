@@ -1868,6 +1868,14 @@
     "source": "B=ハッシュ値計算(\"A\",\"sha256\",undefined)\nBB=B[\"buffer\"]\nB[\"buffer\"]===BBを表示\nB[\"buffer\"]===B[\"buffer\"]を表示\nT=表列挿入([B],1,[9])\nS=T[0][0]\nSB=S[\"buffer\"]\nB[\"buffer\"]===SBを表示\nB[0]=9\nS[0]を表示\nS[0]=8\nB[0]を表示\nU=ランダム配列生成(2)\nUB=U[\"buffer\"]\nU[\"buffer\"]===UBを表示\nU[0]=7\nUB[0]を表示\n"
   },
   {
+    "id": "native-system-byte-buffer-numeric-string-keys",
+    "commands": [
+      "ハッシュ値計算",
+      "表示"
+    ],
+    "source": "B=ハッシュ値計算(\"A\",\"sha256\",undefined)\nB[\"2\"]=88\nB[2]=66\nB[\"99\"]=7\nB[\"02\"]=7\nB[\"-1\"]=7\nB[\"1.5\"]=7\nB[\"-0\"]=7\nB[\"2.0\"]=7\nB[\"1e3\"]=7\nB[\"\"]=7\nB[\"4294967295\"]=7\nB[\"2\"]を表示\nB[2]を表示\nBを反復\n  対象を表示\nここまで\n"
+  },
+  {
     "id": "native-system-byte-buffer-direct-properties",
     "commands": [
       "表列取得",

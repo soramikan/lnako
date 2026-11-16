@@ -1,6 +1,7 @@
 const std = @import("std");
 const aot_state = @import("state.zig");
 const runtime_core = @import("runtime_core.zig");
+const typed_array_key = @import("../typed_array_key.zig");
 
 const Tag = aot_state.Tag;
 const numberValue = aot_state.numberValue;
@@ -198,6 +199,28 @@ pub fn indexSet(self: *Runtime, container: Value, key: Value, value: Value) !voi
                 return failure;
             };
             defer self.allocator.free(key_units);
+            // TypedArray's integer-indexed [[Set]] runs before ordinary own
+            // properties: canonical numeric strings address a byte, while
+            // negatives, fractions, NaN, Infinity and out-of-range indices
+            // are ignored instead of becoming own properties.  Only
+            // non-canonical names such as "02" reach the property path.
+            if (buffer.kind != .array_buffer) {
+                switch (try typed_array_key.classifyAlloc(key_units, self.allocator)) {
+                    .index => |index| {
+                        const position = std.math.cast(usize, index) orelse return;
+                        if (position >= buffer.bytes.len) return;
+                        const number = try valueToNumberRuntime(self, value);
+                        const byte: u8 = if (!std.math.isFinite(number) or number == 0)
+                            0
+                        else
+                            @intFromFloat(@mod(@trunc(number), 256));
+                        buffer.bytes[position] = byte;
+                        return;
+                    },
+                    .ignored => return,
+                    .property => {},
+                }
+            }
             if (std.mem.eql(u16, key_units, &.{ '_', '_', 'p', 'r', 'o', 't', 'o', '_', '_' }) and
                 aotObjectOwnPropertyGetUnits(self, object, key_units) == null)
             {
