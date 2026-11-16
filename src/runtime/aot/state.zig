@@ -127,6 +127,7 @@ pub const nodeEnvironmentBuiltin = node_module.nodeEnvironmentBuiltin;
 pub const nodeProcessExitCode = node_module.nodeProcessExitCode;
 pub const nodeCryptoBuiltin = node_module.nodeCryptoBuiltin;
 pub const nodeDirectoryBuiltin = node_module.nodeDirectoryBuiltin;
+pub const temporaryDirectoryFromEnvironmentValues = node_module.temporaryDirectoryFromEnvironmentValues;
 pub const nodeTemporaryDirectoryPrefixAlloc = node_module.nodeTemporaryDirectoryPrefixAlloc;
 pub const nodeCreateTemporaryDirectoryBuiltin = node_module.nodeCreateTemporaryDirectoryBuiltin;
 pub const nodeMotherPathBuiltin = node_module.nodeMotherPathBuiltin;
