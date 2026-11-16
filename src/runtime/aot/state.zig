@@ -437,6 +437,8 @@ pub const nextRandom = math_module.nextRandom;
 const datetime_module = @import("datetime.zig");
 
 pub const currentTimeMilliseconds = datetime_module.currentTimeMilliseconds;
+pub const hostWallClockMilliseconds = datetime_module.hostWallClockMilliseconds;
+pub const testNowMilliseconds = datetime_module.testNowMilliseconds;
 pub const monotonicTimeMilliseconds = datetime_module.monotonicTimeMilliseconds;
 pub const eraDataBuiltin = datetime_module.eraDataBuiltin;
 pub const datetimeBuiltin = datetime_module.datetimeBuiltin;
