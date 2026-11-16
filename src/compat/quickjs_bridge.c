@@ -1167,6 +1167,15 @@ uintptr_t lnako_qjs_identity(const LnakoQuickJsValue *value) {
     return (uintptr_t)JS_VALUE_GET_PTR(value->value);
 }
 
+int lnako_qjs_host_function_slot(const LnakoQuickJsValue *value, uintptr_t *function_id, uint64_t *generation) {
+    if (!value || !value->engine || !function_id || !generation) return 0;
+    struct LnakoQuickJsHostFunctionInstance *instance = JS_GetOpaque(value->value, value->engine->host_function_class_id);
+    if (!instance || !instance->committed) return 0;
+    *function_id = instance->function_id;
+    *generation = instance->generation;
+    return 1;
+}
+
 // Nakoのbytesに相当するJS値（TypedArray / ArrayBuffer / SharedArrayBuffer /
 // DataView）かを判定する。`lnako_qjs_kind` はこれらの値を object と報告する
 // ため、浅いコピーの戻り値変換ではこの述語で明示的な未対応エラーへ振り分ける。

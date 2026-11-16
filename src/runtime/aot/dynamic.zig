@@ -91,6 +91,10 @@ pub const DynamicInterpreterState = struct {
     interpreter: dynamic_interpreter.Interpreter,
     host_context: DynamicHostContext,
     reset_display_log: bool = false,
+    /// AOT 側 `dynamic_globals` を plugin 実行前に interpreter へ同期した時点の
+    /// 構造fingerprint。plugin が上書きした値（`.function` などAOTへ変換不能な
+    /// 値を含む）を、AOT側が変化していないのに再同期で潰さないために使う。
+    synced_aot_hashes: std.StringHashMapUnmanaged(u64) = .empty,
 
     pub fn init(allocator: std.mem.Allocator, owner: *Runtime) !*@This() {
         const state = try allocator.create(@This());
@@ -98,6 +102,13 @@ pub const DynamicInterpreterState = struct {
         state.* = undefined;
         state.allocator = allocator;
         state.owner = owner;
+        state.synced_aot_hashes = .empty;
+        var synced_hashes_initialized = true;
+        errdefer if (synced_hashes_initialized) {
+            var hash_iterator = state.synced_aot_hashes.keyIterator();
+            while (hash_iterator.next()) |name| allocator.free(name.*);
+            state.synced_aot_hashes.deinit(allocator);
+        };
         state.value_runtime = dynamic_value.Runtime.init(allocator);
         var value_runtime_initialized = true;
         errdefer if (value_runtime_initialized) state.value_runtime.deinit();
@@ -160,10 +171,15 @@ pub const DynamicInterpreterState = struct {
         var interpreter_initialized = true;
         errdefer if (interpreter_initialized) state.interpreter.deinit();
         try state.interpreter.activateExternalRuntime();
+        // plugin の `初期化` はここまでに interpreter.globals を書き換え得る。
+        // AOTへ変換不能な値（JS関数など）を最初の `esmPluginBuiltin` で
+        // AOT値に上書きしないよう、現在のAOT fingerprintを記録しておく。
+        try seedPluginInitializedHashes(state);
         interpreter_initialized = false;
         dynamic_bridge_provider_initialized = false;
         program_initialized = false;
         value_runtime_initialized = false;
+        synced_hashes_initialized = false;
         // Runtime側からinterpreterへの静的呼び出しを避けるため、
         // 解放とnative plugin drainはここで間接呼び出しとして登録する。
         owner.dynamic_deinit = deinitDynamicState;
@@ -178,6 +194,9 @@ pub const DynamicInterpreterState = struct {
         self.value_runtime.unregisterRootProvider(self);
         self.program.deinit();
         self.value_runtime.deinit();
+        var hash_iterator = self.synced_aot_hashes.keyIterator();
+        while (hash_iterator.next()) |name| self.allocator.free(name.*);
+        self.synced_aot_hashes.deinit(self.allocator);
         self.* = undefined;
     }
 };
@@ -284,7 +303,111 @@ pub fn dynamicPromiseToAotValue(state: *DynamicInterpreterState, promise: *dynam
     return aot_promise;
 }
 
+const ContainerPair = struct {
+    aot: Value,
+    dynamic: dynamic_value.Value,
+};
+
+const AotToDynamicCache = struct {
+    state: *DynamicInterpreterState,
+    seen: std.AutoHashMapUnmanaged(usize, dynamic_value.Value) = .empty,
+    containers: std.ArrayList(ContainerPair) = .empty,
+    holder: dynamic_value.Value = .undefined,
+    roots: dynamic_value.RootFrame,
+    holder_protected: bool = false,
+    aot_holder: Value = .{},
+    aot_roots: RootFrame = .{},
+    aot_roots_pushed: bool = false,
+
+    fn init(state: *DynamicInterpreterState) AotToDynamicCache {
+        return .{
+            .state = state,
+            .roots = state.value_runtime.rootFrame(),
+        };
+    }
+
+    fn enter(self: *AotToDynamicCache) !void {
+        if (!self.holder_protected) {
+            try self.roots.protect(&self.holder);
+            self.holder_protected = true;
+        }
+        if (!self.aot_roots_pushed) {
+            self.state.owner.pushRoots(&self.aot_roots, @ptrCast(&self.aot_holder), 1);
+            self.aot_roots_pushed = true;
+        }
+    }
+
+    fn deinit(self: *AotToDynamicCache) void {
+        if (self.aot_roots_pushed) self.state.owner.popRoots(&self.aot_roots);
+        self.roots.deinit();
+        self.containers.deinit(self.state.allocator);
+        self.seen.deinit(self.state.allocator);
+    }
+
+    fn hold(self: *AotToDynamicCache, aot_value: Value, dyn_value: dynamic_value.Value) !void {
+        try self.enter();
+        if (self.holder == .undefined) {
+            self.holder = try self.state.value_runtime.createArray();
+        }
+        _ = try self.holder.array.push(dyn_value);
+        const owner = self.state.owner;
+        if (self.aot_holder.tag == @backingInt(Tag.undefined)) {
+            var tmp_aot = aot_value;
+            var tmp_roots = RootFrame{};
+            owner.pushRoots(&tmp_roots, @ptrCast(&tmp_aot), 1);
+            defer owner.popRoots(&tmp_roots);
+            self.aot_holder = try owner.createArray(&.{});
+        }
+        try self.aot_holder.object().?.payload.array.append(owner.allocator, aot_value);
+    }
+};
+
+const DynamicToAotCache = struct {
+    state: *DynamicInterpreterState,
+    seen: std.AutoHashMapUnmanaged(usize, Value) = .empty,
+    holder: Value = .{},
+    roots: RootFrame = .{},
+    roots_pushed: bool = false,
+
+    fn init(state: *DynamicInterpreterState) DynamicToAotCache {
+        return .{ .state = state };
+    }
+
+    fn enter(self: *DynamicToAotCache) void {
+        if (!self.roots_pushed) {
+            self.state.owner.pushRoots(&self.roots, @ptrCast(&self.holder), 1);
+            self.roots_pushed = true;
+        }
+    }
+
+    fn deinit(self: *DynamicToAotCache) void {
+        if (self.roots_pushed) self.state.owner.popRoots(&self.roots);
+        self.seen.deinit(self.state.owner.allocator);
+    }
+
+    fn hold(self: *DynamicToAotCache, value: Value) !void {
+        const owner = self.state.owner;
+        if (self.holder.tag == @backingInt(Tag.undefined)) {
+            self.enter();
+            var tmp = value;
+            var tmp_roots = RootFrame{};
+            owner.pushRoots(&tmp_roots, @ptrCast(&tmp), 1);
+            defer owner.popRoots(&tmp_roots);
+            self.holder = try owner.createArray(&.{});
+        }
+        try self.holder.object().?.payload.array.append(owner.allocator, value);
+    }
+};
+
 pub fn aotToDynamicValue(state: *DynamicInterpreterState, value: Value) anyerror!dynamic_value.Value {
+    var cache = AotToDynamicCache.init(state);
+    defer cache.deinit();
+    try cache.enter();
+    return aotToDynamicValueWithCache(&cache, value);
+}
+
+fn aotToDynamicValueWithCache(cache: *AotToDynamicCache, value: Value) anyerror!dynamic_value.Value {
+    const state = cache.state;
     const owner = state.owner;
     switch (@as(Tag, @fromBackingInt(@intCast(value.tag)))) {
         .undefined => return .undefined,
@@ -307,22 +430,44 @@ pub fn aotToDynamicValue(state: *DynamicInterpreterState, value: Value) anyerror
             };
         },
         .array => {
+            const object = value.object() orelse return error.DynamicValueUnsupported;
+            const ptr = @intFromPtr(object);
+            if (cache.seen.get(ptr)) |existing| return existing;
+
             var result = try state.value_runtime.createArray();
             var roots = state.value_runtime.rootFrame();
             defer roots.deinit();
             try roots.protect(&result);
-            var prototype = try aotToDynamicValue(state, value.object().?.prototype);
+            try cache.hold(value, result);
+            try cache.seen.put(state.allocator, ptr, result);
+            errdefer _ = cache.seen.remove(ptr);
+
+            var prototype = try aotToDynamicValueWithCache(cache, object.prototype);
             try roots.protect(&prototype);
             result.array.prototype = prototype;
-            for (value.object().?.payload.array.items) |item| _ = try result.array.push(try aotToDynamicValue(state, item));
-            for (value.object().?.array_properties.entries.items) |property| {
-                var key = try aotToDynamicValue(state, property.key);
-                try roots.protect(&key);
-                var item = try aotToDynamicValue(state, property.value);
-                try roots.protect(&item);
-                if (key != .string) return error.DynamicValueUnsupported;
-                try result.array.setProperty(key.string, item);
+
+            const items = object.payload.array.items;
+            const has_sparse_presence = object.array_presence.items.len > 0;
+            for (items, 0..) |item, index| {
+                const converted = try aotToDynamicValueWithCache(cache, item);
+                _ = try result.array.push(converted);
+                if (has_sparse_presence and index < object.array_presence.items.len and !object.array_presence.items[index]) {
+                    result.array.presence.items[index] = false;
+                }
             }
+
+            var key_slot: dynamic_value.Value = .undefined;
+            var item_slot: dynamic_value.Value = .undefined;
+            try roots.protect(&key_slot);
+            try roots.protect(&item_slot);
+            for (object.array_properties.entries.items) |property| {
+                key_slot = try aotToDynamicValueWithCache(cache, property.key);
+                item_slot = try aotToDynamicValueWithCache(cache, property.value);
+                if (key_slot != .string) return error.DynamicValueUnsupported;
+                try result.array.setProperty(key_slot.string, item_slot);
+            }
+            // 子要素がすべて成功したコンテナだけを write-back 対象にする。
+            try cache.containers.append(state.allocator, .{ .aot = value, .dynamic = result });
             return result;
         },
         .dictionary => {
@@ -335,39 +480,64 @@ pub fn aotToDynamicValue(state: *DynamicInterpreterState, value: Value) anyerror
                 try low_level_state.rememberHandle(&state.interpreter.lowlevel_state, state.value_runtime.allocator(), result, id);
                 return result;
             }
-            if (value.object().?.toml_temporal) |temporal| {
+            const object = value.object() orelse return error.DynamicValueUnsupported;
+            if (object.toml_temporal) |temporal| {
                 return state.value_runtime.createTomlTemporal(temporal.kind, temporal.json_text, temporal.toml_text);
             }
-            const kind: dynamic_value.DictionaryKind = if (value.object().?.structured_error) .structured_error else .ordinary;
+            const ptr = @intFromPtr(object);
+            if (cache.seen.get(ptr)) |existing| return existing;
+
+            const kind: dynamic_value.DictionaryKind = if (object.structured_error) .structured_error else .ordinary;
             var result = try state.value_runtime.createDictionaryKind(kind);
             var roots = state.value_runtime.rootFrame();
             defer roots.deinit();
             try roots.protect(&result);
-            for (value.object().?.payload.dictionary.entries.items) |entry| {
-                var key = try aotToDynamicValue(state, entry.key);
-                try roots.protect(&key);
-                var item = try aotToDynamicValue(state, entry.value);
-                try roots.protect(&item);
-                if (key != .string) return error.DynamicValueUnsupported;
-                try result.dictionary.set(key.string, item);
+            try cache.hold(value, result);
+            try cache.seen.put(state.allocator, ptr, result);
+            errdefer _ = cache.seen.remove(ptr);
+
+            var key_slot: dynamic_value.Value = .undefined;
+            var item_slot: dynamic_value.Value = .undefined;
+            try roots.protect(&key_slot);
+            try roots.protect(&item_slot);
+            for (object.payload.dictionary.entries.items) |entry| {
+                key_slot = try aotToDynamicValueWithCache(cache, entry.key);
+                item_slot = try aotToDynamicValueWithCache(cache, entry.value);
+                if (key_slot != .string) return error.DynamicValueUnsupported;
+                try result.dictionary.set(key_slot.string, item_slot);
             }
+            try cache.containers.append(state.allocator, .{ .aot = value, .dynamic = result });
             return result;
         },
-        .function => return aotFunctionToDynamicValue(state, value),
+        .function => {
+            const object = value.object() orelse return error.DynamicValueUnsupported;
+            const ptr = @intFromPtr(object);
+            if (cache.seen.get(ptr)) |existing| return existing;
+            var converted = try aotFunctionToDynamicValue(state, value);
+            var roots = state.value_runtime.rootFrame();
+            defer roots.deinit();
+            try roots.protect(&converted);
+            try cache.hold(value, converted);
+            try cache.seen.put(state.allocator, ptr, converted);
+            return converted;
+        },
         .promise, .iterator, .binding_cell => return error.DynamicValueUnsupported,
     }
 }
 
-/// 変換中の循環を検出する深さ上限。配列/辞書の自己参照は有限の深さで
-/// 打ち切り、スタック枯渇ではなく明示エラーにする。
+/// 非循環の深い入れ子を止める安全上限。循環参照は `DynamicToAotCache.seen` が
+/// 先に検出して既存値へ解決する。
 const max_conversion_depth: usize = 256;
 
 pub fn dynamicToAotValue(state: *DynamicInterpreterState, value: dynamic_value.Value) anyerror!Value {
-    return dynamicToAotValueDepth(state, value, 0);
+    var cache = DynamicToAotCache.init(state);
+    defer cache.deinit();
+    cache.enter();
+    return dynamicToAotValueCached(&cache, value, 0);
 }
 
-fn dynamicToAotValueDepth(state: *DynamicInterpreterState, value: dynamic_value.Value, depth: usize) anyerror!Value {
-    if (depth > max_conversion_depth) return error.ValueNestingTooDeep;
+fn dynamicToAotValueCached(cache: *DynamicToAotCache, value: dynamic_value.Value, depth: usize) anyerror!Value {
+    const state = cache.state;
     const owner = state.owner;
     return switch (value) {
         .undefined => .{},
@@ -386,22 +556,40 @@ fn dynamicToAotValueDepth(state: *DynamicInterpreterState, value: dynamic_value.
             .array_buffer => owner.createArrayBuffer(bytes.bytes),
         },
         .array => |array| blk: {
+            const ptr = @intFromPtr(array);
+            if (cache.seen.get(ptr)) |existing| break :blk existing;
+            if (depth > max_conversion_depth) return error.ValueNestingTooDeep;
+
             var result = try owner.createArray(&.{});
             var roots = RootFrame{};
             owner.pushRoots(&roots, @ptrCast(&result), 1);
             defer owner.popRoots(&roots);
-            result.object().?.prototype = try dynamicToAotValueDepth(state, array.prototype, depth + 1);
-            for (array.items.items) |item| try result.object().?.payload.array.append(owner.allocator, try dynamicToAotValueDepth(state, item, depth + 1));
+            try cache.hold(result);
+            try cache.seen.put(owner.allocator, ptr, result);
+            errdefer _ = cache.seen.remove(ptr);
+
+            result.object().?.prototype = try dynamicToAotValueCached(cache, array.prototype, depth + 1);
+            for (array.items.items) |item| {
+                const converted_item = try dynamicToAotValueCached(cache, item, depth + 1);
+                try result.object().?.payload.array.append(owner.allocator, converted_item);
+            }
+            if (array.presence.items.len > 0) {
+                const check_len = @min(array.presence.items.len, array.items.items.len);
+                if (std.mem.indexOfScalar(bool, array.presence.items[0..check_len], false) != null) {
+                    try result.object().?.array_presence.resize(owner.allocator, array.items.items.len);
+                    for (0..array.items.items.len) |index| {
+                        result.object().?.array_presence.items[index] = array.isPresent(index);
+                    }
+                }
+            }
+            var pair_slots = [_]Value{ .{}, .{} };
+            var pair_roots = RootFrame{};
+            owner.pushRoots(&pair_roots, &pair_slots, pair_slots.len);
+            defer owner.popRoots(&pair_roots);
             for (array.properties.items) |property| {
-                var converted_key = try owner.createString(property.key.units);
-                var key_roots = RootFrame{};
-                owner.pushRoots(&key_roots, @ptrCast(&converted_key), 1);
-                defer owner.popRoots(&key_roots);
-                var converted_item = try dynamicToAotValueDepth(state, property.value, depth + 1);
-                var item_roots = RootFrame{};
-                owner.pushRoots(&item_roots, @ptrCast(&converted_item), 1);
-                defer owner.popRoots(&item_roots);
-                try owner.setDictionary(&result.object().?.array_properties, converted_key, converted_item);
+                pair_slots[0] = try owner.createString(property.key.units);
+                pair_slots[1] = try dynamicToAotValueCached(cache, property.value, depth + 1);
+                try owner.setDictionary(&result.object().?.array_properties, pair_slots[0], pair_slots[1]);
             }
             break :blk result;
         },
@@ -419,25 +607,38 @@ fn dynamicToAotValueDepth(state: *DynamicInterpreterState, value: dynamic_value.
                 const temporal = dictionary.toml_temporal orelse return error.DynamicValueUnsupported;
                 break :blk owner.createTomlTemporal(temporal.kind, temporal.json_text, temporal.toml_text);
             }
+            const ptr = @intFromPtr(dictionary);
+            if (cache.seen.get(ptr)) |existing| break :blk existing;
+            if (depth > max_conversion_depth) return error.ValueNestingTooDeep;
+
             var result = try owner.createDictionary(&.{});
             var result_roots = RootFrame{};
             owner.pushRoots(&result_roots, @ptrCast(&result), 1);
             defer owner.popRoots(&result_roots);
+            try cache.hold(result);
+            try cache.seen.put(owner.allocator, ptr, result);
+            errdefer _ = cache.seen.remove(ptr);
+
+            var pair_slots = [_]Value{ .{}, .{} };
+            var pair_roots = RootFrame{};
+            owner.pushRoots(&pair_roots, &pair_slots, pair_slots.len);
+            defer owner.popRoots(&pair_roots);
             for (dictionary.keys(), dictionary.values()) |key, item| {
-                var converted_key = try owner.createString(key.units);
-                var key_roots = RootFrame{};
-                owner.pushRoots(&key_roots, @ptrCast(&converted_key), 1);
-                defer owner.popRoots(&key_roots);
-                var converted_item = try dynamicToAotValueDepth(state, item, depth + 1);
-                var item_roots = RootFrame{};
-                owner.pushRoots(&item_roots, @ptrCast(&converted_item), 1);
-                defer owner.popRoots(&item_roots);
-                try owner.setDictionary(&result.object().?.payload.dictionary, converted_key, converted_item);
+                pair_slots[0] = try owner.createString(key.units);
+                pair_slots[1] = try dynamicToAotValueCached(cache, item, depth + 1);
+                try owner.setDictionary(&result.object().?.payload.dictionary, pair_slots[0], pair_slots[1]);
             }
             if (dictionary.kind == .structured_error) result.object().?.structured_error = true;
             break :blk result;
         },
-        .function => error.DynamicValueUnsupported,
+        .function => |function| if (function.kind == .external) blk: {
+            const binding = function.kind.external.binding;
+            if (binding.releaseFn == releaseAotFunctionBridge and binding.context == @as(*anyopaque, @ptrCast(owner))) {
+                const bridge: *AotFunctionBridge = @ptrCast(@alignCast(binding.handle));
+                break :blk bridge.value;
+            }
+            return error.DynamicValueUnsupported;
+        } else return error.DynamicValueUnsupported,
         .promise => |promise| dynamicPromiseToAotValue(state, promise),
     };
 }
@@ -445,9 +646,12 @@ fn dynamicToAotValueDepth(state: *DynamicInterpreterState, value: dynamic_value.
 pub fn prepareDynamic(context: *anyopaque, interpreter: *dynamic_interpreter.Interpreter) anyerror!void {
     const state: *DynamicInterpreterState = @ptrCast(@alignCast(context));
     const owner = state.owner;
+    var cache = AotToDynamicCache.init(state);
+    defer cache.deinit();
+    try cache.enter();
     for (owner.named_functions.items) |registered| {
         const fn_value = Value{ .tag = @backingInt(Tag.function), .payload = @intFromPtr(registered.object) };
-        var value = aotToDynamicValue(state, fn_value) catch |failure| switch (failure) {
+        var value = aotToDynamicValueWithCache(&cache, fn_value) catch |failure| switch (failure) {
             error.DynamicValueUnsupported => continue,
             else => return failure,
         };
@@ -462,7 +666,7 @@ pub fn prepareDynamic(context: *anyopaque, interpreter: *dynamic_interpreter.Int
         const raw = if (entry.slot) |slot| slot.* else entry.value;
         // 未代入のグローバルは動的側へ渡さない（globalThisのシャドウ防止）。
         if (raw.isUnbound()) continue;
-        var value = aotToDynamicValue(state, raw) catch |failure| switch (failure) {
+        var value = aotToDynamicValueWithCache(&cache, raw) catch |failure| switch (failure) {
             error.DynamicValueUnsupported => continue,
             else => return failure,
         };
@@ -481,13 +685,590 @@ pub fn prepareDynamic(context: *anyopaque, interpreter: *dynamic_interpreter.Int
 }
 
 pub fn syncDynamicGlobals(state: *DynamicInterpreterState) anyerror!void {
+    var cache = DynamicToAotCache.init(state);
+    defer cache.deinit();
+    cache.enter();
     var iterator = state.interpreter.globals.iterator();
     while (iterator.next()) |entry| {
-        const value = dynamicToAotValue(state, entry.value_ptr.*) catch |failure| switch (failure) {
+        const value = dynamicToAotValueCached(&cache, entry.value_ptr.*, 0) catch |failure| switch (failure) {
             error.DynamicValueUnsupported => continue,
             else => return failure,
         };
         try upsertDynamicGlobal(state.owner, entry.key_ptr.*, value);
+    }
+}
+
+// AOT 値の完全構造fingerprint。visited テーブルで各ヒープオブジェクトを
+// 高々1回だけ走査し、配列長・入れ子深さ・文字列長の上限なしに循環グラフも
+// 含めて全要素・全プロパティの差分を検出する。
+fn fingerprintAotValue(allocator: std.mem.Allocator, value: Value) !u64 {
+    var hasher = std.hash.Wyhash.init(0);
+    var visited: std.AutoHashMapUnmanaged(usize, u32) = .empty;
+    defer visited.deinit(allocator);
+    var next_id: u32 = 0;
+    try fingerprintAotValueInto(allocator, &hasher, &visited, &next_id, value);
+    return hasher.final();
+}
+
+fn fingerprintAotValueAssumeCapacity(visited: *std.AutoHashMapUnmanaged(usize, u32), value: Value) u64 {
+    visited.clearRetainingCapacity();
+    var hasher = std.hash.Wyhash.init(0);
+    var next_id: u32 = 0;
+    fingerprintAotValueInto(null, &hasher, visited, &next_id, value) catch unreachable;
+    return hasher.final();
+}
+
+fn fingerprintAotValueInto(
+    allocator: ?std.mem.Allocator,
+    hasher: *std.hash.Wyhash,
+    visited: *std.AutoHashMapUnmanaged(usize, u32),
+    next_id: *u32,
+    value: Value,
+) !void {
+    hasher.update(std.mem.asBytes(&value.tag));
+    switch (@as(Tag, @fromBackingInt(@intCast(value.tag)))) {
+        .undefined, .null_value, .boolean, .number => {
+            hasher.update(std.mem.asBytes(&value.payload));
+        },
+        .static_utf8_string => {
+            const bytes = staticUtf8(value);
+            hasher.update(std.mem.asBytes(&bytes.len));
+            hasher.update(bytes);
+        },
+        .utf16_string,
+        .array,
+        .dictionary,
+        .byte_buffer,
+        .iterator,
+        .bigint,
+        .function,
+        .binding_cell,
+        .promise,
+        => |tag| {
+            const object = value.object() orelse {
+                const null_marker: u8 = 0;
+                hasher.update(&.{null_marker});
+                return;
+            };
+            const ptr = @intFromPtr(object);
+            if (visited.get(ptr)) |backref_id| {
+                const backref_marker: u8 = 1;
+                hasher.update(&.{backref_marker});
+                hasher.update(std.mem.asBytes(&backref_id));
+                return;
+            }
+            const node_id = next_id.*;
+            next_id.* += 1;
+            if (allocator) |alloc| {
+                try visited.put(alloc, ptr, node_id);
+            } else {
+                visited.putAssumeCapacity(ptr, node_id);
+            }
+            const node_marker: u8 = 2;
+            hasher.update(&.{node_marker});
+            hasher.update(std.mem.asBytes(&node_id));
+
+            switch (tag) {
+                .utf16_string => fingerprintUnits(hasher, object.payload.utf16_string),
+                .array => {
+                    try fingerprintAotValueInto(allocator, hasher, visited, next_id, object.prototype);
+                    const items = object.payload.array.items;
+                    hasher.update(std.mem.asBytes(&items.len));
+                    for (items, 0..) |item, index| {
+                        const present = if (index < object.array_presence.items.len) object.array_presence.items[index] else true;
+                        hasher.update(std.mem.asBytes(&present));
+                        try fingerprintAotValueInto(allocator, hasher, visited, next_id, item);
+                    }
+                    const prop_entries = object.array_properties.entries.items;
+                    hasher.update(std.mem.asBytes(&prop_entries.len));
+                    for (prop_entries) |entry| {
+                        try fingerprintAotValueInto(allocator, hasher, visited, next_id, entry.key);
+                        try fingerprintAotValueInto(allocator, hasher, visited, next_id, entry.value);
+                    }
+                },
+                .dictionary => {
+                    const is_structured: u8 = @intFromBool(object.structured_error);
+                    hasher.update(&.{is_structured});
+                    const has_temporal: u8 = @intFromBool(object.toml_temporal != null);
+                    hasher.update(&.{has_temporal});
+                    if (object.toml_temporal) |temporal| {
+                        hasher.update(temporal.json_text);
+                        hasher.update(temporal.toml_text);
+                    }
+                    const entries = object.payload.dictionary.entries.items;
+                    hasher.update(std.mem.asBytes(&entries.len));
+                    for (entries) |entry| {
+                        try fingerprintAotValueInto(allocator, hasher, visited, next_id, entry.key);
+                        try fingerprintAotValueInto(allocator, hasher, visited, next_id, entry.value);
+                    }
+                },
+                .byte_buffer => {
+                    const bytes = object.payload.byte_buffer.bytes;
+                    const kind_byte: u8 = @backingInt(object.payload.byte_buffer.kind);
+                    hasher.update(&.{kind_byte});
+                    hasher.update(std.mem.asBytes(&bytes.len));
+                    hasher.update(bytes);
+                },
+                .iterator, .bigint, .function, .binding_cell, .promise => {
+                    hasher.update(std.mem.asBytes(&value.payload));
+                },
+                else => unreachable,
+            }
+        },
+    }
+}
+
+fn fingerprintUnits(hasher: *std.hash.Wyhash, units: []const u16) void {
+    hasher.update(std.mem.asBytes(&units.len));
+    hasher.update(std.mem.sliceAsBytes(units));
+}
+
+fn rememberSyncedHash(state: *DynamicInterpreterState, name: []const u8, fingerprint: u64) !void {
+    if (state.synced_aot_hashes.getPtr(name)) |slot| {
+        slot.* = fingerprint;
+        return;
+    }
+    const owned_name = try state.allocator.dupe(u8, name);
+    errdefer state.allocator.free(owned_name);
+    try state.synced_aot_hashes.put(state.allocator, owned_name, fingerprint);
+}
+
+/// `dynamicToAotValue` が `error.DynamicValueUnsupported` を返す値か。
+/// 循環参照を含めて各コンテナを高々1回走査し、plugin の `初期化` や
+/// `sys.__setSysVar` が残した JS 関数等を判定する。
+fn dynamicValueAotUnsupported(allocator: std.mem.Allocator, owner: *Runtime, value: dynamic_value.Value) !bool {
+    var visited: std.AutoHashMapUnmanaged(usize, void) = .empty;
+    defer visited.deinit(allocator);
+    return dynamicValueAotUnsupportedInto(allocator, owner, &visited, value);
+}
+
+fn dynamicValueAotUnsupportedInto(
+    allocator: std.mem.Allocator,
+    owner: *Runtime,
+    visited: *std.AutoHashMapUnmanaged(usize, void),
+    value: dynamic_value.Value,
+) !bool {
+    return switch (value) {
+        .promise => true,
+        .function => |function| if (function.kind == .external) blk: {
+            const binding = function.kind.external.binding;
+            break :blk !(binding.releaseFn == releaseAotFunctionBridge and binding.context == @as(*anyopaque, @ptrCast(owner)));
+        } else true,
+        .array => |array| blk: {
+            const ptr = @intFromPtr(array);
+            if (visited.contains(ptr)) break :blk false;
+            try visited.put(allocator, ptr, {});
+            if (try dynamicValueAotUnsupportedInto(allocator, owner, visited, array.prototype)) break :blk true;
+            for (array.items.items) |item| {
+                if (try dynamicValueAotUnsupportedInto(allocator, owner, visited, item)) break :blk true;
+            }
+            for (array.properties.items) |property| {
+                if (try dynamicValueAotUnsupportedInto(allocator, owner, visited, property.value)) break :blk true;
+            }
+            break :blk false;
+        },
+        .dictionary => |dictionary| blk: {
+            const ptr = @intFromPtr(dictionary);
+            if (visited.contains(ptr)) break :blk false;
+            try visited.put(allocator, ptr, {});
+            var iterator = dictionary.map.iterator();
+            while (iterator.next()) |entry| {
+                if (try dynamicValueAotUnsupportedInto(allocator, owner, visited, entry.value_ptr.*)) break :blk true;
+            }
+            break :blk false;
+        },
+        else => false,
+    };
+}
+
+/// interpreter 初期化中の plugin `初期化` が残したAOT変換不能値について、
+/// 現在のAOT fingerprintを記録する。AOT側が後で変化すれば fingerprint が
+/// 変わり、次の `syncAotGlobalsForPlugin` が通常どおり上書きする。
+fn seedPluginInitializedHashes(state: *DynamicInterpreterState) !void {
+    for (state.owner.dynamic_globals.items) |entry| {
+        const raw = if (entry.slot) |slot| slot.* else entry.value;
+        if (raw.isUnbound()) continue;
+        const current = state.interpreter.getGlobal(entry.name) orelse continue;
+        if (!try dynamicValueAotUnsupported(state.allocator, state.owner, current)) continue;
+        if (state.synced_aot_hashes.get(entry.name) != null) continue;
+        try rememberSyncedHash(state, entry.name, try fingerprintAotValue(state.allocator, raw));
+    }
+}
+
+/// ESM plugin 呼出し前に AOT の named functions / dynamic globals を interpreter
+/// へ同期する。引数変換と同じ `AotToDynamicCache` を共有して、引数・複数グローバル・
+/// エイリアス間でオブジェクト同一性を保つ。plugin が上書きした AOT 変換不能値は、
+/// AOT 側 fingerprint が前回同期時と同一なら保持する。
+fn syncAotGlobalsForPlugin(cache: *AotToDynamicCache) anyerror!void {
+    const state = cache.state;
+    const owner = state.owner;
+    for (owner.named_functions.items) |registered| {
+        // plugin が同名を上書きしている場合は触らない。
+        if (state.interpreter.getGlobal(registered.name) != null) continue;
+        const fn_value = Value{ .tag = @backingInt(Tag.function), .payload = @intFromPtr(registered.object) };
+        var value = aotToDynamicValueWithCache(cache, fn_value) catch |failure| switch (failure) {
+            error.DynamicValueUnsupported => continue,
+            else => return failure,
+        };
+        var roots = state.value_runtime.rootFrame();
+        defer roots.deinit();
+        try roots.protect(&value);
+        try state.interpreter.setGlobalValue(registered.name, value);
+    }
+    for (owner.dynamic_globals.items) |entry| {
+        const raw = if (entry.slot) |slot| slot.* else entry.value;
+        if (raw.isUnbound()) continue;
+        const fingerprint = try fingerprintAotValue(state.allocator, raw);
+        if (state.interpreter.getGlobal(entry.name)) |existing_dyn| {
+            if (try dynamicValueAotUnsupported(state.allocator, owner, existing_dyn)) {
+                if (state.synced_aot_hashes.get(entry.name)) |previous| {
+                    // plugin 固有の変換不能値であり AOT 側も変化していないなら保持する。
+                    if (previous == fingerprint) continue;
+                }
+            }
+        }
+        var value = aotToDynamicValueWithCache(cache, raw) catch |failure| switch (failure) {
+            error.DynamicValueUnsupported => continue,
+            else => return failure,
+        };
+        var roots = state.value_runtime.rootFrame();
+        defer roots.deinit();
+        try roots.protect(&value);
+        try state.interpreter.setGlobalValue(entry.name, value);
+        try rememberSyncedHash(state, entry.name, fingerprint);
+    }
+}
+
+fn sameDynamicBinding(left: dynamic_value.Value, right: dynamic_value.Value) bool {
+    if (std.meta.activeTag(left) != std.meta.activeTag(right)) return false;
+    return switch (left) {
+        .undefined, .null_value => true,
+        .boolean => |value| value == right.boolean,
+        .number => |value| @as(u64, @bitCast(value)) == @as(u64, @bitCast(right.number)),
+        .bigint => |value| value == right.bigint,
+        .string => |value| value == right.string,
+        .bytes => |value| value == right.bytes,
+        .array => |value| value == right.array,
+        .dictionary => |value| value == right.dictionary,
+        .function => |value| value == right.function,
+        .promise => |value| value == right.promise,
+    };
+}
+
+const BeforeGlobalsSnapshot = struct {
+    state: *DynamicInterpreterState,
+    bindings: std.StringHashMapUnmanaged(dynamic_value.Value) = .empty,
+    holder: dynamic_value.Value = .undefined,
+    roots: dynamic_value.RootFrame,
+    holder_protected: bool = false,
+
+    fn init(state: *DynamicInterpreterState) BeforeGlobalsSnapshot {
+        return .{
+            .state = state,
+            .roots = state.value_runtime.rootFrame(),
+        };
+    }
+
+    fn capture(self: *BeforeGlobalsSnapshot) !void {
+        if (self.state.interpreter.globals.count() > 0) {
+            self.holder = try self.state.value_runtime.createArray();
+            try self.roots.protect(&self.holder);
+            self.holder_protected = true;
+            var iterator = self.state.interpreter.globals.iterator();
+            while (iterator.next()) |entry| {
+                // interpreter が再代入して古い値を解放しても ABA ポインタ再利用が
+                // 起きないよう、call 中は snapshot 側でも GC ルートに繋ぐ。
+                _ = try self.holder.array.push(entry.value_ptr.*);
+                try self.bindings.put(self.state.allocator, entry.key_ptr.*, entry.value_ptr.*);
+            }
+        }
+    }
+
+    fn deinit(self: *BeforeGlobalsSnapshot) void {
+        self.roots.deinit();
+        self.bindings.deinit(self.state.allocator);
+    }
+};
+
+const StagedArrayMutation = struct {
+    target: *aot_state.Object,
+    prototype: Value,
+    items: std.ArrayList(Value) = .empty,
+    presence: std.ArrayList(bool) = .empty,
+    properties: aot_state.AotDictionary = .{},
+
+    fn deinit(self: *StagedArrayMutation, allocator: std.mem.Allocator) void {
+        self.items.deinit(allocator);
+        self.presence.deinit(allocator);
+        self.properties.deinit(allocator);
+    }
+};
+
+const StagedDictMutation = struct {
+    target: *aot_state.Object,
+    entries: aot_state.AotDictionary = .{},
+
+    fn deinit(self: *StagedDictMutation, allocator: std.mem.Allocator) void {
+        self.entries.deinit(allocator);
+    }
+};
+
+const StagedGlobalUpdate = struct {
+    name: []const u8,
+    value: Value,
+    owned_new_name: ?[]u8 = null,
+};
+
+fn stageArrayMutation(cache: *DynamicToAotCache, target: Value, source: *dynamic_value.Array) !StagedArrayMutation {
+    const owner = cache.state.owner;
+    const object = target.object() orelse return error.DynamicValueUnsupported;
+    var staged = StagedArrayMutation{
+        .target = object,
+        .prototype = try dynamicToAotValueCached(cache, source.prototype, 0),
+    };
+    errdefer staged.deinit(owner.allocator);
+    try cache.hold(staged.prototype);
+
+    try staged.items.ensureTotalCapacity(owner.allocator, source.items.items.len);
+    for (source.items.items) |item| {
+        const converted = try dynamicToAotValueCached(cache, item, 0);
+        try cache.hold(converted);
+        staged.items.appendAssumeCapacity(converted);
+    }
+
+    if (source.presence.items.len > 0) {
+        const check_len = @min(source.presence.items.len, source.items.items.len);
+        if (std.mem.indexOfScalar(bool, source.presence.items[0..check_len], false) != null) {
+            try staged.presence.resize(owner.allocator, source.items.items.len);
+            for (0..source.items.items.len) |index| {
+                staged.presence.items[index] = source.isPresent(index);
+            }
+        }
+    }
+
+    var pair_slots = [_]Value{ .{}, .{} };
+    var pair_roots = RootFrame{};
+    owner.pushRoots(&pair_roots, &pair_slots, pair_slots.len);
+    defer owner.popRoots(&pair_roots);
+    for (source.properties.items) |property| {
+        pair_slots[0] = try owner.createString(property.key.units);
+        try cache.hold(pair_slots[0]);
+        pair_slots[1] = try dynamicToAotValueCached(cache, property.value, 0);
+        try cache.hold(pair_slots[1]);
+        try staged.properties.set(owner.allocator, pair_slots[0], pair_slots[1]);
+    }
+    return staged;
+}
+
+fn stageDictMutation(cache: *DynamicToAotCache, target: Value, source: *dynamic_value.Dictionary) !StagedDictMutation {
+    const owner = cache.state.owner;
+    const object = target.object() orelse return error.DynamicValueUnsupported;
+    var staged = StagedDictMutation{ .target = object };
+    errdefer staged.deinit(owner.allocator);
+
+    var pair_slots = [_]Value{ .{}, .{} };
+    var pair_roots = RootFrame{};
+    owner.pushRoots(&pair_roots, &pair_slots, pair_slots.len);
+    defer owner.popRoots(&pair_roots);
+    for (source.keys(), source.values()) |key, item| {
+        pair_slots[0] = try owner.createString(key.units);
+        try cache.hold(pair_slots[0]);
+        pair_slots[1] = try dynamicToAotValueCached(cache, item, 0);
+        try cache.hold(pair_slots[1]);
+        try staged.entries.set(owner.allocator, pair_slots[0], pair_slots[1]);
+    }
+    return staged;
+}
+
+fn commitArrayMutation(owner: *Runtime, staged: *StagedArrayMutation) void {
+    const target = staged.target;
+    target.prototype = staged.prototype;
+    target.payload.array.deinit(owner.allocator);
+    target.payload.array = staged.items;
+    staged.items = .empty;
+    target.array_presence.deinit(owner.allocator);
+    target.array_presence = staged.presence;
+    staged.presence = .empty;
+    target.array_properties.deinit(owner.allocator);
+    target.array_properties = staged.properties;
+    staged.properties = .{};
+}
+
+fn commitDictMutation(owner: *Runtime, staged: *StagedDictMutation) void {
+    const target = staged.target;
+    target.payload.dictionary.deinit(owner.allocator);
+    target.payload.dictionary = staged.entries;
+    staged.entries = .{};
+}
+
+fn finalizePluginCall(
+    state: *DynamicInterpreterState,
+    aot_to_dyn: *const AotToDynamicCache,
+    before_globals: *const BeforeGlobalsSnapshot,
+    dyn_cache: *DynamicToAotCache,
+) anyerror!void {
+    const owner = state.owner;
+
+    // 変換済みコンテナを先に逆写像へ登録し、自己参照サイクルやエイリアス、
+    // 戻り値でも元の AOT オブジェクト同一性を保つ。
+    for (aot_to_dyn.containers.items) |pair| {
+        try dyn_cache.hold(pair.aot);
+        const dyn_ptr = switch (pair.dynamic) {
+            .array => |array| @intFromPtr(array),
+            .dictionary => |dictionary| @intFromPtr(dictionary),
+            else => continue,
+        };
+        try dyn_cache.seen.put(owner.allocator, dyn_ptr, pair.aot);
+    }
+
+    var staged_arrays: std.ArrayList(StagedArrayMutation) = .empty;
+    defer {
+        for (staged_arrays.items) |*item| item.deinit(owner.allocator);
+        staged_arrays.deinit(owner.allocator);
+    }
+    var staged_dicts: std.ArrayList(StagedDictMutation) = .empty;
+    defer {
+        for (staged_dicts.items) |*item| item.deinit(owner.allocator);
+        staged_dicts.deinit(owner.allocator);
+    }
+
+    for (aot_to_dyn.containers.items) |pair| {
+        switch (pair.dynamic) {
+            .array => |array| if (@as(Tag, @fromBackingInt(@intCast(pair.aot.tag))) == .array) {
+                try staged_arrays.ensureUnusedCapacity(owner.allocator, 1);
+                staged_arrays.appendAssumeCapacity(try stageArrayMutation(dyn_cache, pair.aot, array));
+            },
+            .dictionary => |dictionary| if (@as(Tag, @fromBackingInt(@intCast(pair.aot.tag))) == .dictionary) {
+                try staged_dicts.ensureUnusedCapacity(owner.allocator, 1);
+                staged_dicts.appendAssumeCapacity(try stageDictMutation(dyn_cache, pair.aot, dictionary));
+            },
+            else => {},
+        }
+    }
+
+    var staged_globals: std.ArrayList(StagedGlobalUpdate) = .empty;
+    defer {
+        for (staged_globals.items) |item| {
+            if (item.owned_new_name) |owned| owner.allocator.free(owned);
+        }
+        staged_globals.deinit(owner.allocator);
+    }
+    var unsupported_global_names: std.ArrayList([]const u8) = .empty;
+    defer unsupported_global_names.deinit(state.allocator);
+
+    var iterator = state.interpreter.globals.iterator();
+    var new_global_count: usize = 0;
+    while (iterator.next()) |entry| {
+        const name = entry.key_ptr.*;
+        const current_dyn = entry.value_ptr.*;
+        const existing_aot = dynamicGlobal(owner, name);
+        const aot_bound = if (existing_aot) |existing|
+            !(if (existing.slot) |slot| slot.* else existing.value).isUnbound()
+        else
+            false;
+        if (aot_bound) {
+            if (before_globals.bindings.get(name)) |previous_dyn| {
+                // プラグインが再束縛していないグローバル（コンテナのインプレース変更は
+                // staged_arrays / staged_dicts が反映済み）は上書きしない。
+                // 未作成または未束縛の静的slotには `初期化` が書いた初期値を反映する。
+                if (sameDynamicBinding(previous_dyn, current_dyn)) continue;
+            }
+        }
+        const value = dynamicToAotValueCached(dyn_cache, current_dyn, 0) catch |failure| switch (failure) {
+            error.DynamicValueUnsupported => {
+                try unsupported_global_names.append(state.allocator, name);
+                continue;
+            },
+            else => return failure,
+        };
+        try dyn_cache.hold(value);
+        try staged_globals.ensureUnusedCapacity(owner.allocator, 1);
+        var owned_new_name: ?[]u8 = null;
+        if (existing_aot == null) {
+            owned_new_name = try owner.allocator.dupe(u8, name);
+            new_global_count += 1;
+        }
+        staged_globals.appendAssumeCapacity(.{
+            .name = name,
+            .value = value,
+            .owned_new_name = owned_new_name,
+        });
+    }
+    try owner.dynamic_globals.ensureUnusedCapacity(owner.allocator, new_global_count);
+
+    var staged_hash_names: std.ArrayList(?[]u8) = .empty;
+    defer {
+        for (staged_hash_names.items) |maybe_name| {
+            if (maybe_name) |owned| state.allocator.free(owned);
+        }
+        staged_hash_names.deinit(state.allocator);
+    }
+    for (unsupported_global_names.items) |name| {
+        if (dynamicGlobal(owner, name)) |existing| {
+            const raw = if (existing.slot) |slot| slot.* else existing.value;
+            if (!raw.isUnbound() and !state.synced_aot_hashes.contains(name)) {
+                try staged_hash_names.ensureUnusedCapacity(state.allocator, 1);
+                staged_hash_names.appendAssumeCapacity(try state.allocator.dupe(u8, name));
+            }
+        }
+    }
+    for (staged_globals.items) |staged| {
+        if (!state.synced_aot_hashes.contains(staged.name)) {
+            try staged_hash_names.ensureUnusedCapacity(state.allocator, 1);
+            staged_hash_names.appendAssumeCapacity(try state.allocator.dupe(u8, staged.name));
+        }
+    }
+    try state.synced_aot_hashes.ensureUnusedCapacity(state.allocator, @intCast(staged_hash_names.items.len));
+    var fingerprint_visited: std.AutoHashMapUnmanaged(usize, u32) = .empty;
+    defer fingerprint_visited.deinit(state.allocator);
+    try fingerprint_visited.ensureTotalCapacity(state.allocator, @intCast(@min(std.math.maxInt(u32), owner.object_count)));
+
+    // ここからは非失敗（commit）。全変換と事前確保が成功した後にだけ元コンテナ・
+    // グローバル・同期fingerprintを更新する。
+    for (staged_arrays.items) |*staged| commitArrayMutation(owner, staged);
+    for (staged_dicts.items) |*staged| commitDictMutation(owner, staged);
+    for (staged_globals.items) |*staged| {
+        if (dynamicGlobal(owner, staged.name)) |existing| {
+            if (existing.slot) |slot| slot.* = staged.value else existing.value = staged.value;
+        } else {
+            const owned_name = staged.owned_new_name.?;
+            staged.owned_new_name = null;
+            owner.dynamic_globals.appendAssumeCapacity(.{ .name = owned_name, .value = staged.value });
+        }
+    }
+    for (staged_hash_names.items) |*maybe_name| {
+        const owned = maybe_name.*.?;
+        maybe_name.* = null;
+        state.synced_aot_hashes.putAssumeCapacity(owned, 0);
+    }
+
+    for (unsupported_global_names.items) |name| {
+        if (dynamicGlobal(owner, name)) |existing| {
+            const raw = if (existing.slot) |slot| slot.* else existing.value;
+            if (!raw.isUnbound()) {
+                if (state.synced_aot_hashes.getPtr(name)) |slot| {
+                    slot.* = fingerprintAotValueAssumeCapacity(&fingerprint_visited, raw);
+                }
+            }
+        }
+    }
+    for (staged_globals.items) |staged| {
+        if (dynamicGlobal(owner, staged.name)) |synced| {
+            const raw = if (synced.slot) |slot| slot.* else synced.value;
+            if (!raw.isUnbound()) {
+                if (state.synced_aot_hashes.getPtr(staged.name)) |slot| {
+                    slot.* = fingerprintAotValueAssumeCapacity(&fingerprint_visited, raw);
+                }
+            }
+        }
+    }
+    for (owner.dynamic_globals.items) |entry| {
+        if (state.synced_aot_hashes.getPtr(entry.name)) |slot| {
+            const raw = if (entry.slot) |slot_ptr| slot_ptr.* else entry.value;
+            if (!raw.isUnbound()) {
+                slot.* = fingerprintAotValueAssumeCapacity(&fingerprint_visited, raw);
+            }
+        }
     }
 }
 
@@ -553,8 +1334,11 @@ pub fn nativePluginBuiltin(runtime: *Runtime, name: []const u8, arguments: []con
     @memset(dynamic_arguments, .undefined);
     var roots = state.value_runtime.rootFrame();
     defer roots.deinit();
+    var aot_to_dyn = AotToDynamicCache.init(state);
+    defer aot_to_dyn.deinit();
+    try aot_to_dyn.enter();
     for (arguments, dynamic_arguments) |argument, *converted| {
-        converted.* = try aotToDynamicValue(state, argument);
+        converted.* = try aotToDynamicValueWithCache(&aot_to_dyn, argument);
         try roots.protect(converted);
     }
     var result = try state.interpreter.callExternalCommand(name, dynamic_arguments);
@@ -570,31 +1354,28 @@ pub fn nativePluginBuiltin(runtime: *Runtime, name: []const u8, arguments: []con
     return dynamicToAotValue(state, result);
 }
 
-/// `dynamic` 側の配列/辞書の中身を AOT 側の値へ書き戻す。
+/// `dynamic` 側の配列/辞書の中身を AOT 側の値へ書き戻す。変換をすべて
+/// 完了してから元コンテナへ入れ替え、途中失敗で元配列/辞書を破壊しない。
 fn writeBackMutation(state: *DynamicInterpreterState, target: Value, source: dynamic_value.Value) !void {
     const owner = state.owner;
+    var dyn_cache = DynamicToAotCache.init(state);
+    defer dyn_cache.deinit();
+    dyn_cache.enter();
+    try dyn_cache.hold(target);
     switch (source) {
         .array => |array| {
             if (@as(Tag, @fromBackingInt(@intCast(target.tag))) != .array) return;
-            const object = target.object() orelse return;
-            object.payload.array.clearRetainingCapacity();
-            for (array.items.items) |item| try object.payload.array.append(owner.allocator, try dynamicToAotValue(state, item));
+            try dyn_cache.seen.put(owner.allocator, @intFromPtr(array), target);
+            var staged = try stageArrayMutation(&dyn_cache, target, array);
+            defer staged.deinit(owner.allocator);
+            commitArrayMutation(owner, &staged);
         },
         .dictionary => |dictionary| {
             if (@as(Tag, @fromBackingInt(@intCast(target.tag))) != .dictionary) return;
-            const object = target.object() orelse return;
-            var iterator = dictionary.map.iterator();
-            while (iterator.next()) |entry| {
-                var key = try owner.createString(entry.key_ptr.*.units);
-                var key_roots = RootFrame{};
-                owner.pushRoots(&key_roots, @ptrCast(&key), 1);
-                defer owner.popRoots(&key_roots);
-                var value = try dynamicToAotValue(state, entry.value_ptr.*);
-                var value_roots = RootFrame{};
-                owner.pushRoots(&value_roots, @ptrCast(&value), 1);
-                defer owner.popRoots(&value_roots);
-                try owner.setDictionary(&object.payload.dictionary, key, value);
-            }
+            try dyn_cache.seen.put(owner.allocator, @intFromPtr(dictionary), target);
+            var staged = try stageDictMutation(&dyn_cache, target, dictionary);
+            defer staged.deinit(owner.allocator);
+            commitDictMutation(owner, &staged);
         },
         else => {},
     }
@@ -666,11 +1447,34 @@ pub fn esmPluginBuiltin(runtime: *Runtime, name: []const u8, arguments: []const 
     @memset(dynamic_arguments, .undefined);
     var roots = dynamic_state.value_runtime.rootFrame();
     defer roots.deinit();
+    var aot_to_dyn = AotToDynamicCache.init(dynamic_state);
+    defer aot_to_dyn.deinit();
+    try aot_to_dyn.enter();
     for (arguments, dynamic_arguments) |argument, *converted| {
-        converted.* = try aotToDynamicValue(dynamic_state, argument);
+        converted.* = try aotToDynamicValueWithCache(&aot_to_dyn, argument);
         try roots.protect(converted);
     }
-    var result = try dynamic_state.interpreter.callExternalCommand(name, dynamic_arguments);
+    // plugin はAOTグローバルを `sys.__getSysVar` / `sys.__findVar` 経由で観測
+    // し得る。引数変換と同一のキャッシュで同期し、参照同一性を保つ。
+    try syncAotGlobalsForPlugin(&aot_to_dyn);
+    var before_globals = BeforeGlobalsSnapshot.init(dynamic_state);
+    defer before_globals.deinit();
+    try before_globals.capture();
+
+    var result = dynamic_state.interpreter.callExternalCommand(name, dynamic_arguments) catch |failure| {
+        var err_dyn_cache = DynamicToAotCache.init(dynamic_state);
+        defer err_dyn_cache.deinit();
+        err_dyn_cache.enter();
+        // 例外送出経路でも、送出前の引数変更や `sys.__setSysVar` 副作用を
+        // AOT 側へ反映する。元の例外を優先し、失敗時も元コンテナを壊さない。
+        finalizePluginCall(dynamic_state, &aot_to_dyn, &before_globals, &err_dyn_cache) catch {};
+        return failure;
+    };
     try roots.protect(&result);
-    return dynamicToAotValue(dynamic_state, result);
+
+    var dyn_cache = DynamicToAotCache.init(dynamic_state);
+    defer dyn_cache.deinit();
+    dyn_cache.enter();
+    try finalizePluginCall(dynamic_state, &aot_to_dyn, &before_globals, &dyn_cache);
+    return dynamicToAotValueCached(&dyn_cache, result, 0);
 }

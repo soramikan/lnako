@@ -74,6 +74,9 @@ LnakoQuickJsValue *lnako_qjs_object(LnakoQuickJs *engine);
 /// `LnakoQuickJsHostRelease` を呼ぶため、呼出し側は成功した生成回数と解放通知
 /// 回数で参照カウントできる。`generation` は 32bit 環境でも切り捨てない。
 LnakoQuickJsValue *lnako_qjs_host_function(LnakoQuickJs *engine, uintptr_t function_id, uint64_t generation, const char *name);
+/// `lnako_qjs_host_function` が生成した host 関数ラッパなら 1 を返し、
+/// `function_id` と `generation` を書き出す。それ以外は 0。
+int lnako_qjs_host_function_slot(const LnakoQuickJsValue *value, uintptr_t *function_id, uint64_t *generation);
 /// QuickJS の GC を明示実行する（テスト・診断用）。finalizer はこの中で走り得る。
 void lnako_qjs_run_gc(LnakoQuickJs *engine);
 /// QuickJS のメモリ上限を設定する（テスト・診断用）。

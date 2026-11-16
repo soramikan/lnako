@@ -1577,6 +1577,244 @@ test "compat AOT runtimeはschema 2 manifestのmodulesとpackagesを受理する
     lnako_aot_compat_deinit();
 }
 
+test "compat AOT runtimeはESM plugin呼出し前後でAOT変数を同期しplugin固有値を保持する" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+    // plugin は `sys.__getSysVar` / `sys.__setSysVar` でAOT変数を読み書きする。
+    // `P` は plugin が `.function` を書き込むケース、`Q` は `初期化` が
+    // `.function` を書き込むケースの確認に使う。
+    const manifest =
+        \\[{"path":"/lnako-compat-test/sync-plugin.mjs","source":"export default { 初期化: function(sys) { sys.__setSysVar('Q', () => 9); }, 取得: { type: 'func', fn: (sys) => sys.__getSysVar('X', -1) }, 設定: { type: 'func', fn: (sys) => { sys.__setSysVar('S', 7); return 0; } }, 読S: { type: 'func', fn: (sys) => sys.__getSysVar('S', -1) }, 設定P: { type: 'func', fn: (sys) => { sys.__setSysVar('P', () => 7); return 0; } }, P呼出: { type: 'func', fn: (sys) => sys.__getSysVar('P', null)() }, P種別: { type: 'func', fn: (sys) => typeof sys.__getSysVar('P', null) }, Q呼出: { type: 'func', fn: (sys) => sys.__getSysVar('Q', null)() }, Q種別: { type: 'func', fn: (sys) => typeof sys.__getSysVar('Q', null) } };","is_plugin":true,"namespaces":[],"package_root":null,"bare_aliases":[]}]
+    ;
+    lnako_aot_compat_esm_register(manifest.ptr, manifest.len);
+    try std.testing.expect(!active.has_pending_exception);
+
+    // 1) runDynamicSource なしでも AOT の X=42 が plugin から見える。
+    //    `初期化` がAOT変数 Q を `.function` で上書きした状態も同時に作る。
+    try state.upsertDynamicGlobal(active, "X", state.numberValue(42));
+    try state.upsertDynamicGlobal(active, "Q", state.numberValue(1));
+    const visible = try state.esmPluginBuiltin(active, "取得", &.{});
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.number)), visible.tag);
+    try std.testing.expectEqual(@as(f64, 42), @as(f64, @bitCast(visible.payload)));
+    const initialized = try state.esmPluginBuiltin(active, "Q呼出", &.{});
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.number)), initialized.tag);
+    try std.testing.expectEqual(@as(f64, 9), @as(f64, @bitCast(initialized.payload)));
+
+    // 2) plugin の `sys.__setSysVar` が AOT dynamic_globals へ書き戻る。
+    _ = try state.esmPluginBuiltin(active, "設定", &.{});
+    const written = state.dynamicGlobal(active, "S") orelse return error.TestUnexpectedResult;
+    const written_raw = if (written.slot) |slot| slot.* else written.value;
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.number)), written_raw.tag);
+    try std.testing.expectEqual(@as(f64, 7), @as(f64, @bitCast(written_raw.payload)));
+    const reread = try state.esmPluginBuiltin(active, "読S", &.{});
+    try std.testing.expectEqual(@as(f64, 7), @as(f64, @bitCast(reread.payload)));
+    // AOT 側の `JS実行` からも同じ値が見える。
+    const via_aot = try evalCompatJs(active, "sys.__getSysVar('S','miss')");
+    try std.testing.expectEqual(@as(f64, 7), @as(f64, @bitCast(via_aot.payload)));
+
+    // 3) 次のAOT変更 X=99 は次のplugin呼出しへ伝播する。
+    try state.upsertDynamicGlobal(active, "X", state.numberValue(99));
+    const updated = try state.esmPluginBuiltin(active, "取得", &.{});
+    try std.testing.expectEqual(@as(f64, 99), @as(f64, @bitCast(updated.payload)));
+
+    // 4) plugin が P を `.function` で上書きしても、AOT側が未変更なら
+    //    次の呼出しで潰さない。AOT側を変更したら上書きされる。
+    try state.upsertDynamicGlobal(active, "P", state.numberValue(1));
+    _ = try state.esmPluginBuiltin(active, "設定P", &.{});
+    const preserved = try state.esmPluginBuiltin(active, "P呼出", &.{});
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.number)), preserved.tag);
+    try std.testing.expectEqual(@as(f64, 7), @as(f64, @bitCast(preserved.payload)));
+    try state.upsertDynamicGlobal(active, "P", state.numberValue(5));
+    const replaced = try state.esmPluginBuiltin(active, "P種別", &.{});
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.utf16_string)), replaced.tag);
+    const expected_kind = try std.unicode.utf8ToUtf16LeAlloc(std.testing.allocator, "number");
+    defer std.testing.allocator.free(expected_kind);
+    try std.testing.expectEqualSlices(u16, expected_kind, replaced.object().?.payload.utf16_string);
+
+    // `初期化` が書いた Q も、AOT側を変更すれば上書きされる。
+    try state.upsertDynamicGlobal(active, "Q", state.numberValue(5));
+    const q_replaced = try state.esmPluginBuiltin(active, "Q種別", &.{});
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.utf16_string)), q_replaced.tag);
+    try std.testing.expectEqualSlices(u16, expected_kind, q_replaced.object().?.payload.utf16_string);
+
+    // 5) 同期fingerprintは保持され、DynamicInterpreterState.deinit で
+    //    std.testing.allocator のリーク検査に引っかからない。
+    const dynamic_state = active.dynamic_state orelse return error.TestUnexpectedResult;
+    try std.testing.expect(dynamic_state.synced_aot_hashes.count() >= 3);
+}
+
+fn gcTriggerCallback(out: *Value, _: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {
+    const runtime = &(state.active_runtime orelse return);
+    // 元グローバルの参照を外してから GC を実行し、plugin 呼出し中に
+    // `containers[].aot` が回収されないことを検証する。
+    state.upsertDynamicGlobal(runtime, "GcTarget", state.numberValue(0)) catch return;
+    _ = runtime.collect();
+    out.* = state.numberValue(123);
+}
+
+test "compat AOT runtimeはESM pluginの循環・共有参照・大配列・辞書削除・失敗原子性・例外時書き戻しを保つ" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+
+    // 未束縛の静的グローバルスロットを登録し、`初期化` の値が反映されるか確認する。
+    var static_init_slot = [_]Value{Value.unboundValue()};
+    var static_init_frame = state.RootFrame{};
+    pushTestRoots(active, &static_init_frame, &static_init_slot);
+    defer active.popRoots(&static_init_frame);
+    state.lnako_aot_dynamic_global_register("StaticInit".ptr, "StaticInit".len, &static_init_slot[0]);
+
+    const manifest =
+        \\[{"path":"/lnako-compat-test/edge-sync-plugin.mjs","source":"export default { 初期化: function(sys) { sys.__setSysVar('InitNum', 42); sys.__setSysVar('StaticInit', 99); }, 無操作: { type: 'func', fn: () => 0 }, 要素変更: { type: 'func', fn: (a) => { a[0] = 9; return 1; } }, 入れ子変更返却: { type: 'func', fn: (p) => { p[0][0] = 55; return p[0]; } }, 関数返却: { type: 'func', fn: (f) => f }, 関数保存: { type: 'func', fn: (f) => { globalThis.__saved_fn = f; return 0; } }, 保存関数返却: { type: 'func', fn: () => ({ fn: globalThis.__saved_fn }) }, 保存関数グローバル書込: { type: 'func', fn: (sys) => { sys.__setSysVar('SavedFn', globalThis.__saved_fn); return 0; } }, A確認: { type: 'func', fn: (sys) => sys.__getSysVar('A', null)[0] }, 末尾確認: { type: 'func', fn: (sys) => sys.__getSysVar('Big', [])[299] }, Big上書: { type: 'func', fn: (sys) => { sys.__setSysVar('Big', () => 7); return 0; } }, Big種別: { type: 'func', fn: (sys) => typeof sys.__getSysVar('Big', null) }, 要素関数書込: { type: 'func', fn: (a) => { a[0] = () => 7; return 0; } }, キー削除: { type: 'func', fn: (d) => { delete d.x; return 0; } }, 変更後例外: { type: 'func', fn: (a) => { a[0] = 77; throw new Error('boom'); } }, 非同期例外: { type: 'func', fn: async (a) => { a[0] = 88; throw new Error('async-boom'); } }, 関数経由GC: { type: 'func', fn: (arr, cb) => { const r = cb(); arr[0] = r; return arr; } } };","is_plugin":true,"namespaces":[],"package_root":null,"bare_aliases":[]}]
+    ;
+    lnako_aot_compat_esm_register(manifest.ptr, manifest.len);
+    try std.testing.expect(!active.has_pending_exception);
+
+    var frame = state.RootFrame{};
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{} };
+    pushTestRoots(active, &frame, &roots);
+    defer active.popRoots(&frame);
+
+    // 1) 自己参照グローバルがあっても無関係な plugin 呼出しで落ちず、
+    //    `初期化` が書いた変換可能な通常グローバル・未束縛静的slotも AOT へ反映される。
+    roots[0] = try active.createArray(&.{});
+    try roots[0].object().?.payload.array.append(active.allocator, roots[0]);
+    try state.upsertDynamicGlobal(active, "Cyc", roots[0]);
+    _ = try state.esmPluginBuiltin(active, "無操作", &.{});
+    const init_num_entry = state.dynamicGlobal(active, "InitNum") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(f64, 42), @as(f64, @bitCast(init_num_entry.value.payload)));
+    try std.testing.expectEqual(@as(f64, 99), @as(f64, @bitCast(static_init_slot[0].payload)));
+
+    // 2) A と B=A、さらに入れ子要素 Parent=[A] との共有参照・戻り値同一性を維持し、
+    //    引数への変更もグローバル同期で取り消されない。
+    roots[1] = try active.createArray(&.{state.numberValue(1)});
+    roots[5] = try active.createArray(&.{roots[1]});
+    try state.upsertDynamicGlobal(active, "A", roots[1]);
+    try state.upsertDynamicGlobal(active, "B", roots[1]);
+    _ = try state.esmPluginBuiltin(active, "無操作", &.{});
+    const b_after_noop = state.dynamicGlobal(active, "B") orelse return error.TestUnexpectedResult;
+    const b_raw_noop = if (b_after_noop.slot) |slot| slot.* else b_after_noop.value;
+    try std.testing.expectEqual(roots[1].payload, b_raw_noop.payload);
+
+    const changed_ret = try state.esmPluginBuiltin(active, "要素変更", &.{roots[1]});
+    try std.testing.expectEqual(@as(f64, 1), @as(f64, @bitCast(changed_ret.payload)));
+    try std.testing.expectEqual(@as(f64, 9), @as(f64, @bitCast(roots[1].object().?.payload.array.items[0].payload)));
+    const a_entry = state.dynamicGlobal(active, "A") orelse return error.TestUnexpectedResult;
+    const b_entry = state.dynamicGlobal(active, "B") orelse return error.TestUnexpectedResult;
+    const a_raw = if (a_entry.slot) |slot| slot.* else a_entry.value;
+    const b_raw = if (b_entry.slot) |slot| slot.* else b_entry.value;
+    try std.testing.expectEqual(roots[1].payload, a_raw.payload);
+    try std.testing.expectEqual(roots[1].payload, b_raw.payload);
+    const a_read = try state.esmPluginBuiltin(active, "A確認", &.{});
+    try std.testing.expectEqual(@as(f64, 9), @as(f64, @bitCast(a_read.payload)));
+
+    // 親配列経由で入れ子要素を書き換えてそのまま返す場合も、元の Child と同一オブジェクトになる。
+    const nested_ret = try state.esmPluginBuiltin(active, "入れ子変更返却", &.{roots[5]});
+    try std.testing.expectEqual(roots[1].payload, nested_ret.payload);
+    try std.testing.expectEqual(@as(f64, 55), @as(f64, @bitCast(roots[1].object().?.payload.array.items[0].payload)));
+
+    // 3) 300要素配列の256要素以降の変更も完全構造 fingerprint で検出する。
+    //    plugin が Big を JS 関数へ上書きした状態で Big[299] 未変更なら関数を保持し、
+    //    Big[299] を変更すると fingerprint 差分で AOT の Big が再同期される。
+    roots[2] = try active.createArray(&.{});
+    for (0..300) |i| {
+        try roots[2].object().?.payload.array.append(active.allocator, state.numberValue(@floatFromInt(i)));
+    }
+    try state.upsertDynamicGlobal(active, "Big", roots[2]);
+    _ = try state.esmPluginBuiltin(active, "Big上書", &.{});
+    const big_fn_kind = try state.esmPluginBuiltin(active, "Big種別", &.{});
+    const expected_fn_kind = try std.unicode.utf8ToUtf16LeAlloc(std.testing.allocator, "function");
+    defer std.testing.allocator.free(expected_fn_kind);
+    try std.testing.expectEqualSlices(u16, expected_fn_kind, big_fn_kind.object().?.payload.utf16_string);
+    roots[2].object().?.payload.array.items[299] = state.numberValue(999);
+    const tail_after = try state.esmPluginBuiltin(active, "末尾確認", &.{});
+    try std.testing.expectEqual(@as(f64, 999), @as(f64, @bitCast(tail_after.payload)));
+
+    // 4) 変換不能値の書き戻し失敗は伝播し、元の配列を破壊（空配列化）しない。
+    roots[3] = try active.createArray(&.{ state.numberValue(1), state.numberValue(2) });
+    try std.testing.expectError(
+        error.DynamicValueUnsupported,
+        state.esmPluginBuiltin(active, "要素関数書込", &.{roots[3]}),
+    );
+    try std.testing.expectEqual(@as(usize, 2), roots[3].object().?.payload.array.items.len);
+    try std.testing.expectEqual(@as(f64, 1), @as(f64, @bitCast(roots[3].object().?.payload.array.items[0].payload)));
+    try std.testing.expectEqual(@as(f64, 2), @as(f64, @bitCast(roots[3].object().?.payload.array.items[1].payload)));
+
+    // 5) 辞書引数の delete は AOT 側の辞書エントリからも削除される。
+    roots[4] = try active.createDictionary(&.{});
+    const k_x = try testString(active, "x");
+    const k_y = try testString(active, "y");
+    var key_frame = state.RootFrame{};
+    var key_roots = [_]Value{ k_x, k_y };
+    pushTestRoots(active, &key_frame, &key_roots);
+    defer active.popRoots(&key_frame);
+    try active.setDictionary(&roots[4].object().?.payload.dictionary, key_roots[0], state.numberValue(1));
+    try active.setDictionary(&roots[4].object().?.payload.dictionary, key_roots[1], state.numberValue(2));
+    _ = try state.esmPluginBuiltin(active, "キー削除", &.{roots[4]});
+    try std.testing.expectEqual(@as(usize, 1), roots[4].object().?.payload.dictionary.entries.items.len);
+    try std.testing.expect(roots[4].object().?.payload.dictionary.findByKey(key_roots[0]) == null);
+    try std.testing.expect(roots[4].object().?.payload.dictionary.findByKey(key_roots[1]) != null);
+
+    // 6) 同期 throw と async Promise reject の両方で送出前の配列引数変更と失敗文言を保つ。
+    try std.testing.expectError(
+        error.QuickJsExecutionFailed,
+        state.esmPluginBuiltin(active, "変更後例外", &.{roots[3]}),
+    );
+    try std.testing.expectEqual(@as(f64, 77), @as(f64, @bitCast(roots[3].object().?.payload.array.items[0].payload)));
+    try std.testing.expectError(
+        error.QuickJsExecutionFailed,
+        state.esmPluginBuiltin(active, "非同期例外", &.{roots[3]}),
+    );
+    try std.testing.expectEqual(@as(f64, 88), @as(f64, @bitCast(roots[3].object().?.payload.array.items[0].payload)));
+    const async_failure = active.dynamic_state.?.value_runtime.failureMessage() orelse return error.TestUnexpectedResult;
+    try std.testing.expect(std.mem.indexOf(u8, async_failure, "async-boom") != null);
+
+    // 7) plugin から呼ばれる AOT callback が元グローバルを外して GC を起こしても、
+    //    `containers[].aot` が GC 保護され UAF を起こさずに書き戻し・返却できる。
+    try state.upsertDynamicGlobal(active, "GcTarget", try active.createArray(&.{state.numberValue(10)}));
+    const gc_target = state.dynamicGlobal(active, "GcTarget") orelse return error.TestUnexpectedResult;
+    roots[6] = try active.createNamedFunction(gcTriggerCallback, 0, "GcTrigger", &.{});
+    const gc_ret = try state.esmPluginBuiltin(active, "関数経由GC", &.{ gc_target.value, roots[6] });
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.array)), gc_ret.tag);
+    try std.testing.expectEqual(@as(f64, 123), @as(f64, @bitCast(gc_ret.object().?.payload.array.items[0].payload)));
+
+    // 8) AOT 関数を含む配列を無操作 plugin に渡しても `DynamicValueUnsupported` にならず、
+    //    AOT 関数の直接返却・呼出しを跨いで保存したラッパの返却・`sys.__setSysVar` 経由でも元の関数と同一オブジェクトが返る。
+    roots[7] = try active.createArray(&.{roots[6]});
+    _ = try state.esmPluginBuiltin(active, "無操作", &.{roots[7]});
+    try std.testing.expectEqual(roots[6].payload, roots[7].object().?.payload.array.items[0].payload);
+    const fn_ret = try state.esmPluginBuiltin(active, "関数返却", &.{roots[6]});
+    try std.testing.expectEqual(roots[6].payload, fn_ret.payload);
+    _ = try state.esmPluginBuiltin(active, "関数保存", &.{roots[6]});
+    const saved_ret = try state.esmPluginBuiltin(active, "保存関数返却", &.{});
+    const fn_key = try testString(active, "fn");
+    var fn_key_frame = state.RootFrame{};
+    var fn_key_roots = [_]Value{ fn_key, saved_ret };
+    pushTestRoots(active, &fn_key_frame, &fn_key_roots);
+    defer active.popRoots(&fn_key_frame);
+    const saved_ret_dict = &fn_key_roots[1].object().?.payload.dictionary;
+    const saved_ret_index = saved_ret_dict.findByKey(fn_key_roots[0]) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(roots[6].payload, saved_ret_dict.entries.items[saved_ret_index].value.payload);
+    _ = try state.esmPluginBuiltin(active, "保存関数グローバル書込", &.{});
+    const saved_global = state.dynamicGlobal(active, "SavedFn") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(roots[6].payload, saved_global.value.payload);
+}
+
 test "compat AOT runtimeはJS文字列の孤立サロゲートを保持する" {
     if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
     var runtime = state.Runtime{ .allocator = std.testing.allocator };
@@ -3969,7 +4207,13 @@ test "compat AOT runtimeはlnako_aot_compat_deinitでhost状態を解放し再�
     pushTestRoots(active, &frame, &roots);
     defer active.popRoots(&frame);
     roots[0] = try active.createNamedFunction(doubleFunction, 1, "F", &.{});
-    _ = try compat.hostFunction(active, engine_value, roots[0]);
+    // hostFunction が返す *RawValue ハンドルは呼出し側が所有する。globalThis へ
+    // 載せて参照を移した直後に解放し、wrapper ハンドルを漏らさない。
+    const registered = try compat.hostFunction(active, engine_value, roots[0]);
+    const global = lnako_qjs_eval(engine_value, "globalThis", 10, "<global>") orelse return error.TestUnexpectedResult;
+    defer lnako_qjs_value_free(global);
+    try std.testing.expect(compat.lnako_qjs_set_property(global, "__lnako_reinit_cb", registered) > 0);
+    lnako_qjs_value_free(registered);
     try std.testing.expectEqual(@as(usize, 1), compat.registeredHostFunctionCount());
 
     lnako_aot_compat_deinit();

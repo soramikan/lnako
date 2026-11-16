@@ -86,6 +86,10 @@ fn stubResolve(_: *anyopaque, _: []const u8) anyerror!Value {
     return error.QuickJsValueNotCallable;
 }
 
+fn ambiguousResolve(_: *anyopaque, _: []const u8) anyerror!Value {
+    return error.AmbiguousGlobal;
+}
+
 fn stubGetGlobal(_: *anyopaque, _: []const u8) ?Value {
     return null;
 }
@@ -106,6 +110,41 @@ const test_effects = q.Effects{
 };
 
 var test_effect_context: u8 = 0;
+
+const ambiguous_effects = q.Effects{
+    .context = @ptrCast(&test_effect_context),
+    .invokeFn = stubInvoke,
+    .resolveFn = ambiguousResolve,
+    .getGlobalFn = stubGetGlobal,
+    .setGlobalFn = stubSetGlobal,
+    .execFn = stubExec,
+};
+
+test "interpreter JSオブジェクト取得は1引数の曖昧名を伝播し未解決名はnullにする" {
+    if (!build_options.quickjs_enabled) return error.SkipZigTest;
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    const engine = try newEngine();
+    defer q.lnako_qjs_release(engine);
+    var state = initState(&runtime, engine);
+    defer deinitState(&state);
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    var requested = try runtime.stringUtf8("X");
+    try roots.protect(&requested);
+
+    // AOT（compat_js.zig）と同じく、複数候補で曖昧な名前はnullへ潰さず
+    // 呼出し側へ伝播する。
+    try std.testing.expectError(
+        error.AmbiguousGlobal,
+        q.call(&runtime, &state, ambiguous_effects, "JSオブジェクト取得", &.{requested}),
+    );
+
+    // 未解決名だけが従来どおり .null_value になる。
+    const unresolved = try q.call(&runtime, &state, test_effects, "JSオブジェクト取得", &.{requested});
+    try std.testing.expect(unresolved != null);
+    try std.testing.expect(unresolved.? == .null_value);
+}
 
 test "interpreter JS関数実行はネストした配列・辞書をfull変換する" {
     if (!build_options.quickjs_enabled) return error.SkipZigTest;
