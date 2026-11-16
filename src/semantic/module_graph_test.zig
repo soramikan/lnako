@@ -465,12 +465,17 @@ test "package内の相対import先は所有packageを引き継ぎ修飾名で外
 }
 
 test "package内helperの修飾名は無関係なpackageからも解決されない" {
-    var memory = MemoryProvider{ .files = &.{
-        .{ .suffix = "main.nako3", .source = "!「pkg:math」を取り込む\n!「pkg:util」を取り込む\n" },
-        .{ .suffix = "packages/math/index.nako3", .source = "!「./helper.nako3」を取り込む\n●入口とは\nhelper__内部処理()\nここまで\n" },
-        .{ .suffix = "packages/math/helper.nako3", .source = "●内部処理とは\nここまで\n" },
-        .{ .suffix = "packages/util/index.nako3", .source = "helper__内部処理()\n" },
-    } };
+    var memory = MemoryProvider{
+        .files = &.{
+            .{ .suffix = "main.nako3", .source = "!「pkg:math」を取り込む\n!「pkg:util」を取り込む\n" },
+            .{ .suffix = "packages/math/index.nako3", .source = "!「./helper.nako3」を取り込む\n●入口とは\nhelper__内部処理()\nここまで\n" },
+            .{ .suffix = "packages/math/helper.nako3", .source = "●内部処理とは\nここまで\n" },
+            // 未解決の修飾名でも、無関係なpackageの同名helperへは解決されず
+            // util自身のローカル変数参照になることを確認する（Issue #228で
+            // 未定義の命令呼出し自体はコンパイル時エラーになるため参照で検査）。
+            .{ .suffix = "packages/util/index.nako3", .source = "helper__内部処理を表示\n" },
+        },
+    };
     var package_resolver = PackageTestResolver{};
     var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{ .package_resolver = package_resolver.resolver() });
     defer graph.deinit();
@@ -1453,9 +1458,9 @@ const NativePluginPackageResolver = struct {
 test "package経由のnative plugin命令は公開namespace修飾名のみ動的解決する" {
     // P1回帰: package経由のnative pluginは無修飾名をimport側のグローバル
     // 命令空間へ露出させない。`nativepkg__外部追加`のみ動的builtinに束縛し、
-    // 無修飾の`外部追加`は未定義名（local宣言）へ落ちる。
+    // 無修飾の`外部追加`はローカル関数へ解決される。
     var memory = MemoryProvider{ .files = &.{
-        .{ .suffix = "main.nako3", .source = "!「pkg:nativepkg」を取り込む\nnativepkg__外部追加(1, 2)\n外部追加(1, 2)\n" },
+        .{ .suffix = "main.nako3", .source = "!「pkg:nativepkg」を取り込む\nnativepkg__外部追加(1, 2)\n●(AとBを)外部追加とは\n0で戻る\nここまで\n外部追加(1, 2)\n" },
     } };
     var package_resolver = NativePluginPackageResolver{};
     var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{ .package_resolver = package_resolver.resolver() });
@@ -1495,6 +1500,28 @@ test "直接path取り込みのnative plugin命令は従来どおり無修飾で
         if (binding.kind == .builtin and binding.dynamic_builtin and std.mem.eql(u8, binding.resolved_name, "外部追加")) unqualified_dynamic = true;
     }
     try std.testing.expect(unqualified_dynamic);
+}
+
+test "直接path取り込みのESM plugin命令は無修飾で動的解決する" {
+    // --compat-js の直接path ESM pluginは命令を無修飾でruntime登録する。
+    // native pluginと同じくimport位置以降の未知命令を動的builtinへ束縛し、
+    // 未定義命令としてcheckを失敗させない。
+    var memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "!「plugin.mjs」を取り込む\n外部追加(1, 2)\n" },
+        .{ .suffix = "plugin.mjs", .source = "export default { 外部追加: { type: 'func', fn: () => 0 } };" },
+    } };
+    var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{ .compat_js = true });
+    defer graph.deinit();
+    try std.testing.expect(graph.succeeded());
+    try std.testing.expectEqual(module_graph.ModuleKind.javascript, graph.modules[1].kind);
+    var program = try graph.analyze(std.testing.allocator);
+    defer program.deinit();
+    try std.testing.expect(program.succeeded());
+    var dynamic = false;
+    for (program.bindings) |binding| {
+        if (binding.kind == .builtin and binding.dynamic_builtin and std.mem.eql(u8, binding.resolved_name, "外部追加")) dynamic = true;
+    }
+    try std.testing.expect(dynamic);
 }
 
 test "plugin命令の動的解決はimport文より前の呼出しには適用しない" {

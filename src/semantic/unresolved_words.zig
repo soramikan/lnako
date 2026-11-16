@@ -188,3 +188,45 @@ fn variableDisplayName(qualified_name: []const u8) []const u8 {
         if (std.mem.eql(u8, bare, special)) return special;
     return qualified_name;
 }
+
+/// 組み込み名が呼出し位置で関数として使えるかを検査し、診断したら true。
+/// 関数でないシステム定数を呼ぶと公式は『X』は関数ではありません（裸の
+/// 文なら不完全な文）にする。`それ()`だけは公式が実行時TypeErrorにする
+/// ため、既存の変数呼出し束縛を維持する。
+pub fn rejectNonCallableBuiltin(self: *Analyzer, module_index: u32, node: *ast.Node, name: []const u8) !bool {
+    if (node.kind != .function_call) return false;
+    if (builtin_catalog.findArity(name) != null or low_level_foundation.commandArity(name) != null) return false;
+    if (std.mem.eql(u8, name, "それ")) {
+        if (!node.command_call) return false;
+        try reportIncompleteStatement(self, module_index, node, name);
+        return true;
+    }
+    if (node.command_call and !node.is_c_style_call and node.children.len == 0) {
+        try reportIncompleteStatement(self, module_index, node, name);
+        return true;
+    }
+    const message = try std.fmt.allocPrint(self.allocator, "『{s}』は関数ではありません。", .{name});
+    try self.addDiagnostic(.undefined_symbol, node.span, self.modules.items[module_index].path, message);
+    return true;
+}
+
+/// 静的に解決できない命令呼出しを公式`yCallFunc`の文言で診断する。
+/// 未修飾名はモジュール名を前置し、`main__`だけを表示時に省く。
+pub fn rejectUndefinedCommand(self: *Analyzer, module_index: u32, node: *ast.Node, name: []const u8) !void {
+    const qualified = if (std.mem.indexOf(u8, name, "__") != null)
+        name
+    else
+        try std.fmt.allocPrint(self.allocator, "{s}__{s}", .{ self.modules.items[module_index].name, name });
+    const shown = if (std.mem.startsWith(u8, qualified, "main__")) qualified["main__".len..] else qualified;
+    if (node.command_call and !node.is_c_style_call and node.children.len == 0) {
+        try reportIncompleteStatement(self, module_index, node, shown);
+        return;
+    }
+    const message = try std.fmt.allocPrint(self.allocator, "関数『{s}』が見当たりません。", .{shown});
+    try self.addDiagnostic(.undefined_symbol, node.span, self.modules.items[module_index].path, message);
+}
+
+fn reportIncompleteStatement(self: *Analyzer, module_index: u32, node: *ast.Node, shown: []const u8) !void {
+    const message = try std.fmt.allocPrint(self.allocator, "不完全な文です。単語『{s}』が解決していません。", .{shown});
+    try self.addDiagnostic(.incomplete_statement, node.span, self.modules.items[module_index].path, message);
+}

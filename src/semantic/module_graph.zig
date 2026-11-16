@@ -397,9 +397,7 @@ pub const ModuleGraph = struct {
             var dynamic_command_aliases: std.ArrayList(analyzer.DynamicCommandAlias) = .empty;
             for (module.imports) |item| if (item.target) |target| {
                 const target_module = self.modules[target];
-                if (target_module.kind == .native_plugin or
-                    (target_module.kind == .javascript and item.canonical_id != null))
-                {
+                if (target_module.kind == .native_plugin or target_module.kind == .javascript) {
                     // package経由のplugin（native / --compat-jsのESM）はalias
                     // 修飾名のみを公開し、素の命令名は取り込みモジュールへ露出
                     // させない（package namespace契約）。直接path importは
@@ -425,49 +423,51 @@ pub const ModuleGraph = struct {
                                 .import_position = item.span.start,
                             });
                         }
-                    } else if (target_module.kind == .native_plugin) {
-                        // package所有module内の相対path取り込みのnative pluginは
+                    } else if (moduleIsPackageContent(module)) {
+                        // package所有module内の相対path取り込みpluginは
                         // runtime登録と同じ `{owner}:{namespace}` へ隔離する。
-                        // 修飾名 `<filename>__命令` に加え、取り込み位置以降の
-                        // 無修飾命令もその dispatch へ写像する（allows_dynamic
-                        // の恒等写像は使わない — 無修飾runtime登録はしない）。
-                        // owner無し（プロジェクトroot側）moduleは従来どおり
-                        // 無修飾動的命令を許可する。
-                        if (moduleIsPackageContent(module)) {
-                            if (item.namespace) |source_namespace| {
-                                const dispatch = if (module.package_owner) |owner|
-                                    try std.fmt.allocPrint(temp, "{s}:{s}", .{ owner, source_namespace })
-                                else
-                                    source_namespace;
-                                var listed = false;
-                                for (dynamic_command_aliases.items) |existing| {
-                                    if (!existing.unqualified and
-                                        std.mem.eql(u8, existing.source_namespace, source_namespace) and
-                                        std.mem.eql(u8, existing.dispatch_namespace, dispatch))
-                                    {
-                                        listed = true;
-                                        break;
-                                    }
-                                }
-                                if (!listed) {
-                                    try dynamic_command_aliases.append(temp, .{
-                                        .source_namespace = source_namespace,
-                                        .dispatch_namespace = dispatch,
-                                        .import_position = item.span.start,
-                                    });
-                                    // 無修飾 catch-all: `外部追加` → `{owner}:{ns}__外部追加`
-                                    try dynamic_command_aliases.append(temp, .{
-                                        .source_namespace = "",
-                                        .dispatch_namespace = dispatch,
-                                        .import_position = item.span.start,
-                                        .unqualified = true,
-                                    });
+                        // native pluginに加え、`--compat-js` のESM pluginも
+                        // 同じowner修飾namespaceで登録される。修飾名
+                        // `<filename>__命令` に加え、取り込み位置以降の無修飾
+                        // 命令もその dispatch へ写像する（allows_dynamicの
+                        // 恒等写像は使わない — 無修飾runtime登録はしない）。
+                        if (item.namespace) |source_namespace| {
+                            const dispatch = if (module.package_owner) |owner|
+                                try std.fmt.allocPrint(temp, "{s}:{s}", .{ owner, source_namespace })
+                            else
+                                source_namespace;
+                            var listed = false;
+                            for (dynamic_command_aliases.items) |existing| {
+                                if (!existing.unqualified and
+                                    std.mem.eql(u8, existing.source_namespace, source_namespace) and
+                                    std.mem.eql(u8, existing.dispatch_namespace, dispatch))
+                                {
+                                    listed = true;
+                                    break;
                                 }
                             }
-                        } else {
-                            allows_dynamic_commands = true;
-                            allows_dynamic_commands_from = @min(allows_dynamic_commands_from, item.span.start);
+                            if (!listed) {
+                                try dynamic_command_aliases.append(temp, .{
+                                    .source_namespace = source_namespace,
+                                    .dispatch_namespace = dispatch,
+                                    .import_position = item.span.start,
+                                });
+                                // 無修飾 catch-all: `外部追加` → `{owner}:{ns}__外部追加`
+                                try dynamic_command_aliases.append(temp, .{
+                                    .source_namespace = "",
+                                    .dispatch_namespace = dispatch,
+                                    .import_position = item.span.start,
+                                    .unqualified = true,
+                                });
+                            }
                         }
+                    } else {
+                        // owner無し（プロジェクトroot側）moduleの直接path
+                        // 取り込みは、native/ESM pluginとも無修飾名を実行時
+                        // 登録するため、import位置以降の未知命令を動的builtin
+                        // として許可する。
+                        allows_dynamic_commands = true;
+                        allows_dynamic_commands_from = @min(allows_dynamic_commands_from, item.span.start);
                     }
                 }
                 // 実効辺のみ取り込み位置での実行対象になる
