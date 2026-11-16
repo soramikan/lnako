@@ -6079,6 +6079,39 @@ test "AOT byte bufferの数値文字列キーはTypedArrayの要素規則に従�
     try std.testing.expectEqual(@as(f64, 7), valueToNumber(runtime.indexGet(roots[2], staticStringValue("2"))));
 }
 
+test "AOT byte bufferの要素設定はvalueOf中の再束縛とGCでもバッファを保持する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+    var roots = @as([3]Value, @splat(.{}));
+    var frame = RootFrame{};
+    active.pushRoots(&frame, &roots, roots.len);
+    defer active.popRoots(&frame);
+
+    roots[0] = try active.createBytes(&.{ 1, 2, 3, 4, 5 });
+    // `B[2] = O`のAOTルートスロットを模す。valueOfはこのスロットだけが
+    // バッファを参照している状態で`B`を再束縛し、明示的にGCを走らせる。
+    test_aot_gc_rebind_slot = &roots[0];
+    test_aot_gc_collected_during_value_of = null;
+    defer test_aot_gc_rebind_slot = null;
+
+    roots[1] = try active.createDictionary(&.{});
+    roots[2] = try active.createFunction(testAotRebindContainerAndCollect, 0, &.{});
+    try active.setDictionary(&roots[1].object().?.payload.dictionary, staticStringValue("valueOf"), roots[2]);
+
+    try active.indexSet(roots[0], staticStringValue("2"), roots[1]);
+
+    // 変換中にGCが走ってもコンテナはrootされていたため回収されない。
+    try std.testing.expectEqual(@as(usize, 0), test_aot_gc_collected_during_value_of.?);
+    // ToNumber後の書込みは再束縛前のバッファへ届く。
+    try std.testing.expectEqualSlices(u8, &.{ 1, 2, 7, 4, 5 }, roots[0].object().?.payload.byte_buffer.bytes);
+}
+
 test "AOT byte bufferの要素設定は無効添字でも右辺をToNumberする" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
@@ -7903,6 +7936,22 @@ pub fn testAotEven(out: *Value, _: *anyopaque, arguments: ?[*]const Value, len: 
         .{}
     else
         .{ .tag = @backingInt(Tag.boolean), .payload = @intFromBool(@mod(valueToNumber(arguments.?[0]), 2) == 0) };
+}
+
+/// `B[2] = O`のToNumber中に`B`を別値へ再束縛して明示的にGCを走らせる
+/// valueOf。AOTの`lnako_aot_index_set`はコンテナをrootしないため、
+/// `indexSet`側でroot保持していなければここでbyte bufferが回収される。
+var test_aot_gc_rebind_slot: ?*Value = null;
+var test_aot_gc_collected_during_value_of: ?usize = null;
+
+pub fn testAotRebindContainerAndCollect(out: *Value, _: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {
+    const runtime = &state.active_runtime.?;
+    const slot = test_aot_gc_rebind_slot.?;
+    const original = slot.*;
+    slot.* = .{};
+    test_aot_gc_collected_during_value_of = runtime.collect();
+    slot.* = original;
+    out.* = numberValue(7);
 }
 
 pub fn testAotCapturedIncrement(out: *Value, context: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {

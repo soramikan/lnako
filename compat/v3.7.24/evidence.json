@@ -16741,9 +16741,7 @@
         "native-system-array-callback-order",
         "native-system-array-callback-order-large",
         "native-system-array-to-primitive",
-        "native-system-byte-buffer-assignment-tonumber-order",
         "native-system-byte-buffer-backing-identity",
-        "native-system-byte-buffer-numeric-string-keys",
         "native-system-dictionary-to-primitive",
         "native-system-object-to-primitive-byte-prototype",
         "native-system-object-to-primitive-host-properties",
@@ -16780,13 +16778,7 @@
           "native-system-array-to-primitive": [
             "fixture.commands"
           ],
-          "native-system-byte-buffer-assignment-tonumber-order": [
-            "fixture.commands"
-          ],
           "native-system-byte-buffer-backing-identity": [
-            "fixture.commands"
-          ],
-          "native-system-byte-buffer-numeric-string-keys": [
             "fixture.commands"
           ],
           "native-system-dictionary-to-primitive": [
@@ -25956,13 +25948,11 @@
         "native-node-crypto",
         "native-node-path-type-errors",
         "native-system-array-fill-byte-buffer-json-clone",
-        "native-system-byte-buffer-assignment-tonumber-order",
         "native-system-byte-buffer-backing",
         "native-system-byte-buffer-backing-identity",
         "native-system-byte-buffer-direct-properties",
         "native-system-byte-buffer-method-calls",
         "native-system-byte-buffer-null-prototype",
-        "native-system-byte-buffer-numeric-string-keys",
         "native-system-byte-buffer-property",
         "native-system-dictionary-buffer-enumerable-properties",
         "native-system-dictionary-byte-buffer-enumeration",
@@ -25999,9 +25989,6 @@
           "native-system-array-fill-byte-buffer-json-clone": [
             "fixture.commands"
           ],
-          "native-system-byte-buffer-assignment-tonumber-order": [
-            "fixture.commands"
-          ],
           "native-system-byte-buffer-backing": [
             "fixture.commands",
             "implemented.tests"
@@ -26016,9 +26003,6 @@
             "fixture.commands"
           ],
           "native-system-byte-buffer-null-prototype": [
-            "fixture.commands"
-          ],
-          "native-system-byte-buffer-numeric-string-keys": [
             "fixture.commands"
           ],
           "native-system-byte-buffer-property": [
