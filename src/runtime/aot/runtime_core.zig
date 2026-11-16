@@ -986,9 +986,20 @@ pub const Runtime = struct {
             break :blk try self.createObject(.{ .function = .{ .callback = callback, .arity = arity, .name = owned_name, .captures = owned_captures, .promise_kind = promise_kind } }, .function);
         };
         if (register_global and shouldRegisterNamedFunction(name)) {
-            const registered_name = try self.allocator.dupe(u8, name);
-            errdefer self.allocator.free(registered_name);
-            try self.named_functions.append(self.allocator, .{ .name = registered_name, .object = result.object().? });
+            // Issue #73 の循環参照再展開では同じ修飾名の関数が複数回生成される。
+            // 末尾へ重複エントリを追加せず、既存エントリを後勝ちで更新して
+            // `resolveNamedFunctionValue` の完全一致解決を一意に保つ。
+            var updated_existing = false;
+            for (self.named_functions.items) |*registered| {
+                if (!std.mem.eql(u8, registered.name, name)) continue;
+                registered.object = result.object().?;
+                updated_existing = true;
+            }
+            if (!updated_existing) {
+                const registered_name = try self.allocator.dupe(u8, name);
+                errdefer self.allocator.free(registered_name);
+                try self.named_functions.append(self.allocator, .{ .name = registered_name, .object = result.object().? });
+            }
         }
         return result;
     }

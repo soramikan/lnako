@@ -199,6 +199,8 @@ const pathBuiltin = state.pathBuiltin;
 const pendingExceptionMessageUtf8Alloc = state.pendingExceptionMessageUtf8Alloc;
 const referenceBuiltin = state.referenceBuiltin;
 const regexpBuiltin = state.regexpBuiltin;
+const resolveAotCallback = state.resolveAotCallback;
+const resolveNamedFunctionValue = state.resolveNamedFunctionValue;
 const runtimeUtf8String = state.runtimeUtf8String;
 const safe_array_element_limit = state.safe_array_element_limit;
 const search_element_limit = state.search_element_limit;
@@ -4835,6 +4837,107 @@ test "AOT配列コールバックは関数値・名前解決と新配列規則�
     var filter_arguments = [_]Value{ staticStringValue("偶数判定関数"), roots[9] };
     roots[10] = try arrayCallbackBuiltin(active, .array_filter, &filter_arguments);
     try std.testing.expectEqualSlices(Value, &.{ numberValue(2), numberValue(4) }, (try arrayItems(roots[10])).items);
+}
+
+test "AOT名前付き関数の解決は完全一致をモジュールサフィックスより優先する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = @as([2]Value, @splat(.{}));
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createNamedFunction(testAotConstantSeven, 0, "foo", &.{});
+    roots[1] = try runtime.createNamedFunction(testAotDouble, 1, "mod__foo", &.{});
+
+    const exact = (try resolveNamedFunctionValue(&runtime, "foo")).?;
+    try std.testing.expectEqual(Tag.function, @as(Tag, @fromBackingInt(@intCast(exact.tag))));
+    try std.testing.expectEqual(roots[0].payload, exact.payload);
+    const suffixed = (try resolveNamedFunctionValue(&runtime, "mod__foo")).?;
+    try std.testing.expectEqual(roots[1].payload, suffixed.payload);
+}
+
+test "AOT同一修飾名の関数再登録は後勝ちで一件に保つ" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+    var roots = @as([4]Value, @splat(.{}));
+    var frame = RootFrame{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    roots[2] = try active.createArray(&.{numberValue(10)});
+    roots[0] = try active.createNamedFunction(testAotConstantSeven, 0, "mod__foo", &.{roots[2]});
+    roots[2] = .{};
+    roots[2] = try active.createArray(&.{numberValue(20)});
+    roots[1] = try active.createNamedFunction(testAotDouble, 1, "mod__foo", &.{roots[2]});
+    roots[2] = .{};
+    try std.testing.expectEqual(@as(usize, 1), active.named_functions.items.len);
+    try std.testing.expectEqual(@as(usize, 4), active.object_count);
+
+    // 旧関数のルートを外して GC しても、後勝ち登録の関数・capture・登録名は残る
+    roots[0] = .{};
+    _ = active.collect();
+    try std.testing.expectEqual(@as(usize, 1), active.named_functions.items.len);
+    try std.testing.expectEqual(@as(usize, 2), active.object_count);
+
+    const unqualified = (try resolveNamedFunctionValue(active, "foo")).?;
+    try std.testing.expectEqual(roots[1].payload, unqualified.payload);
+    const qualified = (try resolveNamedFunctionValue(active, "mod__foo")).?;
+    try std.testing.expectEqual(roots[1].payload, qualified.payload);
+
+    var argument = numberValue(6);
+    lnako_aot_function_call(&roots[3], &roots[1], @ptrCast(&argument), 1);
+    try std.testing.expect(!active.has_pending_exception);
+    try std.testing.expectEqual(@as(f64, 12), valueToNumber(roots[3]));
+
+    // 新関数のルートも外して GC すると、登録名と capture もすべて回収される
+    roots[1] = .{};
+    roots[3] = .{};
+    _ = active.collect();
+    try std.testing.expectEqual(@as(usize, 0), active.named_functions.items.len);
+    try std.testing.expectEqual(@as(usize, 0), active.object_count);
+    try std.testing.expectEqual(@as(?Value, null), try resolveNamedFunctionValue(active, "foo"));
+}
+
+test "AOT異なるモジュールの同名関数は曖昧として拒否する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = @as([2]Value, @splat(.{}));
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createNamedFunction(testAotConstantSeven, 0, "modA__foo", &.{});
+    roots[1] = try runtime.createNamedFunction(testAotDouble, 1, "modB__foo", &.{});
+
+    try std.testing.expectError(error.AmbiguousGlobal, resolveNamedFunctionValue(&runtime, "foo"));
+    try std.testing.expectError(error.AmbiguousGlobal, resolveAotCallback(&runtime, staticStringValue("foo")));
+    const first = (try resolveNamedFunctionValue(&runtime, "modA__foo")).?;
+    try std.testing.expectEqual(roots[0].payload, first.payload);
+    const second = (try resolveNamedFunctionValue(&runtime, "modB__foo")).?;
+    try std.testing.expectEqual(roots[1].payload, second.payload);
+}
+
+test "AOT名前付き関数のcallback解決は登録済みオブジェクトを再利用する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}};
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createNamedFunction(testAotDouble, 1, "module__二倍", &.{});
+    const first = try resolveAotCallback(&runtime, staticStringValue("二倍"));
+    const second = try resolveAotCallback(&runtime, staticStringValue("二倍"));
+    try std.testing.expectEqual(roots[0].payload, first.payload);
+    try std.testing.expectEqual(first.payload, second.payload);
+    try std.testing.expectError(error.UnknownFunction, resolveAotCallback(&runtime, staticStringValue("未登録関数")));
 }
 
 test "AOTカスタムソートの小配列比較順はV8のbinary insertion規則を保つ" {
