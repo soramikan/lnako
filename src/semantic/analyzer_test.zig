@@ -134,6 +134,48 @@ test "同名の関数定義はコード生成順の後勝ちで上書きする" 
     try std.testing.expectEqual(@as(usize, 1), f_symbols);
 }
 
+test "同名の通常関数とテスト関数は後勝ちで上書きせず二重定義にする" {
+    // 公式cnako v3.7.24は通常関数とテスト関数を別の名前空間へ登録する
+    // （●F と ●テスト:F を併記してもFの呼出しは通常関数を実行する）。
+    // lnakoは単一シンボル空間のため、異種同名を後勝ちで混ぜず、既存の
+    // 二重定義診断で止める。
+    const parser = @import("../frontend/parser.zig");
+    const cases = [_]struct {
+        source: []const u8,
+        path: []const u8,
+        qualified_name: []const u8,
+        kind: SymbolKind,
+        argument_count: usize,
+    }{
+        .{
+            .source = "●(Aの)Fとは\nAを表示\nここまで\n●テスト:Fとは\n「test」を表示\nここまで\nF(1)\n",
+            .path = "function-then-test.nako3",
+            .qualified_name = "function-then-test__F",
+            .kind = .function,
+            .argument_count = 1,
+        },
+        .{
+            .source = "●テスト:Fとは\n「test」を表示\nここまで\n●(Aの)Fとは\nAを表示\nここまで\nF(1)\n",
+            .path = "test-then-function.nako3",
+            .qualified_name = "test-then-function__F",
+            .kind = .test_function,
+            .argument_count = 0,
+        },
+    };
+    for (cases) |case| {
+        var parsed = try parser.parse(std.testing.allocator, case.source, case.path);
+        defer parsed.deinit();
+        var program = try analyze(std.testing.allocator, parsed.root.?, case.path);
+        defer program.deinit();
+        try std.testing.expect(!program.succeeded());
+        try std.testing.expectEqual(diagnostic.Code.duplicate_symbol, program.diagnostics[0].code);
+        // 先に宣言した側の kind・引数個数は後続の異種定義で書き換わらない。
+        const function = program.findSymbol(case.qualified_name) orelse return error.TestExpectedFunction;
+        try std.testing.expectEqual(case.kind, function.kind);
+        try std.testing.expectEqual(case.argument_count, function.argument_count);
+    }
+}
+
 test "入れ子の同名関数が確定済みの引数情報を上書きしない" {
     // predeclareModuleFunctions が最後の定義（ここではモジュール直下の
     // 1引数F）で arity・助詞を確定する。後続の入れ子定義の再宣言で

@@ -1271,11 +1271,10 @@ pub const Analyzer = struct {
             // 代入や反復による暗黙宣言は既存変数を再利用するが、
             // 変数/定数の明示定義は同名の再利用も公式同様に二重定義とする。
             if (!explicit_def and existing.kind == kind and (kind == .variable or kind == .loop_variable)) return existing.id;
-            // 公式のfunclist登録は後勝ち。同名関数は既存シンボルを再利用し、
-            // 最後の定義のarity・助詞へ揃える。
-            if (!explicit_def and
-                (kind == .function or kind == .test_function) and
-                (existing.kind == .function or existing.kind == .test_function))
+            // 公式のfunclist登録は同名関数で後勝ちだが、テスト定義は別の
+            // 名前空間なので、異種同士は再利用せず二重定義として診断する。
+            if (!explicit_def and kind == existing.kind and
+                (kind == .function or kind == .test_function))
             {
                 const symbol = &self.symbols.items[existing.id];
                 symbol.kind = kind;
