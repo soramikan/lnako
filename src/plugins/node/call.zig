@@ -236,7 +236,7 @@ test "ブラウザとファイルマネージャーの起動をホストへ委�
     try std.testing.expectEqualStrings("file.txt", host.last_target[0..host.last_target_length]);
 }
 
-test "一時フォルダの空指定はテンポラリパス自体を接頭辞にする" {
+test "一時フォルダ作成は省略・空指定をテンポラリ配下のnako-接頭辞へ解決する" {
     const TestHost = struct {
         seen: [64]u8 = undefined,
         seen_length: usize = 0,
@@ -263,12 +263,46 @@ test "一時フォルダの空指定はテンポラリパス自体を接頭辞�
         .temporary_directory = "/tmp/lnako-test",
         .createTemporaryDirectoryFn = TestHost.create,
     };
-    const empty = try runtime.stringUtf8("");
-    const result = (try call(&runtime, &state, context, null, "一時フォルダ作成", &.{empty})).?;
-    try std.testing.expectEqualStrings("/tmp/lnako-test", host.seen[0..host.seen_length]);
-    const result_utf8 = try result.string.toUtf8Lossy(std.testing.allocator);
-    defer std.testing.allocator.free(result_utf8);
-    try std.testing.expectEqualStrings("/tmp/lnako-testABC123", result_utf8);
+
+    {
+        const result = (try call(&runtime, &state, context, null, "一時フォルダ作成", &.{})).?;
+        try std.testing.expectEqualStrings("/tmp/lnako-test/nako-", host.seen[0..host.seen_length]);
+        const text = try result.string.toUtf8Lossy(std.testing.allocator);
+        defer std.testing.allocator.free(text);
+        try std.testing.expectEqualStrings("/tmp/lnako-test/nako-ABC123", text);
+    }
+    {
+        const empty = try runtime.stringUtf8("");
+        const result = (try call(&runtime, &state, context, null, "一時フォルダ作成", &.{empty})).?;
+        try std.testing.expectEqualStrings("/tmp/lnako-test/nako-", host.seen[0..host.seen_length]);
+        const text = try result.string.toUtf8Lossy(std.testing.allocator);
+        defer std.testing.allocator.free(text);
+        try std.testing.expectEqualStrings("/tmp/lnako-test/nako-ABC123", text);
+    }
+    {
+        const blank = try runtime.stringUtf8(" \t ");
+        const result = (try call(&runtime, &state, context, null, "一時フォルダ作成", &.{blank})).?;
+        try std.testing.expectEqualStrings("/tmp/lnako-test/nako-", host.seen[0..host.seen_length]);
+        const text = try result.string.toUtf8Lossy(std.testing.allocator);
+        defer std.testing.allocator.free(text);
+        try std.testing.expectEqualStrings("/tmp/lnako-test/nako-ABC123", text);
+    }
+    {
+        const null_value = shared.Value.null_value;
+        const result = (try call(&runtime, &state, context, null, "一時フォルダ作成", &.{null_value})).?;
+        try std.testing.expectEqualStrings("/tmp/lnako-test/nako-", host.seen[0..host.seen_length]);
+        const text = try result.string.toUtf8Lossy(std.testing.allocator);
+        defer std.testing.allocator.free(text);
+        try std.testing.expectEqualStrings("/tmp/lnako-test/nako-ABC123", text);
+    }
+    {
+        const prefix = try runtime.stringUtf8("work-");
+        const result = (try call(&runtime, &state, context, null, "一時フォルダ作成", &.{prefix})).?;
+        try std.testing.expectEqualStrings("work-", host.seen[0..host.seen_length]);
+        const text = try result.string.toUtf8Lossy(std.testing.allocator);
+        defer std.testing.allocator.free(text);
+        try std.testing.expectEqualStrings("work-ABC123", text);
+    }
 }
 
 test "尋は1行を標準入力から読み取る" {
