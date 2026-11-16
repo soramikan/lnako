@@ -52,6 +52,88 @@ test "グローバル・引数・組み込み命令を解決する" {
     try std.testing.expect(found_builtin);
 }
 
+test "関数内で定義した名前付き関数はモジュールスコープへ登録する" {
+    // 公式は入れ子の名前付き関数もfunclistへ登録するため、外側関数の外から
+    // 呼べる。本体の裸名は外側関数のローカル・仮引数ではなくモジュール変数
+    // へ解決される（字句的な入れ子スコープを持たない）。
+    const parser = @import("../frontend/parser.zig");
+    const source = "A=1\n●外とは\nAとは変数＝10\n●内とは\nAを表示\nここまで\n内\nここまで\n外\n内\n";
+    var parsed = try parser.parse(std.testing.allocator, source, "nested-scope.nako3");
+    defer parsed.deinit();
+    var program = try analyze(std.testing.allocator, parsed.root.?, "nested-scope.nako3");
+    defer program.deinit();
+    try std.testing.expect(program.succeeded());
+    const inner = program.findSymbol("nested-scope__内") orelse return error.TestExpectedInnerFunction;
+    try std.testing.expectEqual(SymbolKind.function, inner.kind);
+    try std.testing.expectEqual(analyzer.ScopeKind.module, program.scopes[inner.scope].kind);
+
+    // 本体のAはモジュール変数へ、内の呼出しは入れ子関数へ束縛される。
+    var body_reads_module_a = false;
+    for (program.bindings) |binding| {
+        if (binding.kind == .reference and std.mem.eql(u8, binding.name, "A") and
+            std.mem.eql(u8, binding.resolved_name, "nested-scope__A"))
+        {
+            body_reads_module_a = true;
+        }
+    }
+    try std.testing.expect(body_reads_module_a);
+    var inner_calls: usize = 0;
+    for (program.bindings) |binding| {
+        if (binding.kind == .call and std.mem.eql(u8, binding.resolved_name, "nested-scope__内")) inner_calls += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 2), inner_calls);
+
+    // 入れ子関数の本体スコープは外側関数ではなくモジュールを親にする。
+    var inner_scope_is_module_child = false;
+    for (program.function_scopes) |owner| {
+        if (!std.mem.eql(u8, owner.node.name, "内")) continue;
+        const parent = program.scopes[owner.scope].parent orelse continue;
+        if (program.scopes[parent].kind == .module) inner_scope_is_module_child = true;
+    }
+    try std.testing.expect(inner_scope_is_module_child);
+}
+
+test "取り込みモジュール内の入れ子関数を全モジュール解決前に宣言する" {
+    // 入れ子関数は外側関数の解決時ではなく、事前宣言走査でfunclistへ登録する。
+    // 他モジュールの参照は全入力の事前宣言後に解決されるため、この順序が
+    // 崩れると非修飾呼出しが未解決になる。
+    const parser = @import("../frontend/parser.zig");
+    var library = try parser.parse(std.testing.allocator, "●外とは\n●内とは\n1で戻る\nここまで\nここまで\n", "lib.nako3");
+    defer library.deinit();
+    var main = try parser.parse(std.testing.allocator, "内\n", "main.nako3");
+    defer main.deinit();
+    var program = try analyzeModules(std.testing.allocator, &.{
+        .{ .name = "main", .path = "main.nako3", .root = main.root.?, .marker_rank = 0 },
+        .{ .name = "lib", .path = "lib.nako3", .root = library.root.?, .marker_rank = 1 },
+    });
+    defer program.deinit();
+    try std.testing.expect(program.succeeded());
+    var imported_calls: usize = 0;
+    for (program.bindings) |binding| {
+        if (binding.kind == .call and std.mem.eql(u8, binding.resolved_name, "lib__内")) imported_calls += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 1), imported_calls);
+}
+
+test "同名の関数定義はコード生成順の後勝ちで上書きする" {
+    // 公式は関数定義をfunclistへ登録し、同名定義は後勝ちになる。lnakoも
+    // 単一シンボルを再利用し、助詞・引数個数を最後の定義へ揃える。
+    const parser = @import("../frontend/parser.zig");
+    const source = "●(Aの)Fとは\nAで戻る\nここまで\n●外とは\n●(AとBの)Fとは\nA+Bで戻る\nここまで\nここまで\n外\nF(2,3)を表示\n";
+    var parsed = try parser.parse(std.testing.allocator, source, "lastwins.nako3");
+    defer parsed.deinit();
+    var program = try analyze(std.testing.allocator, parsed.root.?, "lastwins.nako3");
+    defer program.deinit();
+    try std.testing.expect(program.succeeded());
+    const function = program.findSymbol("lastwins__F") orelse return error.TestExpectedFunction;
+    try std.testing.expectEqual(@as(usize, 2), function.argument_count);
+    var f_symbols: usize = 0;
+    for (program.symbols) |symbol| {
+        if (symbol.kind == .function and std.mem.eql(u8, symbol.name, "F")) f_symbols += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 1), f_symbols);
+}
+
 test "無名関数の代入は外側の可変束縛を解決する" {
     const parser = @import("../frontend/parser.zig");
     const source = "●(Aを)作るとは\nF=関数()\nA=A+1\nここまで\nFで戻る\nここまで\n";

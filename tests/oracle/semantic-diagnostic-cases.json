@@ -333,5 +333,15 @@
     "id": "semantic-diagnostic-unresolved-value-prop",
     "source": "[{x:1}].xが[1]を表示\n",
     "code": "unresolved_word"
+  },
+  {
+    "id": "semantic-diagnostic-assign-to-later-function",
+    "source": "F=1\n●Fとは\n1で戻る\nここまで\n",
+    "code": "assign_to_function"
+  },
+  {
+    "id": "semantic-diagnostic-assign-to-later-nested-function",
+    "source": "F=1\n●外とは\n●Fとは\n1で戻る\nここまで\nここまで\n",
+    "code": "assign_to_function"
   }
 ]

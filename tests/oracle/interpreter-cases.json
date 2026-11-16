@@ -888,5 +888,30 @@
   {
     "id": "range-loop-per-iteration-coercion-issue175",
     "source": "D={}\nD[\"valueOf\"]=関数()「call」と表示;それは2;ここまで\n1からDまで繰り返す\n「{それ}」を表示\nここまで\n1から「あ」まで繰り返す\n「x」を表示\nここまで\n「d1」を表示\n「あ」から3まで繰り返す\n「x」を表示\nここまで\n「d2」を表示\n1から3nまで繰り返す\n「{それ}」を表示\nここまで\n1から「3」まで繰り返す\n「{それ}」を表示\nここまで\nE={}\nE[\"valueOf\"]=関数()『range error』でエラー発生;ここまで\nエラー監視\n1からEまで繰り返す\nここまで\nエラーならば\n「捕捉:{エラーメッセージ}」を表示\nここまで\n"
+  },
+  {
+    "id": "nested-named-function-module-scope",
+    "source": "C=1\n●外とは\n　Cとは変数＝10\n　●(ダミーの)内とは\n　　Cを表示\n　ここまで\n　0の内\nここまで\n外\n"
+  },
+  {
+    "id": "nested-named-function-call-from-outside",
+    "source": "●外とは\n　●内とは\n　　「ok」を表示\n　ここまで\n　内\nここまで\n外\n内\n"
+  },
+  {
+    "id": "nested-named-function-ignores-outer-parameter",
+    "source": "A=1\n●(Aの)外とは\n　●内とは\n　　Aを表示\n　ここまで\n　内\nここまで\n0の外\n"
+  },
+  {
+    "id": "nested-named-function-last-wins",
+    "source": "●Fとは\n　「トップ」を表示\nここまで\n●外とは\n　●Fとは\n　　「内」を表示\n　ここまで\nここまで\n外\nF\n"
+  },
+  {
+    "id": "nested-named-function-in-anonymous",
+    "source": "●外とは\n　F=関数()\n　　●内とは\n　　　「内」を表示\n　　ここまで\n　ここまで\n　Fを実行\nここまで\n外\n内\n"
+  },
+  {
+    "id": "nested-named-function-imported",
+    "files": {"nested-lib.nako3": "●外とは\n　●内とは\n　　「lib内」を表示\n　ここまで\n　内\nここまで\n"},
+    "source": "!「./nested-lib.nako3」を取り込む\n内\n外\n"
   }
 ]

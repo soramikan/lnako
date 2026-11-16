@@ -312,6 +312,8 @@ pub const Analyzer = struct {
         }
         for (self.inputs, 0..) |_, index| try self.mod_list.append(self.allocator, @intCast(index));
         std.mem.sort(u32, self.mod_list.items, self, markerRankLess);
+        // 関数名は変数宣言より先にfunclistへ確定する。
+        for (self.inputs, 0..) |input, index| try self.predeclareModuleFunctions(input.root, @intCast(index));
         for (self.inputs, 0..) |input, index| try self.predeclareBlock(input.root, @intCast(index), self.modules.items[index].scope, true);
         for (self.inputs, 0..) |input, index| {
             self.active_import_entries = input.import_entries;
@@ -385,10 +387,7 @@ pub const Analyzer = struct {
         if (node.kind == .property_assignment)
             try self.property_assignment_order.put(self.allocator, node, self.stream_order);
         if (node.kind == .function_definition or node.kind == .test_definition) {
-            if (!expansion) {
-                const symbol_id = try self.declare(module_index, scope, node.name, if (node.kind == .test_definition) .test_function else .function, node.span, node.is_export, false, node.arguments.len, false);
-                try self.setParameterJosi(symbol_id, node.arguments);
-            }
+            if (!expansion) try self.declareModuleFunction(node, module_index);
             return;
         }
         if (node.kind == .anonymous_function) return;
@@ -487,27 +486,32 @@ pub const Analyzer = struct {
         for (node.children) |child| try self.predeclareBlockEx(child, module_index, scope, recurse and node.kind != .function_definition and node.kind != .test_definition and node.kind != .anonymous_function, expansion);
     }
 
+    /// 関数定義（入れ子・無名関数内を含む）をモジュールのfunclistへ
+    /// 宣言する。取り込み展開子は取り込み先モジュール自身が登録済み。
+    fn predeclareModuleFunctions(self: *Analyzer, node: *ast.Node, module_index: u32) anyerror!void {
+        switch (node.kind) {
+            .function_definition, .test_definition => try self.declareModuleFunction(node, module_index),
+            .import => return,
+            else => {},
+        }
+        for (node.children) |child| try self.predeclareModuleFunctions(child, module_index);
+    }
+
+    fn declareModuleFunction(self: *Analyzer, node: *ast.Node, module_index: u32) !void {
+        const module_scope = self.modules.items[module_index].scope;
+        const symbol_id = try self.declare(module_index, module_scope, node.name, if (node.kind == .test_definition) .test_function else .function, node.span, node.is_export, false, node.arguments.len, false);
+        try self.setParameterJosi(symbol_id, node.arguments);
+    }
+
     fn resolveBlock(self: *Analyzer, node: *ast.Node, module_index: u32, scope: ScopeId) !void {
         switch (node.kind) {
             .function_definition, .test_definition => {
-                // 関数内取り込みでインライン展開された定義は呼び出し元関数の
-                // スコープ内に置かれるが、公式では関数は取り込み先モジュールの
-                // 名前でグローバル登録される。字句スコープで見つからなければ
-                // 定義側モジュールの関数シンボル（mod__F相当）へ束縛する。
-                var declared: ?Symbol = null;
-                var def_current: ?ScopeId = scope;
-                while (def_current) |id| : (def_current = self.scopes.items[id].parent) {
-                    if (self.lookupLexical(id, node.name)) |symbol| {
-                        // 他モジュールのモジュールスコープへの一致は、展開
-                        // された定義が呼び出し元側の同名関数を指さないよう除外
-                        if (self.scopes.items[id].kind == .module and symbol.module_index != module_index) continue;
-                        declared = symbol;
-                        break;
-                    }
+                // 定義側モジュールの関数シンボルへ束縛し、本体の親も
+                // モジュールにする（外側関数のローカル・仮引数を見ない）。
+                if (self.lookupModule(module_index, node.name)) |symbol| {
+                    try self.bind(node, .declaration, node.name, symbol.qualified_name, symbol.id);
                 }
-                declared = declared orelse self.lookupModule(module_index, node.name);
-                if (declared) |symbol| try self.bind(node, .declaration, node.name, symbol.qualified_name, symbol.id);
-                const function_scope = try self.addScope(scope, module_index, .function);
+                const function_scope = try self.addScope(self.modules.items[module_index].scope, module_index, .function);
                 try self.function_scopes.append(self.allocator, .{ .node = node, .scope = function_scope });
                 try self.declareParameters(module_index, function_scope, node.arguments);
                 try self.declareImplicitArguments(module_index, function_scope, node.span);
@@ -1269,6 +1273,19 @@ pub const Analyzer = struct {
             // 代入や反復による暗黙宣言は既存変数を再利用するが、
             // 変数/定数の明示定義は同名の再利用も公式同様に二重定義とする。
             if (!explicit_def and existing.kind == kind and (kind == .variable or kind == .loop_variable)) return existing.id;
+            // 公式のfunclist登録は後勝ち。同名関数は既存シンボルを再利用し、
+            // 最後の定義のarity・助詞へ揃える。
+            if (!explicit_def and
+                (kind == .function or kind == .test_function) and
+                (existing.kind == .function or existing.kind == .test_function))
+            {
+                const symbol = &self.symbols.items[existing.id];
+                symbol.kind = kind;
+                symbol.span = span;
+                symbol.is_export = is_export;
+                symbol.argument_count = argument_count;
+                return existing.id;
+            }
             // 関数内の`引数`は公式が呼出しごとに用意する束縛であり、
             // ユーザーが同名を宣言しても上書きできる。明示宣言は同じローカルを
             // 上書きし、以降の代入検査は宣言されたkind/mutabilityで行う
@@ -1341,7 +1358,6 @@ pub const Analyzer = struct {
     /// 仮引数の助詞（宣言順）をシンボルへ記録する。公式`yCallFunc`の助詞補完で、
     /// 助詞呼出しの引数をどのスロットへ割り当てるかの判定に使う。
     fn setParameterJosi(self: *Analyzer, symbol_id: SymbolId, arguments: []const ast.Argument) !void {
-        if (arguments.len == 0) return;
         const symbol = &self.symbols.items[symbol_id];
         if (symbol.kind != .function and symbol.kind != .test_function) return;
         const josi = try self.allocator.alloc([]const u8, arguments.len);
