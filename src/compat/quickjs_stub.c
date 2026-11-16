@@ -25,6 +25,7 @@ LnakoQuickJsValue *lnako_qjs_bigint(LnakoQuickJs *engine, const char *decimal, s
 LnakoQuickJsValue *lnako_qjs_array(LnakoQuickJs *engine) { (void)engine; return 0; }
 LnakoQuickJsValue *lnako_qjs_object(LnakoQuickJs *engine) { (void)engine; return 0; }
 LnakoQuickJsValue *lnako_qjs_host_function(LnakoQuickJs *engine, uintptr_t function_id, uint64_t generation, const char *name) { (void)engine; (void)function_id; (void)generation; (void)name; return 0; }
+int lnako_qjs_host_function_slot(const LnakoQuickJsValue *value, uintptr_t *function_id, uint64_t *generation) { (void)value; (void)function_id; (void)generation; return 0; }
 void lnako_qjs_run_gc(LnakoQuickJs *engine) { (void)engine; }
 void lnako_qjs_set_memory_limit(LnakoQuickJs *engine, size_t limit) { (void)engine; (void)limit; }
 LnakoQuickJsValue *lnako_qjs_dup(const LnakoQuickJsValue *value) { (void)value; return 0; }
