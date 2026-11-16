@@ -204,16 +204,54 @@ try {
     }
   }
 
-  // `JSオブジェクト取得` の1引数形（公式のグローバル名解決）はAOTに変数bridgeが
-  // 無いため、compat AOTでは明示エラーにする（interpreterは公式互換のまま）。
-  const namedObjectSource = join(work, "compat-js-named-object.nako3");
-  writeFileSync(namedObjectSource, 'JSオブジェクト取得("X")を表示\n');
-  const namedObjectBinary = join(work, "compat-js-named-object");
-  runCompiler(namedObjectSource, namedObjectBinary, ["--compat-js", "--backend", "aot"]);
-  const namedObject = spawnSync(namedObjectBinary, [], { encoding: "utf8" });
-  if (namedObject.status === 0 || !`${namedObject.stdout}${namedObject.stderr}`.includes("requires a value and a property name")) {
-    fail(`JSオブジェクト取得の1引数形がAOTで明示エラーになりません: ${namedObject.stdout}${namedObject.stderr}`);
+  // Issue #55 Unit 2: `JSオブジェクト取得` の1引数形（公式のグローバル名解決）は
+  // AOTでも変数フレーム・動的グローバル・名前付き関数・システム定数を解決し、
+  // interpreterと完全一致する。QuickJSのglobalThisへはフォールバックしない
+  // （`JSオブジェクト取得("Math")` はnull）。ローカル・クロージャ・
+  // シャドーイング・未束縛ローカルのフォールバック・`それ`・例外巻戻し後の
+  // 外側ローカル・名前付き関数＋`JS関数実行`・システム定数・falsyの規則を
+  // 1つのfixtureで固定する。
+  const objectGetNameFixtures = [
+    [
+      "JSオブジェクト取得の1引数形（公式quirks）",
+      "compat-js-find-quirks.nako3",
+      "null\nnull\nnull\nnull\nnull",
+    ],
+    [
+      "JSオブジェクト取得の1引数形（basic fixture）",
+      "compat-js-basic.nako3",
+      "3\n[1,2,{\"x\":3}]\n5\n7\n5\n8\n123456789012345678901234567890",
+    ],
+    [
+      "JSオブジェクト取得の1引数形（ローカル・クロージャ・それ・例外・定数）",
+      "compat-js-object-get-name.nako3",
+      "10\n20\n3\n3\n2\n5\n1\n6\ncaught\n6\n7\n15\n42\ntrue\n3.141592653589793\n3.7.24\ncnako3\nnull\nnull\nnull\nnull\nnull\nnull\nnull",
+    ],
+  ];
+  for (const [index, [label, fixture, expected]] of objectGetNameFixtures.entries()) {
+    const fixturePath = join(root, "tests", "fixtures", fixture);
+    const interpreter = spawnSync(compiler, ["run", fixturePath, "--compat-js"], { encoding: "utf8" });
+    if (interpreter.status !== 0) {
+      fail(`${label}fixtureのインタプリタ実行が失敗しました: ${interpreter.stdout}${interpreter.stderr}`);
+    }
+    const binary = join(work, `compat-js-object-get-name-${index}`);
+    runCompiler(fixturePath, binary, ["--compat-js", "--backend", "aot"]);
+    const output = runBinary(binary);
+    expectEqual(output, interpreter.stdout.trim(), `${label}のAOT/インタプリタ一致`);
+    expectEqual(output, expected, `${label}の期待出力`);
   }
+  // AOTの `●DefAdd`（def_function）は同一の登録済みClosureを返すため、`===` が真になる
+  // （設計書 §5.1(2) / 公式cnako3準拠）。
+  const defIdentitySource = join(work, "compat-js-def-identity.nako3");
+  writeFileSync(
+    defIdentitySource,
+    '●DefAdd(AとBを)\n  それはA+B\nここまで\n(JSオブジェクト取得("DefAdd") === JSオブジェクト取得("DefAdd"))を表示\nJS関数実行(JSオブジェクト取得("DefAdd"),[4,9])を表示\n',
+  );
+  const defIdentityBinary = join(work, "compat-js-def-identity");
+  runCompiler(defIdentitySource, defIdentityBinary, ["--compat-js", "--backend", "aot"]);
+  expectEqual(runBinary(defIdentityBinary), "true\n13", "AOTの名前付き関数(def_function)同一性と呼出し");
+  // 1引数形の解決対象が無い場合の0引数・3引数以上の引数エラーは、上の
+  // `unsupportedObjectCases` でAOT/interpreter両方の明示エラーを固定済み。
 
   // `JS関数実行` の full 変換（ネスト配列・辞書、関数値、BigInt、bytes、循環、
   // 疎配列、Promise解決値）と、`JSオブジェクト取得` / `JSメソッド実行` の

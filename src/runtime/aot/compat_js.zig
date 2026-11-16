@@ -788,11 +788,34 @@ pub fn reportUnsupported(runtime: *state.Runtime, failure: anyerror, message: []
     }
 }
 
-/// `--compat-js` AOTの `JSオブジェクト取得(obj, key)`。lnako拡張の2引数形で、
-/// external bindingのJS参照（または共有変換規則で作ったJSコピー）のプロパティを
-/// 取得する。戻り値はプリミティブに加えて配列/辞書を再帰変換し、各配列/辞書へ
-/// external bindingを付与する（Promise・関数・BigInt・bytesは明示エラー）。
-/// 1引数形（公式のグローバル名解決）はAOTに変数bridgeが無いため明示エラーにする。
+/// `--compat-js` AOTの `JSオブジェクト取得` の1引数形（公式のグローバル名解決）。
+/// interpreter（compat/quickjs.zig）と同じ規則で、引数が関数値ならそのまま返し、
+/// それ以外は名前としてUTF-8へ変換して `Runtime.aotCompatResolve` で解決する。
+/// 解決結果は真偽値フィルタを通し、未解決・falsyはNakoの`null`にする。
+/// QuickJSの `globalThis[name]` へのフォールバックはしない（公式の
+/// `JSオブジェクト取得("Math")` がnullになる規則に合わせる）。
+fn objectGetByName(runtime: *state.Runtime, requested: Value) Value {
+    if (requested.tag == @backingInt(Tag.function)) return requested;
+    const name = propertyNameZ(runtime, requested) catch |failure| {
+        setFailureUnlessReported(runtime, failure);
+        return .{};
+    };
+    defer runtime.allocator.free(name);
+    const resolved = runtime.aotCompatResolve(name) catch |failure| {
+        setFailureUnlessReported(runtime, failure);
+        return .{};
+    };
+    if (resolved) |value| {
+        if (state.valueTruthy(value)) return value;
+    }
+    return .{ .tag = @backingInt(Tag.null_value) };
+}
+
+/// `--compat-js` AOTの `JSオブジェクト取得`。1引数形は公式のグローバル名解決、
+/// 2引数形はlnako拡張で、external bindingのJS参照（または共有変換規則で作った
+/// JSコピー）のプロパティを取得する。2引数形の戻り値はプリミティブに加えて
+/// 配列/辞書を再帰変換し、各配列/辞書へexternal bindingを付与する
+/// （Promise・関数・BigInt・bytesは明示エラー）。
 pub export fn lnako_aot_compat_js_object_get(out: *Value, arguments: ?[*]const Value, count: usize) callconv(.c) void {
     out.* = .{};
     const runtime = if (state.active_runtime) |*active| active else return;
@@ -800,7 +823,7 @@ pub export fn lnako_aot_compat_js_object_get(out: *Value, arguments: ?[*]const V
     const trace_call_id = runtime.dispatch_trace.begin("JSオブジェクト取得", compat_js_object_get_opcode, "JSオブジェクト取得", 0);
     var trace_success = false;
     defer runtime.dispatch_trace.result(trace_call_id, "JSオブジェクト取得", compat_js_object_get_opcode, "JSオブジェクト取得", 0, trace_success);
-    if (count < 2 or arguments == null) {
+    if (count == 0 or arguments == null) {
         runtime.setFailureText("JSオブジェクト取得 requires a value and a property name");
         return;
     }
@@ -815,6 +838,13 @@ pub export fn lnako_aot_compat_js_object_get(out: *Value, arguments: ?[*]const V
     };
     defer runtime.allocator.free(rooted);
     defer runtime.popRoots(&frame);
+    if (count == 1) {
+        // 1引数形はQuickJSを必要としない（変数bridgeだけを解決する）ため、
+        // ここで `ensureEngine()` を呼ばない。
+        out.* = objectGetByName(runtime, rooted[0]);
+        trace_success = runtime.failure_epoch == failure_epoch_at_entry;
+        return;
+    }
     const engine_value = ensureEngine() catch |failure| {
         setFailureUnlessReported(runtime, failure);
         return;

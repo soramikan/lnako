@@ -691,9 +691,207 @@ test "compat AOT runtimeはJSオブジェクト取得をexternal binding経由�
     try std.testing.expect(!state.active_runtime.?.has_pending_exception);
     try std.testing.expectEqual(@as(f64, 1), @as(f64, @bitCast(out.payload)));
 
-    // 1引数形（公式のグローバル名解決）はAOTに変数bridgeが無いため明示エラー。
-    lnako_aot_compat_js_object_get(&out, values[0..1], 1);
+    // 0引数形だけが「値とプロパティ名」のエラーになる。1引数形（公式の
+    // グローバル名解決）はAOTでも解決できる（Unit 2）。
+    lnako_aot_compat_js_object_get(&out, values[0..0], 0);
     try expectPendingFailureContains(&state.active_runtime.?, "requires a value and a property name");
+    // 3引数以上は従来どおりプロパティ名のみのエラーになる。
+    var too_many = [_]Value{ values[0], values[1], values[1] };
+    lnako_aot_compat_js_object_get(&out, &too_many, too_many.len);
+    try expectPendingFailureContains(&state.active_runtime.?, "accepts a value and a property name only");
+}
+
+// Issue #55 Unit 2: 1引数 `JSオブジェクト取得` の名前解決fixture。
+// 1引数形はQuickJS engineを必要としないため、通常buildのテストでも実行する。
+fn doubleFunction(out: *Value, _: *anyopaque, arguments: ?[*]const Value, count: usize) callconv(.c) void {
+    out.* = .{};
+    if (count == 0) return;
+    const number: f64 = @bitCast(arguments.?[0].payload);
+    out.* = state.numberValue(number * 2);
+}
+
+fn expectObjectGetResolved(runtime: *state.Runtime, argument: Value, expected_tag: u8, expected_payload: u64) !void {
+    var out: Value = .{};
+    var values = [_]Value{argument};
+    lnako_aot_compat_js_object_get(&out, &values, 1);
+    try std.testing.expect(!runtime.has_pending_exception);
+    try std.testing.expectEqual(expected_tag, out.tag);
+    try std.testing.expectEqual(expected_payload, out.payload);
+}
+
+fn expectObjectGetNull(runtime: *state.Runtime, argument: Value) !void {
+    try expectObjectGetResolved(runtime, argument, @backingInt(Tag.null_value), 0);
+}
+
+test "compat AOT runtimeはJSオブジェクト取得の1引数形で関数値をそのまま返す" {
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    var roots = [_]Value{.{}};
+    var frame: state.RootFrame = .{};
+    pushTestRoots(&state.active_runtime.?, &frame, &roots);
+    defer state.active_runtime.?.popRoots(&frame);
+
+    // 関数値は名前解決せず、そのまま返す（interpreterの `requested == .function`）。
+    roots[0] = try state.active_runtime.?.createFunction(noopFunction, 0, &.{});
+    var out: Value = .{};
+    var values = [_]Value{roots[0]};
+    lnako_aot_compat_js_object_get(&out, &values, 1);
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    try std.testing.expectEqual(roots[0].tag, out.tag);
+    try std.testing.expectEqual(roots[0].payload, out.payload);
+}
+
+test "compat AOT runtimeはJSオブジェクト取得の1引数形で変数フレームと名前付き関数を解決する" {
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+    var storage = [_]Value{
+        state.numberValue(1), // outer 共有
+        state.numberValue(2), // inner 共有
+        Value.unboundValue(), // inner 未束縛
+        state.numberValue(7), // outer 未束縛
+        .{}, // inner セル
+        .{}, // named function F
+    };
+    var roots = [_]Value{ .{}, .{}, .{} };
+    var storage_frame: state.RootFrame = .{};
+    var roots_frame: state.RootFrame = .{};
+    active.pushRoots(&storage_frame, &storage, storage.len);
+    active.pushRoots(&roots_frame, &roots, roots.len);
+    defer active.popRoots(&roots_frame);
+    defer active.popRoots(&storage_frame);
+    storage[4] = try active.createBindingCell(state.numberValue(42));
+    storage[5] = try active.createNamedFunction(doubleFunction, 1, "F", &.{});
+    var outer_entries = [_]state.AotVarEntry{
+        .{ .name_ptr = "共有".ptr, .name_len = "共有".len },
+        .{ .name_ptr = "未束縛".ptr, .name_len = "未束縛".len },
+    };
+    var outer_slots = [_]*const Value{ &storage[0], &storage[3] };
+    var inner_entries = [_]state.AotVarEntry{
+        .{ .name_ptr = "共有".ptr, .name_len = "共有".len },
+        .{ .name_ptr = "未束縛".ptr, .name_len = "未束縛".len },
+        .{ .name_ptr = "セル".ptr, .name_len = "セル".len },
+    };
+    var inner_slots = [_]*const Value{ &storage[1], &storage[2], &storage[4] };
+
+    var outer_frame: state.AotVarFrame = .{};
+    active.pushVarFrame(&outer_frame, &outer_entries, outer_entries.len, &outer_slots);
+    defer active.popVarFrame(&outer_frame);
+    // フレームが無い/外側だけの状態から解決する。
+    try expectObjectGetResolved(active, try testString(active, "共有"), @backingInt(Tag.number), @bitCast(@as(f64, 1)));
+    try expectObjectGetResolved(active, try testString(active, "未束縛"), @backingInt(Tag.number), @bitCast(@as(f64, 7)));
+
+    var inner_frame: state.AotVarFrame = .{};
+    active.pushVarFrame(&inner_frame, &inner_entries, inner_entries.len, &inner_slots);
+    // 内側の束縛が外側をシャドーイングする。
+    try expectObjectGetResolved(active, try testString(active, "共有"), @backingInt(Tag.number), @bitCast(@as(f64, 2)));
+    // 未束縛の内側ローカルは外側の束縛済み値へフォールバックする。
+    try expectObjectGetResolved(active, try testString(active, "未束縛"), @backingInt(Tag.number), @bitCast(@as(f64, 7)));
+    // クロージャcaptureのBindingCellは値をアンラップして返す。
+    try expectObjectGetResolved(active, try testString(active, "セル"), @backingInt(Tag.number), @bitCast(@as(f64, 42)));
+
+    // 名前付き関数は同じClosureオブジェクトを繰り返し返し、JS関数実行で呼べる。
+    var first: Value = .{};
+    var first_values = [_]Value{try testString(active, "F")};
+    lnako_aot_compat_js_object_get(&first, &first_values, 1);
+    try std.testing.expect(!active.has_pending_exception);
+    var second: Value = .{};
+    var second_values = [_]Value{try testString(active, "F")};
+    lnako_aot_compat_js_object_get(&second, &second_values, 1);
+    try std.testing.expect(!active.has_pending_exception);
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.function)), first.tag);
+    try std.testing.expectEqual(first.tag, second.tag);
+    try std.testing.expectEqual(first.payload, second.payload);
+
+    var call_values = [_]Value{ first, .{} };
+    var call_roots = [_]Value{ first, .{} };
+    var call_frame: state.RootFrame = .{};
+    active.pushRoots(&call_frame, &call_roots, call_roots.len);
+    defer active.popRoots(&call_frame);
+    var call_argument = [_]Value{state.numberValue(4)};
+    state.lnako_aot_array_new(&call_values[1], &call_argument, call_argument.len);
+    call_roots[1] = call_values[1];
+    var call_out: Value = .{};
+    lnako_aot_compat_js_call(&call_out, &call_values, call_values.len);
+    try std.testing.expect(!active.has_pending_exception);
+    try std.testing.expectEqual(@as(f64, 8), @as(f64, @bitCast(call_out.payload)));
+
+    // 例外巻戻し相当のpopの後は、内側の名前が外側／グローバルへ落ちる。
+    // 重複popはLIFOを壊さず、外側フレームの値とそれ以外を保つ。
+    active.popVarFrame(&inner_frame);
+    active.popVarFrame(&inner_frame);
+    try expectObjectGetResolved(active, try testString(active, "共有"), @backingInt(Tag.number), @bitCast(@as(f64, 1)));
+    try expectObjectGetNull(active, try testString(active, "セル"));
+    active.popVarFrame(&outer_frame);
+    try expectObjectGetNull(active, try testString(active, "共有"));
+    // pop後の名前付き関数はグローバルとして引き続き解決できる。
+    try expectObjectGetResolved(active, try testString(active, "F"), first.tag, first.payload);
+}
+
+test "compat AOT runtimeはJSオブジェクト取得の1引数形で動的グローバルと真偽値規則を解決する" {
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+
+    // 完全一致と `{module}__{name}` サフィックス。
+    try state.upsertDynamicGlobal(active, "完全一致", state.numberValue(3));
+    try state.upsertDynamicGlobal(active, "modA__接尾辞", state.numberValue(4));
+    try expectObjectGetResolved(active, try testString(active, "完全一致"), @backingInt(Tag.number), @bitCast(@as(f64, 3)));
+    try expectObjectGetResolved(active, try testString(active, "接尾辞"), @backingInt(Tag.number), @bitCast(@as(f64, 4)));
+
+    // 異なるモジュールの同名サフィックスは曖昧性エラーとして伝播する。
+    try state.upsertDynamicGlobal(active, "modB__接尾辞", state.numberValue(5));
+    var ambiguous: Value = .{};
+    var ambiguous_values = [_]Value{try testString(active, "接尾辞")};
+    lnako_aot_compat_js_object_get(&ambiguous, &ambiguous_values, 1);
+    try expectPendingFailureContains(active, "AmbiguousGlobal");
+
+    // falsyな値・null・undefined・未解決の名前はNakoのnullになる。
+    try state.upsertDynamicGlobal(active, "ゼロ", state.numberValue(0));
+    try state.upsertDynamicGlobal(active, "偽", .{ .tag = @backingInt(Tag.boolean), .payload = 0 });
+    try state.upsertDynamicGlobal(active, "空文字", try testString(active, ""));
+    try state.upsertDynamicGlobal(active, "ヌル", .{ .tag = @backingInt(Tag.null_value) });
+    try state.upsertDynamicGlobal(active, "未定義値", .{});
+    try expectObjectGetNull(active, try testString(active, "ゼロ"));
+    try expectObjectGetNull(active, try testString(active, "偽"));
+    try expectObjectGetNull(active, try testString(active, "空文字"));
+    try expectObjectGetNull(active, try testString(active, "ヌル"));
+    try expectObjectGetNull(active, try testString(active, "未定義値"));
+    try expectObjectGetNull(active, try testString(active, "存在しない"));
+    // QuickJSのglobalThisへはフォールバックしない。
+    try expectObjectGetNull(active, try testString(active, "Math"));
+
+    // 非文字列キーはpropertyNameZで文字列化してから解決する。
+    try state.upsertDynamicGlobal(active, "123", state.numberValue(77));
+    try expectObjectGetResolved(active, state.numberValue(123), @backingInt(Tag.number), @bitCast(@as(f64, 77)));
+    try expectObjectGetNull(active, try testString(active, "undefined"));
+
+    // システム定数（真値はそのまま、falsyはnull）。
+    try expectObjectGetResolved(active, try testString(active, "PI"), @backingInt(Tag.number), @bitCast(@as(f64, std.math.pi)));
+    const version = try testString(active, "ナデシコバージョン");
+    var version_out: Value = .{};
+    var version_values = [_]Value{version};
+    lnako_aot_compat_js_object_get(&version_out, &version_values, 1);
+    try std.testing.expect(!active.has_pending_exception);
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.utf16_string)), version_out.tag);
+    try std.testing.expectEqualSlices(u16, &.{ '3', '.', '7', '.', '2', '4' }, version_out.object().?.payload.utf16_string);
+    try expectObjectGetNull(active, try testString(active, "AJAX:ONERROR"));
+    try expectObjectGetNull(active, try testString(active, "未定義"));
 }
 
 test "compat AOT runtimeはJSメソッド実行をexternal binding経由でdispatchする" {
