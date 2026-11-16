@@ -1876,6 +1876,14 @@
     "source": "B=ハッシュ値計算(\"A\",\"sha256\",undefined)\nB[\"2\"]=88\nB[2]=66\nB[\"99\"]=7\nB[\"02\"]=7\nB[\"-1\"]=7\nB[\"1.5\"]=7\nB[\"-0\"]=7\nB[\"2.0\"]=7\nB[\"1e3\"]=7\nB[\"\"]=7\nB[\"4294967295\"]=7\nB[\"2\"]を表示\nB[2]を表示\nBを反復\n  対象を表示\nここまで\n"
   },
   {
+    "id": "native-system-byte-buffer-assignment-tonumber-order",
+    "commands": [
+      "ハッシュ値計算",
+      "表示"
+    ],
+    "source": "N=0\nF=関数()\n  N=N+1\n  それは7\nここまで\nO={}\nO[\"valueOf\"]=F\nB=ハッシュ値計算(\"A\",\"sha256\",undefined)\nB[\"99\"]=O\nB[\"-1\"]=O\nB[\"NaN\"]=O\nB[99]=O\nB[-1]=O\nB[1.5]=O\nB[\"02\"]=O\n「{N}」を表示\nB[2]=O\n「{N}:{B[2]}」を表示\nエラー監視\nB[\"-1\"]=1n\nエラーならば\n「e1:{エラーメッセージ}」を表示\nここまで\nエラー監視\nB[99]=1n\nエラーならば\n「e2:{エラーメッセージ}」を表示\nここまで\nエラー監視\nB[\"-0\"]=1n\nエラーならば\n「e3:{エラーメッセージ}」を表示\nここまで\n「{N}」を表示\n"
+  },
+  {
     "id": "native-system-byte-buffer-direct-properties",
     "commands": [
       "表列取得",

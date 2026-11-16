@@ -186,11 +186,7 @@ pub fn indexSet(self: *Runtime, container: Value, key: Value, value: Value) !voi
         },
         .byte_buffer => |*buffer| {
             if (buffer.kind != .array_buffer) if (valueIndex(key)) |index| {
-                const number = try valueToNumberRuntime(self, value);
-                const byte: u8 = if (!std.math.isFinite(number) or number == 0)
-                    0
-                else
-                    @intFromFloat(@mod(@trunc(number), 256));
+                const byte = try aotByteElement(self, value);
                 if (index < buffer.bytes.len) buffer.bytes[index] = byte;
                 return;
             };
@@ -207,17 +203,19 @@ pub fn indexSet(self: *Runtime, container: Value, key: Value, value: Value) !voi
             if (buffer.kind != .array_buffer) {
                 switch (try typed_array_key.classifyAlloc(key_units, self.allocator)) {
                     .index => |index| {
+                        // ECMAScriptのIntegerIndexedElementSetは添字の
+                        // 有効性より先に右辺をToNumberする。範囲外でも
+                        // valueOfの副作用とBigIntのTypeErrorを観測できる。
+                        const byte = try aotByteElement(self, value);
                         const position = std.math.cast(usize, index) orelse return;
-                        if (position >= buffer.bytes.len) return;
-                        const number = try valueToNumberRuntime(self, value);
-                        const byte: u8 = if (!std.math.isFinite(number) or number == 0)
-                            0
-                        else
-                            @intFromFloat(@mod(@trunc(number), 256));
-                        buffer.bytes[position] = byte;
+                        if (position < buffer.bytes.len) buffer.bytes[position] = byte;
                         return;
                     },
-                    .ignored => return,
+                    .ignored => {
+                        // 無効添字でもToNumberだけは実行する（副作用の観測）。
+                        _ = try aotByteElement(self, value);
+                        return;
+                    },
                     .property => {},
                 }
             }
@@ -234,6 +232,13 @@ pub fn indexSet(self: *Runtime, container: Value, key: Value, value: Value) !voi
         .promise => try setAotOwnProperty(self, container, object, key, value),
         .utf16_string, .bigint, .iterator, .binding_cell => {},
     }
+}
+
+/// TypedArrayの要素設定が最初に行う右辺の数値変換。無効な添字でも
+/// `valueOf`の副作用やBigIntの例外を公式と同じ順序で観測するために、
+/// 添字の有効性判定とは独立して呼ぶ。
+fn aotByteElement(self: *Runtime, value: Value) !u8 {
+    return typed_array_key.byteFromNumber(try valueToNumberRuntime(self, value));
 }
 
 pub fn setAotOwnProperty(self: *Runtime, container: Value, object: *Object, key: Value, value: Value) !void {

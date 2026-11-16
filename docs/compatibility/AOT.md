@@ -41,10 +41,10 @@
 ## Buffer・TypedArray・ArrayBuffer
 
 - 公式実測・source根拠: Bufferはviewとして `parent`・`offset`・numeric index・prototype methodを持ち、`slice`はstorageを共有します。Uint8ArrayとArrayBufferはslice、length、prototype、own propertyが異なります。custom `__proto__` は標準propertyの可視性を変えます。
-- lnakoの現在動作: 3種のbyte buffer family、numeric index、view共有、prototype代表値、null prototype境界をAOTへ接続します。正準数値文字列キーはTypedArrayの要素書き込みとして扱い、範囲外・負数・小数・NaN・Infinityはno-op、`"02"`や`"2.0"`のような非正準名はown propertyにします。receiver未束縛のmethod call、descriptor、全view identityは未検証境界として残します。
+- lnakoの現在動作: 3種のbyte buffer family、numeric index、view共有、prototype代表値、null prototype境界をAOTへ接続します。正準数値文字列キーはTypedArrayの要素書き込みとして扱い、範囲外・負数・小数・NaN・Infinityは右辺をToNumberしたうえでno-op、`"02"`や`"2.0"`のような非正準名はown propertyにします。receiver未束縛のmethod call、descriptor、全view identityは未検証境界として残します。
 - 判定: 仕様／未実装境界
 - 対象経路: Interpreter / AOT
-- 差分テストID: `native-system-byte-buffer-direct-properties`、`native-system-byte-buffer-null-prototype`、`native-system-byte-buffer-backing`、`native-system-byte-buffer-method-calls`、`native-system-byte-buffer-numeric-string-keys`
+- 差分テストID: `native-system-byte-buffer-direct-properties`、`native-system-byte-buffer-null-prototype`、`native-system-byte-buffer-backing`、`native-system-byte-buffer-method-calls`、`native-system-byte-buffer-numeric-string-keys`、`native-system-byte-buffer-assignment-tonumber-order`
 - TODO識別子: `TODO: aot-byte-buffer-value`
 
 ## AOTのToPrimitive
