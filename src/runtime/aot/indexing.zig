@@ -184,13 +184,25 @@ pub fn indexSet(self: *Runtime, container: Value, key: Value, value: Value) !voi
             }
             try setDictionary(self, entries, rooted[1], rooted[2]);
         },
-        .byte_buffer => |*buffer| {
-            if (buffer.kind != .array_buffer) if (valueIndex(key)) |index| {
-                const byte = try aotByteElement(self, value);
+        .byte_buffer => {
+            // `aotByteElement`のToNumberは右辺の`valueOf`を呼ぶため、その
+            // 中で`B = {}`のようにコンテナが再束縛されると、AOTのルート
+            // スロットは元のバッファを指さなくなる。`lnako_aot_index_set`
+            // はコンテナをrootしていないので、変換中にGCが走ると
+            // `buffer`が解放済みメモリを指し、直後の書込みがUAFになる。
+            // 書込みより前にコンテナ・キー・値をroot保持し、バッファは
+            // root済みの値から引き直して使う。
+            var rooted = [_]Value{ container, key, value };
+            var frame = RootFrame{};
+            self.pushRoots(&frame, &rooted, rooted.len);
+            defer self.popRoots(&frame);
+            const buffer = &rooted[0].object().?.payload.byte_buffer;
+            if (buffer.kind != .array_buffer) if (valueIndex(rooted[1])) |index| {
+                const byte = try aotByteElement(self, rooted[2]);
                 if (index < buffer.bytes.len) buffer.bytes[index] = byte;
                 return;
             };
-            const key_units = valueUtf16Alloc(self, key) catch |failure| {
+            const key_units = valueUtf16Alloc(self, rooted[1]) catch |failure| {
                 self.setFailure(failure);
                 return failure;
             };
@@ -206,14 +218,14 @@ pub fn indexSet(self: *Runtime, container: Value, key: Value, value: Value) !voi
                         // ECMAScriptのIntegerIndexedElementSetは添字の
                         // 有効性より先に右辺をToNumberする。範囲外でも
                         // valueOfの副作用とBigIntのTypeErrorを観測できる。
-                        const byte = try aotByteElement(self, value);
+                        const byte = try aotByteElement(self, rooted[2]);
                         const position = std.math.cast(usize, index) orelse return;
                         if (position < buffer.bytes.len) buffer.bytes[position] = byte;
                         return;
                     },
                     .ignored => {
                         // 無効添字でもToNumberだけは実行する（副作用の観測）。
-                        _ = try aotByteElement(self, value);
+                        _ = try aotByteElement(self, rooted[2]);
                         return;
                     },
                     .property => {},
@@ -222,11 +234,11 @@ pub fn indexSet(self: *Runtime, container: Value, key: Value, value: Value) !voi
             if (std.mem.eql(u16, key_units, &.{ '_', '_', 'p', 'r', 'o', 't', 'o', '_', '_' }) and
                 aotObjectOwnPropertyGetUnits(self, object, key_units) == null)
             {
-                if (value.tag == @backingInt(Tag.null_value) or value.object() != null) object.prototype = value;
+                if (rooted[2].tag == @backingInt(Tag.null_value) or rooted[2].object() != null) object.prototype = rooted[2];
                 return;
             }
             if (aotByteBufferReadOnlyProperty(buffer.kind, key_units)) return;
-            try setAotOwnProperty(self, container, object, key, value);
+            try setAotOwnProperty(self, rooted[0], object, rooted[1], rooted[2]);
         },
         .function => try setAotFunctionProperty(self, container, object, key, value),
         .promise => try setAotOwnProperty(self, container, object, key, value),
