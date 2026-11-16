@@ -990,6 +990,181 @@ const BeforeGlobalsSnapshot = struct {
     }
 };
 
+fn sameShallowDynamicValue(left: dynamic_value.Value, right: dynamic_value.Value) bool {
+    if (std.meta.activeTag(left) != std.meta.activeTag(right)) return false;
+    return switch (left) {
+        .undefined, .null_value => true,
+        .boolean => |value| value == right.boolean,
+        .number => |value| @as(u64, @bitCast(value)) == @as(u64, @bitCast(right.number)),
+        .bigint => |value| dynamic_value.BigInt.eql(value.*, right.bigint.*),
+        .string => |value| dynamic_value.String.eql(value.*, right.string.*),
+        .bytes => |value| value.kind == right.bytes.kind and std.mem.eql(u8, value.bytes, right.bytes.bytes),
+        .array => |value| value == right.array,
+        .dictionary => |value| value == right.dictionary,
+        .function => |value| value == right.function,
+        .promise => |value| value == right.promise,
+    };
+}
+
+const ArraySnapshot = struct {
+    prototype: dynamic_value.Value,
+    items: []dynamic_value.Value,
+    presence: []bool,
+    properties: []dynamic_value.ArrayProperty,
+
+    fn deinit(self: *ArraySnapshot, allocator: std.mem.Allocator) void {
+        allocator.free(self.items);
+        allocator.free(self.presence);
+        allocator.free(self.properties);
+    }
+};
+
+const DictSnapshot = struct {
+    keys: []*dynamic_value.String,
+    values: []dynamic_value.Value,
+
+    fn deinit(self: *DictSnapshot, allocator: std.mem.Allocator) void {
+        allocator.free(self.keys);
+        allocator.free(self.values);
+    }
+};
+
+const ContainerSnapshot = union(enum) {
+    array: ArraySnapshot,
+    dictionary: DictSnapshot,
+
+    fn deinit(self: *ContainerSnapshot, allocator: std.mem.Allocator) void {
+        switch (self.*) {
+            .array => |*arr| arr.deinit(allocator),
+            .dictionary => |*dict| dict.deinit(allocator),
+        }
+    }
+};
+
+/// 呼出し前の動的コンテナ（配列・辞書）の浅い内容をスナップショットし、
+/// 呼出し中も値が GC で解放・再利用されないようルート保護する。
+/// 動的側が未変更のままなら、AOT callback が加えた変更を書き戻しで上書きしない。
+const BeforeContainersSnapshot = struct {
+    state: *DynamicInterpreterState,
+    entries: std.AutoHashMapUnmanaged(usize, ContainerSnapshot) = .empty,
+    holder: dynamic_value.Value = .undefined,
+    roots: dynamic_value.RootFrame,
+
+    fn init(state: *DynamicInterpreterState) BeforeContainersSnapshot {
+        return .{
+            .state = state,
+            .roots = state.value_runtime.rootFrame(),
+        };
+    }
+
+    fn capture(self: *BeforeContainersSnapshot, aot_to_dyn: *const AotToDynamicCache) !void {
+        if (aot_to_dyn.containers.items.len == 0) return;
+        const allocator = self.state.allocator;
+        self.holder = try self.state.value_runtime.createArray();
+        try self.roots.protect(&self.holder);
+        for (aot_to_dyn.containers.items) |pair| {
+            switch (pair.dynamic) {
+                .array => |arr| {
+                    const ptr = @intFromPtr(arr);
+                    if (self.entries.contains(ptr)) continue;
+                    _ = try self.holder.array.push(pair.dynamic);
+                    _ = try self.holder.array.push(arr.prototype);
+                    const items = try allocator.dupe(dynamic_value.Value, arr.items.items);
+                    errdefer allocator.free(items);
+                    const presence = try allocator.alloc(bool, arr.items.items.len);
+                    errdefer allocator.free(presence);
+                    for (0..arr.items.items.len) |index| {
+                        presence[index] = arr.isPresent(index);
+                        _ = try self.holder.array.push(items[index]);
+                    }
+                    const properties = try allocator.dupe(dynamic_value.ArrayProperty, arr.properties.items);
+                    errdefer allocator.free(properties);
+                    for (properties) |prop| {
+                        _ = try self.holder.array.push(.{ .string = prop.key });
+                        _ = try self.holder.array.push(prop.value);
+                    }
+                    try self.entries.put(allocator, ptr, .{ .array = .{
+                        .prototype = arr.prototype,
+                        .items = items,
+                        .presence = presence,
+                        .properties = properties,
+                    } });
+                },
+                .dictionary => |dict| {
+                    const ptr = @intFromPtr(dict);
+                    if (self.entries.contains(ptr)) continue;
+                    _ = try self.holder.array.push(pair.dynamic);
+                    const keys = try allocator.dupe(*dynamic_value.String, dict.keys());
+                    errdefer allocator.free(keys);
+                    const values = try allocator.dupe(dynamic_value.Value, dict.values());
+                    errdefer allocator.free(values);
+                    for (keys, values) |key, val| {
+                        _ = try self.holder.array.push(.{ .string = key });
+                        _ = try self.holder.array.push(val);
+                    }
+                    try self.entries.put(allocator, ptr, .{ .dictionary = .{
+                        .keys = keys,
+                        .values = values,
+                    } });
+                },
+                else => {},
+            }
+        }
+    }
+
+    fn unchanged(self: *const BeforeContainersSnapshot, value: dynamic_value.Value) bool {
+        return switch (value) {
+            .array => |arr| {
+                const entry = self.entries.get(@intFromPtr(arr)) orelse return false;
+                const snap = switch (entry) {
+                    .array => |s| s,
+                    else => return false,
+                };
+                if (!sameShallowDynamicValue(snap.prototype, arr.prototype)) return false;
+                if (snap.items.len != arr.items.items.len) return false;
+                for (0..snap.items.len) |index| {
+                    if (snap.presence[index] != arr.isPresent(index)) return false;
+                    if (snap.presence[index] and !sameShallowDynamicValue(snap.items[index], arr.items.items[index])) return false;
+                }
+                if (snap.properties.len != arr.properties.items.len) return false;
+                for (snap.properties) |prop| {
+                    const current = arr.getProperty(prop.key) orelse return false;
+                    if (!sameShallowDynamicValue(prop.value, current)) return false;
+                }
+                return true;
+            },
+            .dictionary => |dict| {
+                const entry = self.entries.get(@intFromPtr(dict)) orelse return false;
+                const snap = switch (entry) {
+                    .dictionary => |s| s,
+                    else => return false,
+                };
+                if (snap.keys.len != dict.len()) return false;
+                for (snap.keys, snap.values) |key, val| {
+                    const current = dict.get(key) orelse return false;
+                    if (!sameShallowDynamicValue(val, current)) return false;
+                }
+                return true;
+            },
+            else => false,
+        };
+    }
+
+    fn deinit(self: *BeforeContainersSnapshot) void {
+        var iterator = self.entries.valueIterator();
+        while (iterator.next()) |snap| snap.deinit(self.state.allocator);
+        self.entries.deinit(self.state.allocator);
+        self.roots.deinit();
+    }
+};
+
+fn containsStringSlice(haystack: []const []const u8, needle: []const u8) bool {
+    for (haystack) |item| {
+        if (std.mem.eql(u8, item, needle)) return true;
+    }
+    return false;
+}
+
 const StagedArrayMutation = struct {
     target: *aot_state.Object,
     prototype: Value,
@@ -1105,6 +1280,7 @@ fn finalizePluginCall(
     state: *DynamicInterpreterState,
     aot_to_dyn: *const AotToDynamicCache,
     before_globals: *const BeforeGlobalsSnapshot,
+    before_containers: *const BeforeContainersSnapshot,
     dyn_cache: *DynamicToAotCache,
 ) anyerror!void {
     const owner = state.owner;
@@ -1131,16 +1307,23 @@ fn finalizePluginCall(
         for (staged_dicts.items) |*item| item.deinit(owner.allocator);
         staged_dicts.deinit(owner.allocator);
     }
+    var committed_objects: std.AutoHashMapUnmanaged(usize, void) = .empty;
+    defer committed_objects.deinit(state.allocator);
 
     for (aot_to_dyn.containers.items) |pair| {
+        if (before_containers.unchanged(pair.dynamic)) continue;
         switch (pair.dynamic) {
             .array => |array| if (@as(Tag, @fromBackingInt(@intCast(pair.aot.tag))) == .array) {
                 try staged_arrays.ensureUnusedCapacity(owner.allocator, 1);
-                staged_arrays.appendAssumeCapacity(try stageArrayMutation(dyn_cache, pair.aot, array));
+                const staged = try stageArrayMutation(dyn_cache, pair.aot, array);
+                staged_arrays.appendAssumeCapacity(staged);
+                try committed_objects.put(state.allocator, @intFromPtr(staged.target), {});
             },
             .dictionary => |dictionary| if (@as(Tag, @fromBackingInt(@intCast(pair.aot.tag))) == .dictionary) {
                 try staged_dicts.ensureUnusedCapacity(owner.allocator, 1);
-                staged_dicts.appendAssumeCapacity(try stageDictMutation(dyn_cache, pair.aot, dictionary));
+                const staged = try stageDictMutation(dyn_cache, pair.aot, dictionary);
+                staged_dicts.appendAssumeCapacity(staged);
+                try committed_objects.put(state.allocator, @intFromPtr(staged.target), {});
             },
             else => {},
         }
@@ -1203,15 +1386,6 @@ fn finalizePluginCall(
         }
         staged_hash_names.deinit(state.allocator);
     }
-    for (unsupported_global_names.items) |name| {
-        if (dynamicGlobal(owner, name)) |existing| {
-            const raw = if (existing.slot) |slot| slot.* else existing.value;
-            if (!raw.isUnbound() and !state.synced_aot_hashes.contains(name)) {
-                try staged_hash_names.ensureUnusedCapacity(state.allocator, 1);
-                staged_hash_names.appendAssumeCapacity(try state.allocator.dupe(u8, name));
-            }
-        }
-    }
     for (staged_globals.items) |staged| {
         if (!state.synced_aot_hashes.contains(staged.name)) {
             try staged_hash_names.ensureUnusedCapacity(state.allocator, 1);
@@ -1224,7 +1398,7 @@ fn finalizePluginCall(
     try fingerprint_visited.ensureTotalCapacity(state.allocator, @intCast(@min(std.math.maxInt(u32), owner.object_count)));
 
     // ここからは非失敗（commit）。全変換と事前確保が成功した後にだけ元コンテナ・
-    // グローバル・同期fingerprintを更新する。
+    // グローバル・実際に同期した fingerprint を更新する。
     for (staged_arrays.items) |*staged| commitArrayMutation(owner, staged);
     for (staged_dicts.items) |*staged| commitDictMutation(owner, staged);
     for (staged_globals.items) |*staged| {
@@ -1242,16 +1416,6 @@ fn finalizePluginCall(
         state.synced_aot_hashes.putAssumeCapacity(owned, 0);
     }
 
-    for (unsupported_global_names.items) |name| {
-        if (dynamicGlobal(owner, name)) |existing| {
-            const raw = if (existing.slot) |slot| slot.* else existing.value;
-            if (!raw.isUnbound()) {
-                if (state.synced_aot_hashes.getPtr(name)) |slot| {
-                    slot.* = fingerprintAotValueAssumeCapacity(&fingerprint_visited, raw);
-                }
-            }
-        }
-    }
     for (staged_globals.items) |staged| {
         if (dynamicGlobal(owner, staged.name)) |synced| {
             const raw = if (synced.slot) |slot| slot.* else synced.value;
@@ -1262,11 +1426,18 @@ fn finalizePluginCall(
             }
         }
     }
+    // 変換不能値として保持したグローバルや callback 変更で未同期の値は前回の
+    // fingerprint を維持し、コンテナ変更が実際に書き戻されたグローバルだけ更新する。
     for (owner.dynamic_globals.items) |entry| {
+        if (containsStringSlice(unsupported_global_names.items, entry.name)) continue;
         if (state.synced_aot_hashes.getPtr(entry.name)) |slot| {
             const raw = if (entry.slot) |slot_ptr| slot_ptr.* else entry.value;
             if (!raw.isUnbound()) {
-                slot.* = fingerprintAotValueAssumeCapacity(&fingerprint_visited, raw);
+                if (raw.object()) |obj| {
+                    if (committed_objects.contains(@intFromPtr(obj))) {
+                        slot.* = fingerprintAotValueAssumeCapacity(&fingerprint_visited, raw);
+                    }
+                }
             }
         }
     }
@@ -1460,6 +1631,9 @@ pub fn esmPluginBuiltin(runtime: *Runtime, name: []const u8, arguments: []const 
     var before_globals = BeforeGlobalsSnapshot.init(dynamic_state);
     defer before_globals.deinit();
     try before_globals.capture();
+    var before_containers = BeforeContainersSnapshot.init(dynamic_state);
+    defer before_containers.deinit();
+    try before_containers.capture(&aot_to_dyn);
 
     var result = dynamic_state.interpreter.callExternalCommand(name, dynamic_arguments) catch |failure| {
         var err_dyn_cache = DynamicToAotCache.init(dynamic_state);
@@ -1467,7 +1641,7 @@ pub fn esmPluginBuiltin(runtime: *Runtime, name: []const u8, arguments: []const 
         err_dyn_cache.enter();
         // 例外送出経路でも、送出前の引数変更や `sys.__setSysVar` 副作用を
         // AOT 側へ反映する。元の例外を優先し、失敗時も元コンテナを壊さない。
-        finalizePluginCall(dynamic_state, &aot_to_dyn, &before_globals, &err_dyn_cache) catch {};
+        finalizePluginCall(dynamic_state, &aot_to_dyn, &before_globals, &before_containers, &err_dyn_cache) catch {};
         return failure;
     };
     try roots.protect(&result);
@@ -1475,6 +1649,6 @@ pub fn esmPluginBuiltin(runtime: *Runtime, name: []const u8, arguments: []const 
     var dyn_cache = DynamicToAotCache.init(dynamic_state);
     defer dyn_cache.deinit();
     dyn_cache.enter();
-    try finalizePluginCall(dynamic_state, &aot_to_dyn, &before_globals, &dyn_cache);
+    try finalizePluginCall(dynamic_state, &aot_to_dyn, &before_globals, &before_containers, &dyn_cache);
     return dynamicToAotValueCached(&dyn_cache, result, 0);
 }

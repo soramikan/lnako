@@ -1815,6 +1815,157 @@ test "compat AOT runtimeはESM pluginの循環・共有参照・大配列・辞�
     try std.testing.expectEqual(roots[6].payload, saved_global.value.payload);
 }
 
+fn cbMutateAotContainers(out: *Value, _: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {
+    const runtime = &(state.active_runtime orelse return);
+    const arr_entry = state.dynamicGlobal(runtime, "CbGlobal") orelse return;
+    const arr_val = if (arr_entry.slot) |slot| slot.* else arr_entry.value;
+    const arr_obj = arr_val.object() orelse return;
+    arr_obj.payload.array.items[0] = state.numberValue(2);
+    arr_obj.payload.array.append(runtime.allocator, state.numberValue(3)) catch return;
+
+    const dict_entry = state.dynamicGlobal(runtime, "CbDict") orelse return;
+    const dict_val = if (dict_entry.slot) |slot| slot.* else dict_entry.value;
+    const dict_obj = dict_val.object() orelse return;
+    var key = testString(runtime, "k") catch return;
+    var key_frame = state.RootFrame{};
+    pushTestRoots(runtime, &key_frame, @ptrCast(&key));
+    defer runtime.popRoots(&key_frame);
+    runtime.setDictionary(&dict_obj.payload.dictionary, key, state.numberValue(9)) catch return;
+    out.* = state.numberValue(1);
+}
+
+fn cbSetPTo5(out: *Value, _: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {
+    const runtime = &(state.active_runtime orelse return);
+    state.upsertDynamicGlobal(runtime, "P", state.numberValue(5)) catch return;
+    out.* = state.numberValue(5);
+}
+
+fn cbSetPTo20(out: *Value, _: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {
+    const runtime = &(state.active_runtime orelse return);
+    state.upsertDynamicGlobal(runtime, "P", state.numberValue(20)) catch return;
+    out.* = state.numberValue(20);
+}
+
+fn cbDetachChildAndCollect(out: *Value, _: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {
+    const runtime = &(state.active_runtime orelse return);
+    const dynamic_state = runtime.dynamic_state orelse return;
+    const dyn_outer = dynamic_state.interpreter.getGlobal("DetachedOuter") orelse return;
+    if (dyn_outer == .array and dyn_outer.array.items.items.len > 0) {
+        _ = dyn_outer.array.items.pop();
+    }
+    _ = dynamic_state.value_runtime.collect() catch return;
+    _ = runtime.collect();
+    out.* = state.numberValue(1);
+}
+
+test "compat AOT runtimeはESM plugin内のAOT callback変更とunsupported更新と子コンテナGCを保つ" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+    const manifest =
+        \\[{"path":"/lnako-compat-test/callback-sync-plugin.mjs","source":"export default { 初期化: function(sys) {}, コールバック実行: { type: 'func', fn: (cb) => cb() }, Cb確認: { type: 'func', fn: (sys) => [sys.__getSysVar('CbGlobal', []).length, sys.__getSysVar('CbGlobal', [])[0], sys.__getSysVar('CbGlobal', [])[1], sys.__getSysVar('CbDict', {}).k] }, P上書: { type: 'func', fn: (sys) => { sys.__setSysVar('P', () => 7); return 0; } }, P上書とCb実行: { type: 'func', fn: (cb, sys) => { sys.__setSysVar('P', () => 7); return cb(); } }, P種別: { type: 'func', fn: (sys) => typeof sys.__getSysVar('P', null) }, P値: { type: 'func', fn: (sys) => sys.__getSysVar('P', null) }, 子コンテナ書換: { type: 'func', fn: (outer, cb) => { const child = outer[0]; cb(); child[0] = 99; return child; } } };","is_plugin":true,"namespaces":[],"package_root":null,"bare_aliases":[]}]
+    ;
+    lnako_aot_compat_esm_register(manifest.ptr, manifest.len);
+    try std.testing.expect(!active.has_pending_exception);
+
+    var frame = state.RootFrame{};
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{}, .{} };
+    pushTestRoots(active, &frame, &roots);
+    defer active.popRoots(&frame);
+
+    // 1) plugin がグローバルコンテナへ触れないまま AOT callback が CbGlobal / CbDict を
+    //    更新しても、書き戻しが callback の変更を上書きせず保持する。
+    roots[0] = try active.createArray(&.{state.numberValue(1)});
+    try state.upsertDynamicGlobal(active, "CbGlobal", roots[0]);
+    roots[1] = try active.createDictionary(&.{});
+    const k_key = try testString(active, "k");
+    var k_frame = state.RootFrame{};
+    var k_roots = [_]Value{k_key};
+    pushTestRoots(active, &k_frame, &k_roots);
+    defer active.popRoots(&k_frame);
+    try active.setDictionary(&roots[1].object().?.payload.dictionary, k_roots[0], state.numberValue(1));
+    try state.upsertDynamicGlobal(active, "CbDict", roots[1]);
+
+    roots[2] = try active.createNamedFunction(cbMutateAotContainers, 0, "CbMutate", &.{});
+    const cb_ret = try state.esmPluginBuiltin(active, "コールバック実行", &.{roots[2]});
+    try std.testing.expectEqual(@as(f64, 1), @as(f64, @bitCast(cb_ret.payload)));
+    try std.testing.expectEqual(@as(usize, 2), roots[0].object().?.payload.array.items.len);
+    try std.testing.expectEqual(@as(f64, 2), @as(f64, @bitCast(roots[0].object().?.payload.array.items[0].payload)));
+    try std.testing.expectEqual(@as(f64, 3), @as(f64, @bitCast(roots[0].object().?.payload.array.items[1].payload)));
+    const dict_idx = roots[1].object().?.payload.dictionary.findByKey(k_roots[0]) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(f64, 9), @as(f64, @bitCast(roots[1].object().?.payload.dictionary.entries.items[dict_idx].value.payload)));
+
+    const cb_seen = try state.esmPluginBuiltin(active, "Cb確認", &.{});
+    const cb_seen_items = cb_seen.object().?.payload.array.items;
+    try std.testing.expectEqual(@as(usize, 4), cb_seen_items.len);
+    try std.testing.expectEqual(@as(f64, 2), @as(f64, @bitCast(cb_seen_items[0].payload)));
+    try std.testing.expectEqual(@as(f64, 2), @as(f64, @bitCast(cb_seen_items[1].payload)));
+    try std.testing.expectEqual(@as(f64, 3), @as(f64, @bitCast(cb_seen_items[2].payload)));
+    try std.testing.expectEqual(@as(f64, 9), @as(f64, @bitCast(cb_seen_items[3].payload)));
+
+    // 2) plugin が P を AOT 変換不能値 `() => 7` へ書き換えつつ同呼出し内で AOT callback が
+    //    P=5 へ更新しても、未同期のまま synced_aot_hashes["P"] を進めないため、次の呼出しで
+    //    AOT の最新値 P=5 が plugin へ再同期される。別呼出しでの callback 更新 P=20 も同様。
+    const expected_number_kind = try std.unicode.utf8ToUtf16LeAlloc(std.testing.allocator, "number");
+    defer std.testing.allocator.free(expected_number_kind);
+    const expected_fn_kind = try std.unicode.utf8ToUtf16LeAlloc(std.testing.allocator, "function");
+    defer std.testing.allocator.free(expected_fn_kind);
+
+    try state.upsertDynamicGlobal(active, "P", state.numberValue(1));
+    roots[3] = try active.createNamedFunction(cbSetPTo5, 0, "CbSetP5", &.{});
+    _ = try state.esmPluginBuiltin(active, "P上書とCb実行", &.{roots[3]});
+    const p_kind_after_5 = try state.esmPluginBuiltin(active, "P種別", &.{});
+    try std.testing.expectEqualSlices(u16, expected_number_kind, p_kind_after_5.object().?.payload.utf16_string);
+    const p_val_after_5 = try state.esmPluginBuiltin(active, "P値", &.{});
+    try std.testing.expectEqual(@as(f64, 5), @as(f64, @bitCast(p_val_after_5.payload)));
+
+    try state.upsertDynamicGlobal(active, "P", state.numberValue(10));
+    _ = try state.esmPluginBuiltin(active, "P上書", &.{});
+    const p_kind_fn = try state.esmPluginBuiltin(active, "P種別", &.{});
+    try std.testing.expectEqualSlices(u16, expected_fn_kind, p_kind_fn.object().?.payload.utf16_string);
+    roots[4] = try active.createNamedFunction(cbSetPTo20, 0, "CbSetP20", &.{});
+    _ = try state.esmPluginBuiltin(active, "コールバック実行", &.{roots[4]});
+    const p_kind_after_20 = try state.esmPluginBuiltin(active, "P種別", &.{});
+    try std.testing.expectEqualSlices(u16, expected_number_kind, p_kind_after_20.object().?.payload.utf16_string);
+    const p_val_after_20 = try state.esmPluginBuiltin(active, "P値", &.{});
+    try std.testing.expectEqual(@as(f64, 20), @as(f64, @bitCast(p_val_after_20.payload)));
+
+    // 3) QuickJS callPlugin 実行中の callback が親配列から子配列を切り離して
+    //    dynamic value_runtime の GC を実行しても、reverse_pairs が call 前に
+    //    root 保護されているため子配列が解放されず安全に書き戻せる。
+    const dynamic_state = active.dynamic_state orelse return error.TestUnexpectedResult;
+    const dyn_shared = @import("shared.zig").dynamic_value;
+    const aot_dynamic = @import("dynamic.zig");
+    var dyn_roots = dynamic_state.value_runtime.rootFrame();
+    defer dyn_roots.deinit();
+    var dyn_outer = try dynamic_state.value_runtime.createArray();
+    try dyn_roots.protect(&dyn_outer);
+    {
+        var dyn_child = try dynamic_state.value_runtime.createArray();
+        var tmp_child_root = dynamic_state.value_runtime.rootFrame();
+        defer tmp_child_root.deinit();
+        try tmp_child_root.protect(&dyn_child);
+        _ = try dyn_child.array.push(.{ .number = 10 });
+        _ = try dyn_outer.array.push(dyn_child);
+    }
+    try dynamic_state.interpreter.setGlobalValue("DetachedOuter", dyn_outer);
+    roots[5] = try active.createNamedFunction(cbDetachChildAndCollect, 0, "CbDetachChildGC", &.{});
+    var dyn_cb = try aot_dynamic.aotToDynamicValue(dynamic_state, roots[5]);
+    try dyn_roots.protect(&dyn_cb);
+    var call_args = [_]dyn_shared.Value{ dyn_outer, dyn_cb };
+    var returned_child = try dynamic_state.interpreter.callExternalCommand("子コンテナ書換", &call_args);
+    try dyn_roots.protect(&returned_child);
+    try std.testing.expectEqual(dyn_shared.Value.array, std.meta.activeTag(returned_child));
+    try std.testing.expectEqual(@as(f64, 99), returned_child.array.items.items[0].number);
+}
+
 test "compat AOT runtimeはJS文字列の孤立サロゲートを保持する" {
     if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
     var runtime = state.Runtime{ .allocator = std.testing.allocator };

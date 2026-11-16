@@ -734,6 +734,11 @@ fn callPlugin(self: *State, runtime: *Runtime, name: []const u8, arguments: []co
     }
     raw_arguments[arguments.len] = try globalProperty(engine, "sys");
     initialized += 1;
+    var reverse_frame = runtime.rootFrame();
+    defer reverse_frame.deinit();
+    for (cache.reverse_pairs.items) |*pair| {
+        try reverse_frame.protect(&pair.value);
+    }
     var result = lnako_qjs_call(engine, function, raw_arguments.ptr, raw_arguments.len) orelse {
         return finishQuickJsCallFailure(self, runtime, engine, &cache, lnako_qjs_take_error(engine));
     };
@@ -751,11 +756,6 @@ fn callPlugin(self: *State, runtime: *Runtime, name: []const u8, arguments: []co
     }
     var result_owned = true;
     errdefer if (result_owned) lnako_qjs_value_free(result);
-    var reverse_frame = runtime.rootFrame();
-    defer reverse_frame.deinit();
-    for (cache.reverse_pairs.items) |*pair| {
-        try reverse_frame.protect(&pair.value);
-    }
     var conversion = Conversion{ .state = self, .runtime = runtime, .wtf8_strings = true, .restore_host_functions = true };
     defer conversion.seen.deinit(runtime.allocator());
     try refreshSyncCache(runtime, &cache, &conversion);
