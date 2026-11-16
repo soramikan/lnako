@@ -11,6 +11,7 @@ const oracleRoot = resolve(
 const cases = JSON.parse(await readFile(resolve(root, "tests/oracle/compat-js-cases.json"), "utf8"));
 const officialCli = resolve(oracleRoot, "src/cnako3.mjs");
 const executable = resolve(root, "zig-out/bin", process.platform === "win32" ? "lnako.exe" : "lnako");
+const executableSuffix = process.platform === "win32" ? ".exe" : "";
 const options = { cwd: root, encoding: "utf8", env: { ...process.env, TZ: "Asia/Tokyo" }, maxBuffer: 32 * 1024 * 1024 };
 const temporary = await mkdtemp(join(tmpdir(), "lnako-compat-js-"));
 
@@ -61,20 +62,25 @@ try {
     const sourcePath = resolve(root, "tests/fixtures", testCase.fixture);
     const official = spawnSync(process.execPath, [officialCli, sourcePath], options);
     const interpreter = spawnSync(executable, ["run", sourcePath, "--compat-js"], options);
-    const generated = resolve(temporary, `compat-js-aot-${testCase.id}`);
+    const generated = resolve(temporary, `compat-js-aot-${testCase.id}${executableSuffix}`);
     const build = spawnSync(executable, ["build", sourcePath, "-o", generated, "--compat-js", "--backend", "aot"], options);
     let aot = build;
     if (build.status === 0) aot = spawnSync(generated, [], options);
     const officialSummary = testCase.expectedFailure ? normalizeFailure(official) : normalize(official);
     const interpreterSummary = testCase.expectedFailure ? normalizeFailure(interpreter) : normalize(interpreter);
     const aotSummary = testCase.expectedFailure ? normalizeFailure(aot) : normalize(aot);
-    const mismatched = build.status !== 0 || (testCase.expectedFailure
-      ? !officialSummary.failed || !interpreterSummary.failed || !aotSummary.failed
-      : official.status !== 0 ||
-        interpreter.status !== 0 ||
-        aot.status !== 0 ||
-        JSON.stringify(aotSummary) !== JSON.stringify(officialSummary) ||
-        JSON.stringify(aotSummary) !== JSON.stringify(interpreterSummary));
+    const mismatched = build.status !== 0 ||
+      build.error != null ||
+      official.error != null ||
+      interpreter.error != null ||
+      aot.error != null ||
+      (testCase.expectedFailure
+        ? !officialSummary.failed || !interpreterSummary.failed || !aotSummary.failed
+        : official.status !== 0 ||
+          interpreter.status !== 0 ||
+          aot.status !== 0 ||
+          JSON.stringify(aotSummary) !== JSON.stringify(officialSummary) ||
+          JSON.stringify(aotSummary) !== JSON.stringify(interpreterSummary));
     if (mismatched) {
       failures += 1;
       console.error(
@@ -95,15 +101,19 @@ try {
   const variableBridgeFixture = resolve(root, "tests/fixtures/compat-js-var-bridge.nako3");
   const officialBridge = spawnSync(process.execPath, [officialCli, variableBridgeFixture], options);
   const interpreterBridge = spawnSync(executable, ["run", variableBridgeFixture, "--compat-js"], options);
-  const generatedBridge = resolve(temporary, "compat-js-var-bridge");
+  const generatedBridge = resolve(temporary, `compat-js-var-bridge${executableSuffix}`);
   const buildBridge = spawnSync(executable, ["build", variableBridgeFixture, "-o", generatedBridge, "--compat-js", "--backend", "aot"], options);
   const aotBridge = buildBridge.status === 0 ? spawnSync(generatedBridge, [], options) : buildBridge;
   const bridgeSummaries = [normalize(officialBridge), normalize(interpreterBridge), normalize(aotBridge)];
   if (
     buildBridge.status !== 0 ||
+    buildBridge.error != null ||
     officialBridge.status !== 0 ||
+    officialBridge.error != null ||
     interpreterBridge.status !== 0 ||
+    interpreterBridge.error != null ||
     aotBridge.status !== 0 ||
+    aotBridge.error != null ||
     JSON.stringify(bridgeSummaries[0]) !== JSON.stringify(bridgeSummaries[1]) ||
     JSON.stringify(bridgeSummaries[0]) !== JSON.stringify(bridgeSummaries[2])
   ) {
@@ -117,29 +127,36 @@ try {
 
   const importFixture = resolve(root, "tests/fixtures/compat-js-plugin-imports.nako3");
   const withoutFlag = spawnSync(executable, ["run", importFixture], options);
-  if (withoutFlag.status === 0 || !withoutFlag.stderr.includes("JavaScriptの取り込みには--compat-jsが必要です")) {
+  if (withoutFlag.status === 0 || withoutFlag.error != null || !(withoutFlag.stderr ?? "").includes("JavaScriptの取り込みには--compat-jsが必要です")) {
     failures += 1;
     console.error(`--compat-js省略時にJS取り込みを拒否しませんでした: ${JSON.stringify(normalize(withoutFlag))}`);
   }
 
   const hatenaFixture = resolve(root, "tests/fixtures/compat-js-hatena.nako3");
   const hatenaWithoutFlag = spawnSync(executable, ["run", hatenaFixture], options);
-  if (hatenaWithoutFlag.status === 0 || !hatenaWithoutFlag.stderr.includes("QuickJsCompatibilityRequired")) {
+  if (hatenaWithoutFlag.status === 0 || hatenaWithoutFlag.error != null || !(hatenaWithoutFlag.stderr ?? "").includes("QuickJsCompatibilityRequired")) {
     failures += 1;
     console.error(`ハテナ関数のJS:指定を通常モードで拒否しませんでした: ${JSON.stringify(normalize(hatenaWithoutFlag))}`);
   }
 
-  const generated = resolve(temporary, process.platform === "win32" ? "compat-program.exe" : "compat-program");
+  const generated = resolve(temporary, `compat-program${executableSuffix}`);
   const build = spawnSync(executable, ["build", importFixture, "-o", generated, "--compat-js"], options);
   const embedded = spawnSync(generated, [], options);
   const officialEmbedded = spawnSync(process.execPath, [officialCli, importFixture], options);
-  if (build.status !== 0 || embedded.status !== 0 || JSON.stringify(normalize(embedded)) !== JSON.stringify(normalize(officialEmbedded))) {
+  if (
+    build.status !== 0 ||
+    build.error != null ||
+    embedded.status !== 0 ||
+    embedded.error != null ||
+    officialEmbedded.error != null ||
+    JSON.stringify(normalize(embedded)) !== JSON.stringify(normalize(officialEmbedded))
+  ) {
     failures += 1;
     console.error(`QuickJS埋め込み実行ファイル差分:\nbuild=${JSON.stringify(normalize(build))}\nofficial=${JSON.stringify(normalize(officialEmbedded))}\nembedded=${JSON.stringify(normalize(embedded))}`);
   }
 
   const invalidEmit = spawnSync(executable, ["build", importFixture, "-o", generated, "--compat-js", "--emit", "obj"], options);
-  if (invalidEmit.status !== 2 || !invalidEmit.stderr.includes("--emit exeだけ")) {
+  if (invalidEmit.status !== 2 || invalidEmit.error != null || !(invalidEmit.stderr ?? "").includes("--emit exeだけ")) {
     failures += 1;
     console.error(`QuickJS互換の不正emitを拒否しませんでした: ${JSON.stringify(normalize(invalidEmit))}`);
   }
@@ -166,15 +183,19 @@ function buildCompatLnako() {
 }
 
 function normalize(result) {
-  return {
-    stdout: result.stdout.replaceAll("\r\n", "\n"),
+  const summary = {
+    stdout: (result.stdout ?? "").replaceAll("\r\n", "\n"),
     stderrClass: result.status === 0 ? "success" : "runtime-error",
     exitCode: result.status,
     signal: result.signal,
   };
+  if (result.error != null) summary.error = result.error?.message ?? null;
+  return summary;
 }
 
 function normalizeFailure(result) {
-  const output = `${result.stdout}\n${result.stderr}`;
-  return { failed: result.status !== 0 || result.stderr.length > 0 || /\[(?:実行時)?エラー\]/.test(output) || output.includes("実行時エラー:") };
+  const stdout = result.stdout ?? "";
+  const stderr = result.stderr ?? "";
+  const output = `${stdout}\n${stderr}`;
+  return { failed: result.error != null || result.status !== 0 || stderr.length > 0 || /\[(?:実行時)?エラー\]/.test(output) || output.includes("実行時エラー:") };
 }
