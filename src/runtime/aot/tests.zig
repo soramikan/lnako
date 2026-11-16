@@ -39,6 +39,9 @@ const Tag = state.Tag;
 const Value = state.Value;
 const aotArchitectureName = state.aotArchitectureName;
 const aotByteBufferAllowsStandardPrototype = state.aotByteBufferAllowsStandardPrototype;
+const aotByteBufferElementIndex = state.aotByteBufferElementIndex;
+const aotByteBufferHasByteElements = state.aotByteBufferHasByteElements;
+const aotByteBufferPropertyElementIndex = state.aotByteBufferPropertyElementIndex;
 const aotByteBufferSlice = state.aotByteBufferSlice;
 const aotClientHttpBodyKind = state.aotClientHttpBodyKind;
 const aotClientHttpResponseBody = state.aotClientHttpResponseBody;
@@ -221,6 +224,7 @@ const systemPathComponentBuiltin = state.systemPathComponentBuiltin;
 const tableBuiltin = state.tableBuiltin;
 const tableColumnCountBuiltin = state.tableColumnCountBuiltin;
 const tablePropertyIndex = state.tablePropertyIndex;
+const table_max_array_index = state.table_max_array_index;
 const tableRowProperty = state.tableRowProperty;
 const table_byte_buffer_buffer_enumerable_property_names = state.table_byte_buffer_buffer_enumerable_property_names;
 const toml_temporal = state.toml_temporal;
@@ -6220,16 +6224,48 @@ test "AOT byte bufferの数値添字はカスタムプロトタイプ時にフ�
     try std.testing.expectEqual(dictionary_root_pushes + 1, runtime.counters.root_pushes);
 }
 
+test "AOT byte bufferの要素判定はkindと2^32-2境界を共有する" {
+    // 読み取りのfast pathと一般経路が使う共有述語の契約を直接固定する。
+    // 2^32-2だけが要素で、2^32-1以上は要素ではない。
+    try std.testing.expectEqual(@as(usize, 4294967294), table_max_array_index);
+    try std.testing.expect(aotByteBufferHasByteElements(.buffer));
+    try std.testing.expect(aotByteBufferHasByteElements(.uint8_array));
+    try std.testing.expect(!aotByteBufferHasByteElements(.array_buffer));
+
+    try std.testing.expectEqual(@as(?usize, 0), aotByteBufferElementIndex(.buffer, 0));
+    try std.testing.expectEqual(@as(?usize, 1), aotByteBufferElementIndex(.uint8_array, 1));
+    try std.testing.expectEqual(@as(?usize, 4294967294), aotByteBufferElementIndex(.buffer, 4294967294));
+    try std.testing.expectEqual(@as(?usize, null), aotByteBufferElementIndex(.buffer, 4294967295));
+    try std.testing.expectEqual(@as(?usize, null), aotByteBufferElementIndex(.uint8_array, 4294967295));
+    try std.testing.expectEqual(@as(?usize, null), aotByteBufferElementIndex(.uint8_array, std.math.maxInt(usize)));
+    try std.testing.expectEqual(@as(?usize, null), aotByteBufferElementIndex(.array_buffer, 0));
+
+    // プロパティ名経路も同じkind判定と境界を使う。先頭0は正準な添字ではなく、
+    // 非数字・空文字も要素ではない。
+    const max_units = [_]u16{ '4', '2', '9', '4', '9', '6', '7', '2', '9', '4' };
+    const over_units = [_]u16{ '4', '2', '9', '4', '9', '6', '7', '2', '9', '5' };
+    try std.testing.expectEqual(@as(?usize, 0), aotByteBufferPropertyElementIndex(.buffer, &.{'0'}));
+    try std.testing.expectEqual(@as(?usize, 1), aotByteBufferPropertyElementIndex(.uint8_array, &.{'1'}));
+    try std.testing.expectEqual(@as(?usize, 4294967294), aotByteBufferPropertyElementIndex(.buffer, &max_units));
+    try std.testing.expectEqual(@as(?usize, null), aotByteBufferPropertyElementIndex(.buffer, &over_units));
+    try std.testing.expectEqual(@as(?usize, null), aotByteBufferPropertyElementIndex(.array_buffer, &.{'0'}));
+    try std.testing.expectEqual(@as(?usize, null), aotByteBufferPropertyElementIndex(.buffer, &.{ '0', '1' }));
+    try std.testing.expectEqual(@as(?usize, null), aotByteBufferPropertyElementIndex(.buffer, &[_]u16{}));
+    try std.testing.expectEqual(@as(?usize, null), aotByteBufferPropertyElementIndex(.buffer, &.{ 'l', 'e', 'n', 'g', 't', 'h' }));
+}
+
 test "AOT byte bufferの数値添字ファストパスは遅い経路の添字判定と一致する" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
-    var roots = @as([1]Value, @splat(.{}));
+    var roots = @as([3]Value, @splat(.{}));
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
     roots[0] = try runtime.createBytes(&.{ 5, 6 });
+    roots[1] = try runtime.createUint8Array(&.{ 7, 8 });
+    roots[2] = try runtime.createArrayBuffer(&.{ 9, 10 });
 
-    // fast path の受理判定（valueIndex + 2^32-2 上限）が、遅い経路が要素と
+    // fast path の受理判定（valueIndex + 共有述語）が、遅い経路が要素と
     // して解決する `tablePropertyIndex` の判定と一致することを境界値で固定
     // する。2^32-2 だけが要素で、2^32-1 以上はプロパティ名になる。
     const cases = [_]struct { key: Value, expected: ?usize }{
@@ -6251,13 +6287,30 @@ test "AOT byte bufferの数値添字ファストパスは遅い経路の添字�
         try std.testing.expectEqual(case.expected, tablePropertyIndex(units));
         const fast_index: ?usize = blk: {
             const index = state.valueIndex(case.key) orelse break :blk null;
-            break :blk if (index <= std.math.maxInt(u32) - 1) index else null;
+            break :blk aotByteBufferElementIndex(.buffer, index);
         };
         try std.testing.expectEqual(case.expected, fast_index);
-        // 要素として解決しないキーは、範囲外・境界外ともundefinedになる。
-        if (case.expected == null or case.expected.? >= 2) {
-            try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(runtime.indexGet(roots[0], case.key).tag))));
+        try std.testing.expectEqual(case.expected, aotByteBufferPropertyElementIndex(.buffer, units));
+
+        // fast path と一般経路（`tableRowProperty`）が、bufferとuint8_arrayの
+        // どちらでも同じ値・undefinedを返すことを確認する。
+        for (roots[0..2]) |root| {
+            const fast_value = runtime.indexGet(root, case.key);
+            const slow_value = try tableRowProperty(&runtime, root, case.key);
+            try std.testing.expectEqual(
+                @as(Tag, @fromBackingInt(@intCast(slow_value.tag))),
+                @as(Tag, @fromBackingInt(@intCast(fast_value.tag))),
+            );
+            if (slow_value.tag == @backingInt(Tag.number)) {
+                try std.testing.expectEqual(valueToNumber(slow_value), valueToNumber(fast_value));
+            }
         }
+    }
+
+    // ArrayBufferは数値添字を持たないため、fast path・一般経路ともundefined。
+    for (cases) |case| {
+        try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(runtime.indexGet(roots[2], case.key).tag))));
+        try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast((try tableRowProperty(&runtime, roots[2], case.key)).tag))));
     }
 }
 

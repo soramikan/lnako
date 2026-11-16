@@ -10,6 +10,7 @@ const Value = aot_state.Value;
 const Tag = aot_state.Tag;
 const Object = aot_state.Object;
 const ByteBuffer = aot_state.ByteBuffer;
+const ByteKind = aot_state.ByteKind;
 const BigInt = aot_state.BigInt;
 const RootFrame = aot_state.RootFrame;
 const AotPrimitiveHint = aot_state.AotPrimitiveHint;
@@ -613,12 +614,12 @@ pub fn tableRowProperty(runtime: *Runtime, row: Value, column: Value) !Value {
             else
                 numberValue(@floatFromInt(object.payload.byte_buffer.bytes.len));
         }
-        if (object.payload.byte_buffer.kind != .array_buffer) if (tablePropertyIndex(key_units)) |index| {
+        if (aotByteBufferPropertyElementIndex(object.payload.byte_buffer.kind, key_units)) |index| {
             return if (index < object.payload.byte_buffer.bytes.len)
                 numberValue(@floatFromInt(object.payload.byte_buffer.bytes[index]))
             else
                 .{};
-        };
+        }
         return .{};
     }
     if (isString(row)) {
@@ -687,6 +688,12 @@ pub fn tablePropertyKeyEqual(runtime: *Runtime, key: Value, units: []const u16) 
     return std.mem.eql(u16, key_units, units);
 }
 
+/// Keep the ECMAScript array-index boundary exact: 2^32 - 1 is not an array
+/// index (it is distinct from the length property).  This is the single
+/// boundary shared by canonical key parsing and byte-buffer element
+/// resolution.
+pub const table_max_array_index: usize = @as(usize, std.math.maxInt(u32)) - 1;
+
 /// Parse only canonical array-index property names.  Number("01") is 1, but
 /// JavaScript's property key "01" is not an array index, so using Number here
 /// would incorrectly read row[1].
@@ -700,11 +707,36 @@ pub fn tablePropertyIndex(units: []const u16) ?usize {
         result = std.math.mul(usize, result, 10) catch return null;
         result = std.math.add(usize, result, digit) catch return null;
     }
-    // Keep the ECMAScript array-index boundary exact: 2^32 - 1 is not an
-    // array index (it is distinct from the length property).
-    const max_array_index: usize = @as(usize, std.math.maxInt(u32)) - 1;
-    if (result > max_array_index) return null;
+    if (result > table_max_array_index) return null;
     return result;
+}
+
+/// Byte-buffer view kinds whose indexed elements are one stored byte each.
+/// The switch is exhaustive on purpose: adding a kind forces every indexed
+/// element path to decide whether the new kind exposes bytes.
+pub fn aotByteBufferHasByteElements(kind: ByteKind) bool {
+    return switch (kind) {
+        .buffer, .uint8_array => true,
+        .array_buffer => false,
+    };
+}
+
+/// Resolve a canonical array index to a byte-buffer element, or null when the
+/// kind has no byte elements or the index is outside the array-index range.
+/// `indexGet`'s numeric fast path and the property-name path both resolve
+/// elements through this predicate, so the kind rules and the 2^32-2 boundary
+/// are defined once instead of being mirrored per path.
+pub fn aotByteBufferElementIndex(kind: ByteKind, index: usize) ?usize {
+    if (!aotByteBufferHasByteElements(kind)) return null;
+    if (index > table_max_array_index) return null;
+    return index;
+}
+
+/// Byte-buffer element addressed by a property name.  The canonical
+/// array-index parse stays in `tablePropertyIndex`; the shared element
+/// predicate supplies the kind rules and boundary.
+pub fn aotByteBufferPropertyElementIndex(kind: ByteKind, units: []const u16) ?usize {
+    return aotByteBufferElementIndex(kind, tablePropertyIndex(units) orelse return null);
 }
 
 pub fn tableColumnCountBuiltin(runtime: *Runtime, source: Value) !Value {
