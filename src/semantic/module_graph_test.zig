@@ -1458,9 +1458,9 @@ const NativePluginPackageResolver = struct {
 test "package経由のnative plugin命令は公開namespace修飾名のみ動的解決する" {
     // P1回帰: package経由のnative pluginは無修飾名をimport側のグローバル
     // 命令空間へ露出させない。`nativepkg__外部追加`のみ動的builtinに束縛し、
-    // 無修飾の`外部追加`はローカル関数へ解決される。
+    // 無修飾の`外部追加`は未定義命令として診断する。
     var memory = MemoryProvider{ .files = &.{
-        .{ .suffix = "main.nako3", .source = "!「pkg:nativepkg」を取り込む\nnativepkg__外部追加(1, 2)\n●(AとBを)外部追加とは\n0で戻る\nここまで\n外部追加(1, 2)\n" },
+        .{ .suffix = "main.nako3", .source = "!「pkg:nativepkg」を取り込む\nnativepkg__外部追加(1, 2)\n外部追加(1, 2)\n" },
     } };
     var package_resolver = NativePluginPackageResolver{};
     var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{ .package_resolver = package_resolver.resolver() });
@@ -1470,7 +1470,7 @@ test "package経由のnative plugin命令は公開namespace修飾名のみ動的
     try std.testing.expectEqual(module_graph.ModuleKind.native_plugin, graph.modules[1].kind);
     var program = try graph.analyze(std.testing.allocator);
     defer program.deinit();
-    try std.testing.expect(program.succeeded());
+    try std.testing.expect(!program.succeeded());
     var qualified_dynamic = false;
     var unqualified_dynamic = false;
     for (program.bindings) |binding| {
@@ -1481,6 +1481,40 @@ test "package経由のnative plugin命令は公開namespace修飾名のみ動的
     }
     try std.testing.expect(qualified_dynamic);
     try std.testing.expect(!unqualified_dynamic);
+    var undefined_diagnosed = false;
+    for (program.diagnostics) |item| {
+        if (item.code != .undefined_symbol) continue;
+        if (std.mem.eql(u8, item.message, "関数『外部追加』が見当たりません。")) undefined_diagnosed = true;
+    }
+    try std.testing.expect(undefined_diagnosed);
+}
+
+test "package経由のnative plugin命令より同一moduleのローカル関数を優先する" {
+    // 同名のローカル関数がある場合の正常系。無修飾`外部追加`はpluginの
+    // 動的解決より先にローカル関数へ束縛され、package修飾名だけがplugin
+    // dispatchへ流れる。
+    var memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "!「pkg:nativepkg」を取り込む\nnativepkg__外部追加(1, 2)\n●(AとBを)外部追加とは\n0で戻る\nここまで\n外部追加(1, 2)\n" },
+    } };
+    var package_resolver = NativePluginPackageResolver{};
+    var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{ .package_resolver = package_resolver.resolver() });
+    defer graph.deinit();
+    try std.testing.expect(graph.succeeded());
+    var program = try graph.analyze(std.testing.allocator);
+    defer program.deinit();
+    try std.testing.expect(program.succeeded());
+    var qualified_dynamic = false;
+    var local_call = false;
+    for (program.bindings) |binding| {
+        if (binding.kind == .builtin and binding.dynamic_builtin and
+            std.mem.eql(u8, binding.resolved_name, "nativepkg__外部追加")) qualified_dynamic = true;
+        if (binding.kind == .call and
+            std.mem.eql(u8, binding.name, "外部追加") and
+            std.mem.eql(u8, binding.resolved_name, "main__外部追加") and
+            binding.symbol != null and !binding.dynamic_builtin) local_call = true;
+    }
+    try std.testing.expect(qualified_dynamic);
+    try std.testing.expect(local_call);
 }
 
 test "直接path取り込みのnative plugin命令は従来どおり無修飾で動的解決する" {

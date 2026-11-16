@@ -438,6 +438,31 @@ pub fn initializeSystem(self: *Interpreter) !void {
     self.system_initialized = true;
 }
 
+/// 動的評価（`ナデシコ`/`ナデシコ続`）の意味解析へ引き継ぐ、実行時に登録
+/// 済みの外部命令名を完全一致aliasとして集める。native pluginと
+/// `--compat-js` ESM pluginのdispatch名そのものを使う（定数entryは除外）。
+/// `allocator` が各aliasの名前と外側スライスを所有する。
+pub fn dynamicCommandAliases(self: *Interpreter, allocator: std.mem.Allocator) ![]semantic.DynamicCommandAlias {
+    var names: std.ArrayList([]const u8) = .empty;
+    defer names.deinit(allocator);
+    errdefer for (names.items) |name| allocator.free(name);
+    try self.native_plugin_state.appendRegisteredCommandNames(allocator, &names);
+    if (try quickjs.registeredFunctionKeys(&self.quickjs_state, allocator)) |esm_names| {
+        defer {
+            for (esm_names) |name| allocator.free(name);
+            allocator.free(esm_names);
+        }
+        for (esm_names) |name| {
+            const copy = try allocator.dupe(u8, name);
+            errdefer allocator.free(copy);
+            try names.append(allocator, copy);
+        }
+    }
+    const aliases = try allocator.alloc(semantic.DynamicCommandAlias, names.items.len);
+    for (names.items, aliases) |name, *alias| alias.* = .{ .source_namespace = name, .dispatch_namespace = name, .exact = true };
+    return aliases;
+}
+
 pub fn stringArgument(self: *Interpreter, arguments: []const Value) !Value {
     const value = if (arguments.len > 0) arguments[arguments.len - 1] else Value.undefined;
     return self.runtime.valueToString(value);

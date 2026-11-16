@@ -21,6 +21,11 @@ pub const DynamicCommandAlias = struct {
     /// （runtime は owner 固有 namespace へ隔離登録済み）。修飾名
     /// `<source>__<命令>` の longest-prefix 規則とは別経路。
     unqualified: bool = false,
+    /// true: `source_namespace` と完全一致する呼出しだけを受理する。
+    /// `ナデシコ`/`ナデシコ続` の動的評価は取り込み辺を持たないため、
+    /// interpreterが実行時registryの登録済みdispatch名を alias として渡す。
+    /// prefix一致や無修飾catch-allへ流さず、未登録名は診断させる。
+    exact: bool = false,
 };
 
 /// 動的builtinとして束縛する命令名か判定する。直接取り込んだnative plugin
@@ -38,9 +43,13 @@ pub fn binds(allows_dynamic_commands: bool, allows_from: usize, aliases: []const
     // 最長 namespace を優先する（`foo` と `foo__bar` が併存するとき短い
     // 方が先に一致して誤配送しないよう、analyzer の namespace alias と同じ
     // longest-prefix 規則）。
+    // 実行時登録名の完全一致はprefix規則より先に評価する（dispatch名そのもの）。
+    for (aliases) |alias| {
+        if (alias.exact and std.mem.eql(u8, alias.source_namespace, name)) return alias;
+    }
     var selected: ?DynamicCommandAlias = null;
     for (aliases) |alias| {
-        if (alias.unqualified) continue;
+        if (alias.unqualified or alias.exact) continue;
         if (use_position < alias.import_position) continue;
         if (std.mem.startsWith(u8, name, alias.source_namespace) and name.len > alias.source_namespace.len + 2 and
             name[alias.source_namespace.len] == '_' and name[alias.source_namespace.len + 1] == '_')
@@ -53,7 +62,7 @@ pub fn binds(allows_dynamic_commands: bool, allows_from: usize, aliases: []const
     // dispatch へ写す。複数ある場合はより後の取り込みを優先する（後勝ち）。
     var selected_unqualified: ?DynamicCommandAlias = null;
     for (aliases) |alias| {
-        if (!alias.unqualified) continue;
+        if (!alias.unqualified or alias.exact) continue;
         if (use_position < alias.import_position) continue;
         if (selected_unqualified == null or alias.import_position >= selected_unqualified.?.import_position)
             selected_unqualified = alias;

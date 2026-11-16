@@ -25,6 +25,7 @@ const plugin_caniuse = @import("../../plugins/caniuse.zig");
 const plugin_kansuji = @import("../../plugins/kansuji.zig");
 const plugin_native = @import("../../plugins/native.zig");
 const quickjs = @import("../../compat/quickjs.zig");
+const plugins = @import("plugins.zig");
 const environment = @import("../environment.zig");
 const istate = @import("state.zig");
 const shared = @import("shared.zig");
@@ -1412,12 +1413,21 @@ pub fn executeDynamicValue(self: *Interpreter, source_value: Value) !Value {
     var parsed = try parser.parseWithMode(self.allocator, source, "<dynamic>.nako3", .{ .builtin_commands = &builtin_catalog.function_names });
     defer parsed.deinit();
     if (!parsed.succeeded()) return error.DynamicParseFailed;
+    // 動的コードには取り込み辺が無いため、登録済みplugin命令の解決情報は
+    // 実行時registryから完全一致aliasとして引き継ぐ。これが無いとplugin
+    // 命令が未定義命令として拒否される（Issue #228レビュー指摘）。
+    const dynamic_command_aliases = try plugins.dynamicCommandAliases(self, self.allocator);
+    defer {
+        for (dynamic_command_aliases) |alias| self.allocator.free(alias.source_namespace);
+        self.allocator.free(dynamic_command_aliases);
+    }
     // 公式cnako3は動的コードを常にmain名前空間としてコンパイルする。
     const module_name = "main";
     var analyzed = try semantic.analyzeModules(self.allocator, &.{.{
         .name = module_name,
         .path = "<dynamic>.nako3",
         .root = parsed.root.?,
+        .dynamic_command_aliases = dynamic_command_aliases,
     }});
     defer analyzed.deinit();
     if (!analyzed.succeeded()) return error.DynamicSemanticFailed;

@@ -668,23 +668,52 @@ pub fn installModules(runtime: *Runtime, state: *State, modules: []const @import
 /// `lnako check --load-plugins` 用・実登録照合）。`allocator` が返却値を
 /// 所有する。engine が無い（未評価）場合は null を返す。
 pub fn registeredCommandKeys(state: *State, allocator: std.mem.Allocator) !?[][]const u8 {
+    return registeredKeysOfType(state, allocator, null);
+}
+
+/// `__lnako_commands` のうち `type === "func"` の key（dispatch名）一覧を
+/// 返す。動的評価（`ナデシコ`/`ナデシコ続`）の意味解析へ引き継ぐ実命令名
+/// として使う。定数entryは命令ではないため除外する。engine が無い場合は
+/// null を返す。
+pub fn registeredFunctionKeys(state: *State, allocator: std.mem.Allocator) !?[][]const u8 {
+    return registeredKeysOfType(state, allocator, "func");
+}
+
+/// `only_type` が非nullなら `__lnako_commands` entry の `type` 一致のみ返す。
+/// 各要素と外側スライスは`allocator`所有。
+fn registeredKeysOfType(state: *State, allocator: std.mem.Allocator, only_type: ?[]const u8) !?[][]const u8 {
     const engine = state.engine orelse return null;
     const commands = try globalProperty(engine, "__lnako_commands");
     defer lnako_qjs_value_free(commands);
     const keys = lnako_qjs_keys(commands) orelse return quickJsError(engine);
     defer lnako_qjs_keys_free(keys);
     const length = lnako_qjs_keys_length(keys);
-    var names = try allocator.alloc([]const u8, length);
-    errdefer allocator.free(names);
-    var filled: usize = 0;
+    var names: std.ArrayList([]const u8) = .empty;
+    errdefer {
+        for (names.items) |name| allocator.free(name);
+        names.deinit(allocator);
+    }
     for (0..length) |index| {
         var name_length: usize = 0;
         const name_pointer = lnako_qjs_key(keys, index, &name_length) orelse continue;
-        names[filled] = try allocator.dupe(u8, name_pointer[0..name_length]);
-        filled += 1;
+        const name = name_pointer[0..name_length];
+        if (only_type) |expected| {
+            const name_z = try allocator.dupeSentinel(u8, name, 0);
+            defer allocator.free(name_z);
+            const definition_value = lnako_qjs_get_property(commands, name_z.ptr) orelse continue;
+            defer lnako_qjs_value_free(definition_value);
+            const type_value = lnako_qjs_get_property(definition_value, "type") orelse continue;
+            defer lnako_qjs_value_free(type_value);
+            const type_text = rawText(type_value) catch continue;
+            defer lnako_qjs_free_string(type_text.pointer);
+            if (!std.mem.eql(u8, type_text.slice(), expected)) continue;
+        }
+        const copy = try allocator.dupe(u8, name);
+        errdefer allocator.free(copy);
+        try names.append(allocator, copy);
     }
-    if (filled != length) names = try allocator.realloc(names, filled);
-    return names;
+    const owned = try names.toOwnedSlice(allocator);
+    return owned;
 }
 
 fn moduleFilename(allocator: std.mem.Allocator, path: []const u8) ![:0]u8 {
