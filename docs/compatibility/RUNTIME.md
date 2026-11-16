@@ -101,6 +101,15 @@
 - 差分テストID: `scope-named-fn-late-module-var`、`scope-anon-fn-late-module-var`、`dncl-v1-scope-late-module-var`、`scopequalreadlate`、`scopequalreadearly`、`scopequalwritelate`、`scopequalarraylate`、`scopequalincrlate`、`scopequaldncllate`、`scopequallocalleak`、`scopequalwriteearly`、`scopequalcrossfn`、`scopequalmodread`、`scopequalsamestmt`、`native-scopequal-same-stmt`、`native-scopequalreadlate`、`native-scopequalreadearly`、`native-scopequalwritelate`、`native-scopequalarraylate`、`native-scopequalincrlate`、`native-scopequaldncllate`（`compare_interpreter_oracle.mjs` / `compare_native_oracle.mjs`）、`semantic-diagnostic-property-root-later`（`compare_semantic_diagnostics_oracle.mjs`）、`取り込んだモジュールの同名シンボルは展開順の先勝ちで解決する`、`推移的に取り込んだモジュールの変数を裸名で解決する`、`取り込み先の代入はエントリの同名変数をmodList解決で上書きする`、`取り込み先の変数宣言はエントリの同名変数を上書きしない`、`取り込み先関数本体内の代入もmodList順でエントリ変数を上書きする`、`関数定義位置より後のエントリ変数は取り込み先関数から見えない`（`src/runtime/interpreter/tests.zig`）
 - TODO識別子: なし
 
+## 関数内で定義した名前付き関数のfunclist登録
+
+- 公式実測・source根拠: 公式コード生成は関数内で定義した名前付き関数もトップレベル関数と同じくモジュールのfunclist（`__varslist[1]`）へ登録します。入れ子関数は字句スコープを持たず、外側関数のローカル・仮引数は本体から参照できません。本体の裸名は外側関数の定義位置を基準にモジュール変数（`__varslist[2]`）へ解決され、同名の関数定義はコード生成順の後勝ちで上書きされます。呼出しの引数個数・助詞も最後の定義のものになります。
+- lnakoの現在動作: 事前宣言走査が関数本体内（無名関数内も含む）の名前付き関数をモジュールスコープへ宣言し、全モジュールの解決より先にfunclist相当のシンボルを確定します。関数名は変数の暗黙宣言より先に確定するため、同名関数が後方で定義されていても変数への代入は `assign_to_function` になります。関数本体のスコープは外側関数ではなく定義側モジュールを親にするため、外側ローカル・仮引数は解決候補に入りません。同名の関数定義は単一シンボルを再利用して後勝ちで上書きし、引数個数・助詞も最後の定義へ揃えます。Interpreter・AOT共通の解決です。
+- 判定: 仕様
+- 対象経路: Interpreter / AOT
+- 差分テストID: `nested-named-function-module-scope`、`nested-named-function-call-from-outside`、`nested-named-function-ignores-outer-parameter`、`nested-named-function-last-wins`、`nested-named-function-in-anonymous`、`nested-named-function-imported`（`compare_interpreter_oracle.mjs`）、`native-nested-named-function-module-scope`、`native-nested-named-function-call-from-outside`、`native-nested-named-function-ignores-outer-parameter`、`native-nested-named-function-last-wins`（`compare_native_oracle.mjs`）、`semantic-diagnostic-assign-to-later-function`、`semantic-diagnostic-assign-to-later-nested-function`（`compare_semantic_diagnostics_oracle.mjs`）、`関数内で定義した名前付き関数はモジュールスコープへ登録する`、`取り込みモジュール内の入れ子関数を全モジュール解決前に宣言する`、`同名の関数定義はコード生成順の後勝ちで上書きする`（`src/semantic/analyzer_test.zig`）
+- TODO識別子: なし
+
 ## 関数内の特殊変数『引数』
 
 - 公式実測・source根拠: `nako_gen.mts` は関数本体の先頭で `__self.__vars.set('引数', arguments)` を生成します。値はJavaScriptの `arguments` オブジェクトそのもので、宣言した仮引数に加えて、公式の呼出し規約が末尾へ渡す `__self`（実行コンテキスト）も要素に含まれます。実測では1仮引数の関数呼出しで `引数の要素数` は2、`引数[0]` は第1実引数、`引数[1]` は `[object Object]` でした。
