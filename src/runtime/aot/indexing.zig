@@ -16,6 +16,9 @@ const isString = aot_state.isString;
 const staticUtf8 = aot_state.staticUtf8;
 const staticUtf8EqualsUtf16 = aot_state.staticUtf8EqualsUtf16;
 const aotByteBufferAllowsStandardPrototype = aot_state.aotByteBufferAllowsStandardPrototype;
+const aotByteBufferHasByteElements = aot_state.aotByteBufferHasByteElements;
+const aotByteBufferElementIndex = aot_state.aotByteBufferElementIndex;
+const aotByteBufferPropertyElementIndex = aot_state.aotByteBufferPropertyElementIndex;
 const aotByteBufferScalarProperty = aot_state.aotByteBufferScalarProperty;
 const aotByteBufferReadOnlyProperty = aot_state.aotByteBufferReadOnlyProperty;
 const tableInheritedProperty = aot_state.tableInheritedProperty;
@@ -43,26 +46,26 @@ pub fn indexGet(self: *Runtime, container: Value, key: Value) Value {
         .byte_buffer => |buffer| {
             // Numeric byte indices address the stored byte and need no
             // property name at all, so answer them before rooting and
-            // materializing the key.  The guards reproduce the reads the
-            // general path below resolves as elements: a single-byte view
-            // kind (a future non-byte view sharing this payload must not
-            // return a raw byte), an index inside the 2^32-2 array-index
-            // range that `tablePropertyIndex` applies to the key text (a
-            // narrower range than `valueIndex` accepts), an index inside the
-            // buffer, no own properties at all (any own property, shadowing
-            // the index or not, sends the read back to the general path; AOT
-            // objects keep every own property in `array_properties`), and a
-            // standard prototype.  That last guard is defensive - a canonical
-            // index never consults the prototype chain - but keeps the fast
-            // path on the plain buffer shape the fallback tests pin.
+            // materializing the key.  `aotByteBufferElementIndex` is the same
+            // predicate the general path uses: it owns the byte-view kind
+            // rule and the 2^32-2 array-index boundary, so the two paths
+            // cannot disagree about which keys are elements.  The remaining
+            // guards keep the fast path on the plain buffer shape - an index
+            // inside the buffer, no own properties at all (any own property,
+            // shadowing the index or not, sends the read back to the general
+            // path; AOT objects keep every own property in
+            // `array_properties`), and a standard prototype.  That last guard
+            // is defensive - a canonical index never consults the prototype
+            // chain - but keeps the fast path on the plain buffer shape the
+            // fallback tests pin.
             if (valueIndex(key)) |index| {
-                if ((buffer.kind == .buffer or buffer.kind == .uint8_array) and
-                    index <= std.math.maxInt(u32) - 1 and
-                    index < buffer.bytes.len and
-                    aotByteBufferAllowsStandardPrototype(container) and
-                    object.array_properties.entries.items.len == 0)
-                {
-                    return numberValue(@floatFromInt(buffer.bytes[index]));
+                if (aotByteBufferElementIndex(buffer.kind, index)) |element| {
+                    if (element < buffer.bytes.len and
+                        aotByteBufferAllowsStandardPrototype(container) and
+                        object.array_properties.entries.items.len == 0)
+                    {
+                        return numberValue(@floatFromInt(buffer.bytes[element]));
+                    }
                 }
             }
             var rooted = [_]Value{ container, key };
@@ -85,8 +88,8 @@ pub fn indexGet(self: *Runtime, container: Value, key: Value) Value {
                 if (inherited) |value| return value;
             }
             if (!aotByteBufferAllowsStandardPrototype(source)) {
-                const index = tablePropertyIndex(key_units) orelse return .{};
-                return if (rooted_buffer.kind == .array_buffer or index >= rooted_buffer.bytes.len)
+                const index = aotByteBufferPropertyElementIndex(rooted_buffer.kind, key_units) orelse return .{};
+                return if (index >= rooted_buffer.bytes.len)
                     .{}
                 else
                     numberValue(@floatFromInt(rooted_buffer.bytes[index]));
@@ -101,8 +104,8 @@ pub fn indexGet(self: *Runtime, container: Value, key: Value) Value {
                 };
             }
             if (aotByteBufferScalarProperty(rooted_buffer, rooted[1])) |value| return value;
-            const index = tablePropertyIndex(key_units) orelse return .{};
-            return if (rooted_buffer.kind == .array_buffer or index >= rooted_buffer.bytes.len) .{} else numberValue(@floatFromInt(rooted_buffer.bytes[index]));
+            const index = aotByteBufferPropertyElementIndex(rooted_buffer.kind, key_units) orelse return .{};
+            return if (index >= rooted_buffer.bytes.len) .{} else numberValue(@floatFromInt(rooted_buffer.bytes[index]));
         },
         .array => aotArrayPropertyGet(self, object, key),
         .dictionary => blk: {
@@ -197,7 +200,11 @@ pub fn indexSet(self: *Runtime, container: Value, key: Value, value: Value) !voi
             self.pushRoots(&frame, &rooted, rooted.len);
             defer self.popRoots(&frame);
             const buffer = &rooted[0].object().?.payload.byte_buffer;
-            if (buffer.kind != .array_buffer) if (valueIndex(rooted[1])) |index| {
+            // Writes share the byte-view kind classification with reads
+            // (aotByteBufferHasByteElements), but keep their existing wider
+            // numeric range: every index accepted by `valueIndex` is
+            // consumed here and never becomes an own property.
+            if (aotByteBufferHasByteElements(buffer.kind)) if (valueIndex(rooted[1])) |index| {
                 const byte = try aotByteElement(self, rooted[2]);
                 if (index < buffer.bytes.len) buffer.bytes[index] = byte;
                 return;
@@ -212,7 +219,7 @@ pub fn indexSet(self: *Runtime, container: Value, key: Value, value: Value) !voi
             // negatives, fractions, NaN, Infinity and out-of-range indices
             // are ignored instead of becoming own properties.  Only
             // non-canonical names such as "02" reach the property path.
-            if (buffer.kind != .array_buffer) {
+            if (aotByteBufferHasByteElements(buffer.kind)) {
                 switch (try typed_array_key.classifyAlloc(key_units, self.allocator)) {
                     .index => |index| {
                         // ECMAScriptのIntegerIndexedElementSetは添字の
