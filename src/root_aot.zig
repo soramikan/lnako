@@ -102,6 +102,8 @@ export fn lnako_aot_runtime_keepalive() void {
     _ = aot.lnako_aot_node_mother_path_init;
     _ = aot.lnako_aot_push_roots;
     _ = aot.lnako_aot_pop_roots;
+    _ = aot.lnako_aot_push_var_frame;
+    _ = aot.lnako_aot_pop_var_frame;
     _ = aot.lnako_aot_collect;
 }
 

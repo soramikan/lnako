@@ -48,6 +48,9 @@ pub fn writeFunction(emitter: *Emitter, function: ir.Function) !void {
     try emitter.output.writer.print(") !dbg !{d} {{\n", .{scope});
     const locals = try emitter.localNames(function);
     defer emitter.allocator.free(locals);
+    // 呼び出しを含まないリーフ関数は、その実行中に変数bridgeからローカルを
+    // 観測され得ないためフレームpush/popを省略する。
+    const compat_var_frame = emitter.hasCompatJsVariableBridge() and locals.len > 0 and context.functionMayInvokeBridge(function);
     var root_plan = if (emitter.optimized) try root_liveness.analyze(emitter.allocator, function) else null;
     defer if (root_plan) |*plan| plan.deinit();
     const value_root_count = context.functionValueCount(function);
@@ -81,6 +84,21 @@ pub fn writeFunction(emitter: *Emitter, function: ir.Function) !void {
             for (function.parameters, 0..) |parameter, index| {
                 try emitter.output.writer.print("  store %lnako.Value %arg.{d}, ptr %root.slot.{d}\n", .{ index, parameter.value });
             }
+            // 非引数・非captureの`.cell`ローカルへ渡す未束縛初期値。必要な
+            // 場合だけentryで1つのallocaを共有する。
+            if (emitter.hasCompatJsVariableBridge()) {
+                var needs_unbound_slot = false;
+                for (locals) |name| {
+                    if (local_storage.storageClass(emitter.program, function, name) != .cell) continue;
+                    if (context.nameIndex(function.captures, name) != null) continue;
+                    if (context.parameterIndex(function, name) != null) continue;
+                    needs_unbound_slot = true;
+                }
+                if (needs_unbound_slot) {
+                    try emitter.output.writer.writeAll("  %runtime.unbound = alloca %lnako.Value\n");
+                    try emitter.output.writer.writeAll("  store %lnako.Value { i8 0, i64 1 }, ptr %runtime.unbound\n");
+                }
+            }
             for (locals, 0..) |name, index| {
                 const cell_root = value_root_count + index;
                 switch (local_storage.storageClass(emitter.program, function, name)) {
@@ -91,6 +109,10 @@ pub fn writeFunction(emitter: *Emitter, function: ir.Function) !void {
                             try emitter.output.writer.print("  call void @lnako_aot_binding_cell_new(ptr %root.slot.{d}, ptr ", .{cell_root});
                             if (context.parameterIndex(function, name)) |parameter_index| {
                                 try emitter.output.writer.print("%root.slot.{d}", .{function.parameters[parameter_index].value});
+                            } else if (emitter.hasCompatJsVariableBridge()) {
+                                // 未代入のcapture変数を`undefined`代入済みと
+                                // 区別するため、entryで用意したunbound値を使う。
+                                try emitter.output.writer.writeAll("%runtime.unbound");
                             } else try emitter.output.writer.writeAll("null");
                             try emitter.output.writer.writeAll(")\n");
                         }
@@ -102,6 +124,10 @@ pub fn writeFunction(emitter: *Emitter, function: ir.Function) !void {
                         // Value instead of allocating a GC BindingCell.
                         if (context.parameterIndex(function, name)) |parameter_index| {
                             try emitter.output.writer.print("  store %lnako.Value %arg.{d}, ptr %root.slot.{d}\n", .{ parameter_index, cell_root });
+                        } else if (emitter.hasCompatJsVariableBridge()) {
+                            // 未代入ローカルを`undefined`代入済みと区別する。
+                            // 両モードともlocalsはこのroot slotに同居する。
+                            try emitter.output.writer.print("  store %lnako.Value {{ i8 0, i64 1 }}, ptr %root.slot.{d}\n", .{cell_root});
                         }
                         try emitter.output.writer.print("  %local.{d} = getelementptr %lnako.Value, ptr %root.slot.{d}, i64 0\n", .{ index, cell_root });
                     },
@@ -112,6 +138,18 @@ pub fn writeFunction(emitter: *Emitter, function: ir.Function) !void {
                 try emitter.output.writer.print("  %scope.sore.backup = load %lnako.Value, ptr @lnako.global.{d}\n", .{global_index});
                 try emitter.output.writer.print("  store %lnako.Value %scope.sore.backup, ptr %root.slot.{d}\n", .{slot});
                 try emitter.output.writer.print("  store %lnako.Value {{ i8 0, i64 0 }}, ptr @lnako.global.{d}\n", .{global_index});
+            }
+            if (compat_var_frame) {
+                try emitter.output.writer.writeAll("  %var.frame = alloca %lnako.AotVarFrame\n");
+                try emitter.output.writer.print("  %var.slots = alloca [{d} x ptr]\n", .{locals.len});
+                for (locals, 0..) |_, index| {
+                    const cell_root = value_root_count + index;
+                    try emitter.output.writer.print("  %var.slot.{d} = getelementptr [{d} x ptr], ptr %var.slots, i64 0, i64 {d}\n", .{ index, locals.len, index });
+                    // `.cell`はBindingCellを保持するroot slot自体を渡し、
+                    // 解決側でinner valueをアンラップする。
+                    try emitter.output.writer.print("  store ptr %root.slot.{d}, ptr %var.slot.{d}\n", .{ cell_root, index });
+                }
+                try emitter.output.writer.print("  call void @lnako_aot_push_var_frame(ptr %var.frame, ptr @lnako.fn.{d}.var.names, i64 {d}, ptr %var.slots)\n", .{ function.id, locals.len });
             }
         }
         var phi_count: usize = 0;
@@ -130,7 +168,7 @@ pub fn writeFunction(emitter: *Emitter, function: ir.Function) !void {
             try roots_mod.writeSafepoint(emitter, plan, plan.blocks[block_index].before[block.instructions.len]);
         };
         const terminator_span = if (block.instructions.len > 0) block.instructions[block.instructions.len - 1].span else ast.emptySpan();
-        try terminators_mod.writeTerminator(emitter, function, block.id, block.terminator, terminator_span, scope, sore_slot);
+        try terminators_mod.writeTerminator(emitter, function, block.id, block.terminator, terminator_span, scope, sore_slot, compat_var_frame);
     }
     try emitter.output.writer.writeAll("}\n\n");
     if (emitter.optimized) {
@@ -418,15 +456,6 @@ pub fn writeMain(emitter: *Emitter) !void {
     const entry_name = if (target_builtin.os.tag == .windows) "wmain" else "main";
     try emitter.output.writer.print("define i32 @{s}(i32 %argc, ptr %argv) !dbg !{d} {{\nentry:\n", .{ entry_name, scope });
     try emitter.output.writer.writeAll("  %runtime.status = call i32 @lnako_aot_runtime_init()\n");
-    if (emitter.compat_esm_manifest) |manifest| {
-        try emitter.output.writer.print("  call void @lnako_aot_compat_esm_register(ptr @lnako.compat.esm.manifest, i64 {d})\n", .{manifest.len});
-        // ESM登録失敗（manifest不正・QuickJS初期化失敗）をエントリ実行前に
-        // 既存の例外経路で終了させる。
-        try emitter.output.writer.writeAll("  %entry.compat.esm.exception.pending = call i32 @lnako_aot_exception_pending()\n");
-        try emitter.output.writer.writeAll("  %entry.compat.esm.exception.is-pending = icmp ne i32 %entry.compat.esm.exception.pending, 0\n");
-        try emitter.output.writer.writeAll("  br i1 %entry.compat.esm.exception.is-pending, label %entry.compat.esm.exception.abort, label %entry.compat.esm.continue\n");
-        try emitter.output.writer.writeAll("entry.compat.esm.exception.abort:\n  call void @lnako_aot_exception_abort()\n  unreachable\nentry.compat.esm.continue:\n");
-    }
     for (emitter.program.native_plugin_paths, 0..) |path, index| {
         try emitter.output.writer.print("  call void @lnako_aot_native_plugin_register(ptr @lnako.native.plugin.path.{d}, i64 {d})\n", .{ index, path.len });
     }
@@ -440,7 +469,8 @@ pub fn writeMain(emitter: *Emitter) !void {
         try emitter.output.writer.print("  %global.root.frame.{d} = alloca %lnako.RootFrame\n", .{global_index});
         try emitter.output.writer.print("  call void @lnako_aot_push_roots(ptr %global.root.frame.{d}, ptr @lnako.global.{d}, i64 1)\n", .{ global_index, global_index });
     }
-    if (try emitter.hasDynamicBuiltin()) for (emitter.globals.items, 0..) |name, global_index| {
+    if ((try emitter.hasDynamicBuiltin()) or emitter.hasCompatJsVariableBridge()) for (emitter.globals.items, 0..) |name, global_index| {
+        if (emitter.hasCompatJsVariableBridge() and (try emitter.isNamedFunctionOnlyGlobal(name))) continue;
         try emitter.output.writer.print("  call void @lnako_aot_dynamic_global_register(ptr @lnako.global.name.{d}, i64 {d}, ptr @lnako.global.{d})\n", .{ global_index, name.len, global_index });
     };
     for (emitter.system_strings.items, 0..) |constant, index| {
@@ -501,6 +531,18 @@ pub fn writeMain(emitter: *Emitter) !void {
         try emitter.output.writer.writeAll(", ptr ");
         if (emitter.globalIndex("FILESデータ")) |global_index| try emitter.output.writer.print("@lnako.global.{d}", .{global_index}) else try emitter.output.writer.writeAll("null");
         try emitter.output.writer.writeAll(")\n");
+    }
+    // ESM登録は、グローバル変数・システム定数・AOT関数の初期化がすべて
+    // 完了した後、トップレベル評価の直前に行う。ESMのinitフックから
+    // `sys.__getSysVar` 等でこれらを参照できるようにする。
+    if (emitter.compat_esm_manifest) |manifest| {
+        try emitter.output.writer.print("  call void @lnako_aot_compat_esm_register(ptr @lnako.compat.esm.manifest, i64 {d})\n", .{manifest.len});
+        // ESM登録失敗（manifest不正・QuickJS初期化失敗）をエントリ実行前に
+        // 既存の例外経路で終了させる。
+        try emitter.output.writer.writeAll("  %entry.compat.esm.exception.pending = call i32 @lnako_aot_exception_pending()\n");
+        try emitter.output.writer.writeAll("  %entry.compat.esm.exception.is-pending = icmp ne i32 %entry.compat.esm.exception.pending, 0\n");
+        try emitter.output.writer.writeAll("  br i1 %entry.compat.esm.exception.is-pending, label %entry.compat.esm.exception.abort, label %entry.compat.esm.continue\n");
+        try emitter.output.writer.writeAll("entry.compat.esm.exception.abort:\n  call void @lnako_aot_exception_abort()\n  unreachable\nentry.compat.esm.continue:\n");
     }
     // 取り込み先のトップレベルは取り込み文位置での呼び出しとして各関数へ
     // 埋め込まれているため、起動時に実行するのはルートのエントリのみ。

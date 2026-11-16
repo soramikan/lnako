@@ -169,6 +169,13 @@ pub const Emitter = struct {
         return commands.contains(.system_nadesiko) or commands.contains(.system_nadesiko_continue);
     }
 
+    /// `--compat-js` 変数bridge（ローカルフレーム・未束縛sentinel・
+    /// QuickJSホスト変数bridge）を生成するか。通常AOTではfalseであり、
+    /// 追加IR・シンボル・オーバーヘッドを一切出さない。
+    pub fn hasCompatJsVariableBridge(self: Emitter) bool {
+        return self.program.compat_js;
+    }
+
     /// 終了時drainで回収が必要な非同期タスクを生成し得る命令が存在するか。
     /// 無ければ生成コードは軽量drainを呼び、timer/process/archive/http等の
     /// 実装への参照が消えてdead-stripできる。
@@ -233,6 +240,27 @@ pub const Emitter = struct {
         }
         const index = self.function_index.?.get(name) orelse return null;
         return self.program.functions[index];
+    }
+
+    /// 名前付き関数専用に確保されたグローバルスロットか。
+    /// 関数名と同名の関数が存在し、プログラム内にその名前をグローバル変数として
+    /// 書き込む命令（`store_global`・非ローカルの `destructure_store` / `ensure_array_var`）が
+    /// 無い場合に真となる。`--compat-js` の `dynamic_globals` 登録から除外し、
+    /// 名前解決で関数スロットが変数サフィックス探索を隠さないようにする。
+    pub fn isNamedFunctionOnlyGlobal(self: *Emitter, name: []const u8) !bool {
+        if (!isNamedGlobalFunction(name)) return false;
+        if ((try self.findFunction(name)) == null) return false;
+        for (self.program.functions) |function| for (function.blocks) |block| for (block.instructions) |instruction| {
+            switch (instruction.opcode) {
+                .store_global => if (std.mem.eql(u8, instruction.name, name)) return false,
+                .destructure_store => for (instruction.names, 0..) |target_name, index| {
+                    if (!ir.destructureTargetIsLocal(instruction, index) and std.mem.eql(u8, target_name, name)) return false;
+                },
+                .ensure_array_var => if (!instruction.local_target and std.mem.eql(u8, instruction.name, name)) return false,
+                else => {},
+            }
+        };
+        return true;
     }
 };
 
@@ -400,6 +428,17 @@ pub const DynamicCallTarget = union(enum) { name: []const u8, value: ir.ValueId 
 
 pub fn isNamedGlobalFunction(name: []const u8) bool {
     return !std.mem.endsWith(u8, name, "__$entry") and std.mem.indexOf(u8, name, "__lambda$") == null;
+}
+
+/// 関数の実行中にQuickJS互換命令・任意の関数呼び出しへ到達し得るか。
+/// 呼び出しを一切含まないリーフ関数は、その実行中に変数bridgeから
+/// ローカル変数を観測されないため `AotVarFrame` を省略できる。
+pub fn functionMayInvokeBridge(function: ir.Function) bool {
+    for (function.blocks) |block| for (block.instructions) |instruction| switch (instruction.opcode) {
+        .call, .call_value, .iterator_begin, .iterator_has_next, .iterator_next => return true,
+        else => {},
+    };
+    return false;
 }
 
 pub fn runtimeArithmeticOpcode(operator: []const u8) ?u8 {

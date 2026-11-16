@@ -43,7 +43,14 @@ fn writeScopeRestore(emitter: *Emitter, block_id: ir.BlockId, sore_slot: ?usize)
     try emitter.output.writer.print("  store %lnako.Value %scope.sore.caller.{d}, ptr @lnako.global.{d}\n", .{ block_id, global_index });
 }
 
-pub fn writeTerminator(emitter: *Emitter, function: ir.Function, block_id: ir.BlockId, terminator: ir.Terminator, span: ast.Span, scope: usize, sore_slot: ?usize) !void {
+/// `--compat-js` 変数bridgeのフレームを、root frameを外す直前にpopする。
+/// sore_scopeの復元より後・`lnako_aot_pop_roots`より前で対称性を保つ。
+fn writeVariableFramePop(emitter: *Emitter, var_frame: bool) !void {
+    if (!var_frame) return;
+    try emitter.output.writer.writeAll("  call void @lnako_aot_pop_var_frame(ptr %var.frame)\n");
+}
+
+pub fn writeTerminator(emitter: *Emitter, function: ir.Function, block_id: ir.BlockId, terminator: ir.Terminator, span: ast.Span, scope: usize, sore_slot: ?usize, var_frame: bool) !void {
     switch (terminator) {
         .branch => |target| {
             try emitter.output.writer.print("  br label %bb{d}", .{target});
@@ -65,6 +72,7 @@ pub fn writeTerminator(emitter: *Emitter, function: ir.Function, block_id: ir.Bl
                 try emitter.output.writer.print("  %scope.sore.result.{d} = load %lnako.Value, ptr @lnako.global.{d}\n", .{ block_id, global_index });
             }
             try writeScopeRestore(emitter, block_id, sore_slot);
+            try writeVariableFramePop(emitter, var_frame);
             try emitter.output.writer.writeAll("  call void @lnako_aot_pop_roots(ptr %root.frame)\n");
             try emitter.output.writer.writeAll("  ret %lnako.Value ");
             if (value) |operand| {
@@ -89,6 +97,7 @@ pub fn writeTerminator(emitter: *Emitter, function: ir.Function, block_id: ir.Bl
                 try emitter.debugSuffix(span, scope);
             } else {
                 try writeScopeRestore(emitter, block_id, sore_slot);
+                try writeVariableFramePop(emitter, var_frame);
                 try emitter.output.writer.writeAll("  call void @lnako_aot_pop_roots(ptr %root.frame)\n");
                 try emitter.output.writer.writeAll("  ret %lnako.Value { i8 0, i64 0 }");
                 try emitter.debugSuffix(span, scope);
@@ -96,6 +105,7 @@ pub fn writeTerminator(emitter: *Emitter, function: ir.Function, block_id: ir.Bl
         },
         .propagate_exception => {
             try writeScopeRestore(emitter, block_id, sore_slot);
+            try writeVariableFramePop(emitter, var_frame);
             try emitter.output.writer.writeAll("  call void @lnako_aot_pop_roots(ptr %root.frame)\n");
             try emitter.output.writer.writeAll("  ret %lnako.Value { i8 0, i64 0 }");
             try emitter.debugSuffix(span, scope);

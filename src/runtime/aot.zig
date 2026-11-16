@@ -107,4 +107,6 @@ pub const lnako_aot_node_directory_constants_init = debug.lnako_aot_node_directo
 pub const lnako_aot_node_mother_path_init = debug.lnako_aot_node_mother_path_init;
 pub const lnako_aot_push_roots = debug.lnako_aot_push_roots;
 pub const lnako_aot_pop_roots = debug.lnako_aot_pop_roots;
+pub const lnako_aot_push_var_frame = debug.lnako_aot_push_var_frame;
+pub const lnako_aot_pop_var_frame = debug.lnako_aot_pop_var_frame;
 pub const lnako_aot_collect = debug.lnako_aot_collect;

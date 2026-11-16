@@ -51,6 +51,8 @@ const runtime_core_module = @import("runtime_core.zig");
 
 pub const Value = runtime_core_module.Value;
 pub const RootFrame = runtime_core_module.RootFrame;
+pub const AotVarEntry = runtime_core_module.AotVarEntry;
+pub const AotVarFrame = runtime_core_module.AotVarFrame;
 pub const DictionaryEntry = runtime_core_module.DictionaryEntry;
 pub const AotDictionary = runtime_core_module.AotDictionary;
 pub const aot_dictionary_index_threshold = runtime_core_module.aot_dictionary_index_threshold;

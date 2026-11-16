@@ -1,6 +1,7 @@
 const std = @import("std");
 const aot_state = @import("state.zig");
 const shared = @import("shared.zig");
+const system_constant = @import("../system_constant.zig");
 const lnako_ir = @import("../../ir/nako_ir.zig");
 const environment = @import("../environment.zig");
 const counters = @import("../counters.zig");
@@ -71,6 +72,17 @@ pub const Value = extern struct {
             else => null,
         };
     }
+
+    /// 変数スロットが確保されただけで、まだ一度も値が代入されていないこと
+    /// を表す内部sentinel。tagは`Tag.undefined`のままpayloadだけを1にする
+    /// ことで、GC (`markValue`) や既存のundefined判定には影響しない。
+    pub fn unboundValue() Value {
+        return .{ .tag = @backingInt(Tag.undefined), .payload = 1 };
+    }
+
+    pub fn isUnbound(self: Value) bool {
+        return self.tag == @backingInt(Tag.undefined) and self.payload == 1;
+    }
 };
 
 pub const RootFrame = extern struct {
@@ -78,6 +90,31 @@ pub const RootFrame = extern struct {
     values: ?[*]Value = null,
     len: usize = 0,
 };
+
+/// `--compat-js` 変数bridgeが関数ローカルの名前とスロットを対応付ける
+/// コンパイル時定数。LLVM IRの `%lnako.AotVarEntry` とABI一致させる。
+pub const AotVarEntry = extern struct {
+    name_ptr: [*]const u8,
+    name_len: usize,
+};
+
+/// 実行中の関数フレーム1つ分。生成コードの関数プロローグでpushし、全脱出
+/// 経路でpopする。`slots[i]` は `entries[i]` の値を保持するroot slotを指す。
+/// `.cell` ローカルのslotは `BindingCell` を保持するため、解決側で
+/// `binding_cell` をアンラップする。
+pub const AotVarFrame = extern struct {
+    previous: ?*AotVarFrame = null,
+    entries: ?[*]const AotVarEntry = null,
+    len: usize = 0,
+    slots: ?[*]const *const Value = null,
+};
+
+comptime {
+    std.debug.assert(@sizeOf(AotVarEntry) == 16);
+    std.debug.assert(@alignOf(AotVarEntry) == 8);
+    std.debug.assert(@sizeOf(AotVarFrame) == 32);
+    std.debug.assert(@alignOf(AotVarFrame) == 8);
+}
 
 pub const DictionaryEntry = struct { key: Value, value: Value };
 
@@ -357,6 +394,8 @@ pub const Runtime = struct {
     allocator: std.mem.Allocator,
     objects: ?*Object = null,
     roots: ?*RootFrame = null,
+    /// `--compat-js` 変数bridgeのローカルフレーム。通常AOTではnullのまま。
+    var_frames: ?*AotVarFrame = null,
     grey: ?*Object = null,
     object_count: usize = 0,
     next_collection: usize = 64,
@@ -1066,6 +1105,105 @@ pub const Runtime = struct {
         frame.* = .{};
     }
 
+    /// 生成コードの関数プロローグが呼ぶ。`frame` は呼出し側の関数スタックに
+    /// 確保され、関数を抜けるまで有効であり続ける。
+    pub fn pushVarFrame(self: *Runtime, frame: *AotVarFrame, entries: ?[*]const AotVarEntry, len: usize, slots: ?[*]const *const Value) void {
+        frame.* = .{ .previous = self.var_frames, .entries = entries, .len = len, .slots = slots };
+        self.var_frames = frame;
+    }
+
+    /// LIFO順でないpop（例外巻戻しの重複など）は現在のフレームを壊さない。
+    pub fn popVarFrame(self: *Runtime, frame: *AotVarFrame) void {
+        if (self.var_frames != frame) return;
+        self.var_frames = frame.previous;
+        frame.* = .{};
+    }
+
+    /// `--compat-js` の1引数 `JSオブジェクト取得` とQuickJSホスト変数bridgeが
+    /// 共有する統合解決。優先順はローカルフレーム（内側→外側）→
+    /// 動的グローバル→名前付き関数→システム定数。
+    pub fn aotCompatResolve(self: *Runtime, name: []const u8) !?Value {
+        var frame_pointer = self.var_frames;
+        while (frame_pointer) |frame| : (frame_pointer = frame.previous) {
+            if (frame.len == 0) continue;
+            const entries = (frame.entries orelse continue)[0..frame.len];
+            const slots = (frame.slots orelse continue)[0..frame.len];
+            // 同一フレーム内に同名がある場合は後ろ（内側）を優先する。
+            var index = entries.len;
+            while (index > 0) {
+                index -= 1;
+                const entry = entries[index];
+                if (!std.mem.eql(u8, entry.name_ptr[0..entry.name_len], name)) continue;
+                const raw = slots[index].*;
+                const value: Value = if (raw.tag == @backingInt(Tag.binding_cell)) blk: {
+                    const object = raw.object() orelse break :blk Value.unboundValue();
+                    if (object.payload != .binding_cell) break :blk Value.unboundValue();
+                    break :blk object.payload.binding_cell;
+                } else raw;
+                // 未代入のローカルはスキップして外側のフレーム／グローバルへ
+                // フォールバックする。明示的な`未定義`({0,0})は束縛済み。
+                if (!value.isUnbound()) return value;
+                break;
+            }
+        }
+        if (try self.resolveDynamicGlobalValue(name)) |value| return value;
+        if (try aot_state.resolveNamedFunctionValue(self, name)) |value| return value;
+        return try self.getAotSystemConstant(name);
+    }
+
+    /// `dynamic_globals` の完全一致→`{module}__{name}` サフィックス一致の順で
+    /// 束縛済みの値を解決する。異なる修飾名で複数一致した場合は曖昧性エラー。
+    fn resolveDynamicGlobalValue(self: *Runtime, name: []const u8) !?Value {
+        for (self.dynamic_globals.items) |entry| {
+            if (!std.mem.eql(u8, entry.name, name)) continue;
+            const value = dynamicGlobalEntryValue(entry);
+            if (!value.isUnbound()) return value;
+            break;
+        }
+
+        var matched_name: ?[]const u8 = null;
+        var matched_value: ?Value = null;
+        for (self.dynamic_globals.items) |entry| {
+            if (!moduleSuffixMatches(entry.name, name)) continue;
+            const value = dynamicGlobalEntryValue(entry);
+            if (value.isUnbound()) continue;
+            if (matched_name) |previous| if (!std.mem.eql(u8, previous, entry.name)) return error.AmbiguousGlobal;
+            matched_name = entry.name;
+            matched_value = value;
+        }
+        return matched_value;
+    }
+
+    /// `src/runtime/system_constant.zig` のシステム定数をAOT値へ変換する。
+    /// 見つからなければnullを返し、呼び出し側はQuickJS `globalThis` 等の
+    /// 後続フォールバックへ進む。
+    pub fn getAotSystemConstant(self: *Runtime, name: []const u8) !?Value {
+        if (system_constant.lookupScalar(name)) |scalar| return switch (scalar) {
+            .undefined => Value{},
+            .null_value => Value{ .tag = @backingInt(Tag.null_value), .payload = 0 },
+            .boolean => |boolean| Value{ .tag = @backingInt(Tag.boolean), .payload = @intFromBool(boolean) },
+            .number => |number| numberValue(number),
+        };
+        if (system_constant.lookupString(name)) |text| {
+            // `ownString` 側が失敗時の解放 (`errdefer self.allocator.free`) を担うため、
+            // ここで二重に `errdefer` すると OOM 時に二重解放になる。
+            const units = try std.unicode.utf8ToUtf16LeAlloc(self.allocator, text);
+            return try self.ownString(units);
+        }
+        if (system_constant.isArray(name)) return try self.createArray(&.{});
+        if (system_constant.isDictionary(name)) return try aot_state.caniuseAgentsBuiltin(self);
+        if (system_constant.isEraData(name)) return try aot_state.eraDataBuiltin(self);
+        if (std.mem.eql(u8, name, "AJAX:ONERROR")) return Value{ .tag = @backingInt(Tag.null_value), .payload = 0 };
+        if (std.mem.eql(u8, name, "母艦パス")) {
+            if (self.aot_source_directory) |dir| return try aot_state.runtimeUtf8StringLossy(self, dir);
+            return null;
+        }
+        if (std.mem.eql(u8, name, "デスクトップ")) return try aot_state.nodeDirectoryBuiltin(self, .node_desktop);
+        if (std.mem.eql(u8, name, "マイドキュメント")) return try aot_state.nodeDirectoryBuiltin(self, .node_documents);
+        if (std.mem.eql(u8, name, "テンポラリフォルダ")) return try aot_state.nodeDirectoryBuiltin(self, .node_temporary_directory);
+        return null;
+    }
+
     pub fn collect(self: *Runtime) usize {
         self.counters.gc_collections +|= 1;
         const mark_started = if (self.allocator_telemetry != null) allocator_telemetry.nowNs() else 0;
@@ -1075,7 +1213,9 @@ pub const Runtime = struct {
         }
         if (self.has_pending_exception) self.markValue(self.pending_exception);
         self.markValue(self.system_context);
-        for (self.dynamic_globals.items) |entry| self.markValue(entry.value);
+        // slotを持つ静的グローバルは `%global.root.frame` がmarkする。ここで
+        // entry.value もmarkすると、上書き後の古い値が回収されなくなる。
+        for (self.dynamic_globals.items) |entry| if (entry.slot == null) self.markValue(entry.value);
         for (self.dynamic_promise_bridges.items) |bridge| self.markValue(bridge.aot_promise);
         for (self.dynamic_function_bridges.items) |bridge| self.markValue(bridge.value);
         self.markValue(self.caniuse_browsers);
@@ -1459,6 +1599,19 @@ pub const Runtime = struct {
         std.debug.print("lnako perf counters: {}\n", .{self.counters});
     }
 };
+
+/// `DynamicGlobal` の唯一の正本を読む。slotを持つ静的グローバルはslotだけが
+/// 正本であり、`entry.value` は空のまま保たれる。
+fn dynamicGlobalEntryValue(entry: DynamicGlobal) Value {
+    return if (entry.slot) |slot| slot.* else entry.value;
+}
+
+/// `{module}__{name}` 形式のモジュールサフィックス一致。
+fn moduleSuffixMatches(entry_name: []const u8, name: []const u8) bool {
+    if (entry_name.len <= name.len + 2) return false;
+    if (!std.mem.endsWith(u8, entry_name, name)) return false;
+    return std.mem.eql(u8, entry_name[entry_name.len - name.len - 2 .. entry_name.len - name.len], "__");
+}
 
 test {
     _ = @import("runtime_core_test.zig");

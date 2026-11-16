@@ -122,15 +122,16 @@ pub export fn lnako_aot_dynamic_global_register(name: ?[*]const u8, len: usize, 
     };
     const name_slice = name_pointer[0..len];
     if (state.dynamicGlobal(runtime, name_slice)) |entry| {
+        // slotが正本。entry.valueへ値を複製しない（古い値のGCルート滞留防止）。
         entry.slot = value_slot;
-        entry.value = value_slot.*;
+        entry.value = .{};
         return;
     }
     const owned_name = runtime.allocator.dupe(u8, name_slice) catch |failure| {
         runtime.setFailure(failure);
         return;
     };
-    runtime.dynamic_globals.append(runtime.allocator, .{ .name = owned_name, .value = value_slot.*, .slot = value_slot }) catch |failure| {
+    runtime.dynamic_globals.append(runtime.allocator, .{ .name = owned_name, .value = .{}, .slot = value_slot }) catch |failure| {
         runtime.allocator.free(owned_name);
         runtime.setFailure(failure);
     };
