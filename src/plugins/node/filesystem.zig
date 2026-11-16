@@ -137,9 +137,20 @@ pub fn callFilesystem(runtime: *Runtime, state: *State, context: Context, effect
         return @as(?Value, .undefined);
     }
     if (std.mem.eql(u8, name, "一時フォルダ作成")) {
-        const prefix = try valueUtf8(runtime, source);
-        defer runtime.allocator().free(prefix);
-        const effective_prefix = if (prefix.len == 0) context.temporary_directory else prefix;
+        // 公式v3.7.24は引数がfalseyならos.tmpdir()をmkdtempSyncの接頭辞へ
+        // そのまま渡すため、Linuxでは`/tmpXXXXXX`を作ろうとして失敗する。
+        // 公式v3.8.10は`<TMPDIR>/nako-`を接頭辞にして一時フォルダ配下へ作る。
+        // lnakoは省略・空・空白のみのときにv3.8.10の既定動作を使い、明示した
+        // 接頭辞はv3.7.24互換（prefix+6文字）のまま維持する。
+        const missing = source == .undefined or source == .null_value;
+        const prefix = if (missing) "" else try valueUtf8(runtime, source);
+        defer if (!missing) runtime.allocator().free(prefix);
+        var joined_prefix: ?[]u8 = null;
+        defer if (joined_prefix) |allocated| runtime.allocator().free(allocated);
+        const effective_prefix = if (missing or std.mem.trim(u8, prefix, " \t\r\n").len == 0) blk: {
+            joined_prefix = try std.fs.path.join(runtime.allocator(), &.{ context.temporary_directory, "nako-" });
+            break :blk joined_prefix.?;
+        } else prefix;
         const function = context.createTemporaryDirectoryFn orelse return error.CreateTemporaryDirectoryUnavailable;
         const path = try function(context.context, runtime.allocator(), effective_prefix);
         defer runtime.allocator().free(path);

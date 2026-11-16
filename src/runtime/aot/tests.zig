@@ -172,6 +172,7 @@ const nodeBasenameFor = state.nodeBasenameFor;
 const nodeBasenameWideFor = state.nodeBasenameWideFor;
 const nodeChangeDirectoryBuiltin = state.nodeChangeDirectoryBuiltin;
 const nodeCreateTemporaryDirectoryBuiltin = state.nodeCreateTemporaryDirectoryBuiltin;
+const nodeTemporaryDirectoryPrefixAlloc = state.nodeTemporaryDirectoryPrefixAlloc;
 const nodeCryptoBuiltin = state.nodeCryptoBuiltin;
 const nodeCurrentDirectoryBuiltin = state.nodeCurrentDirectoryBuiltin;
 const nodeDirectoryBuiltin = state.nodeDirectoryBuiltin;
@@ -1813,6 +1814,39 @@ test "AOT一時フォルダ作成は6文字suffixと衝突回避を保つ" {
     try std.testing.expect(!std.mem.eql(u8, first, second));
     const second_stat = try std.Io.Dir.cwd().statFile(std.Io.Threaded.global_single_threaded.io(), second, .{});
     try std.testing.expectEqual(.directory, second_stat.kind);
+}
+
+test "AOT一時フォルダ作成は省略時にテンポラリ配下のnako-接頭辞を使う" {
+    var runtime = Runtime{ .allocator = std.testing.allocator, .random_state = default_random_seed };
+    defer runtime.deinit();
+    var roots = @as([2]Value, @splat(.{}));
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    const temporary_directory = try nodeTemporaryDirectoryPrefixAlloc(&runtime);
+    defer runtime.allocator.free(temporary_directory);
+    const expected_prefix = try std.fs.path.join(runtime.allocator, &.{ temporary_directory, "nako-" });
+    defer runtime.allocator.free(expected_prefix);
+
+    var arguments = [_]Value{.{}};
+    roots[0] = try nodeCreateTemporaryDirectoryBuiltin(&runtime, &arguments);
+    const created = try valueUtf8LossyAlloc(&runtime, roots[0]);
+    defer runtime.allocator.free(created);
+    defer std.Io.Dir.cwd().deleteTree(std.Io.Threaded.global_single_threaded.io(), created) catch {};
+    try std.testing.expect(std.mem.startsWith(u8, created, expected_prefix));
+    try std.testing.expectEqual(expected_prefix.len + 6, created.len);
+    const created_stat = try std.Io.Dir.cwd().statFile(std.Io.Threaded.global_single_threaded.io(), created, .{});
+    try std.testing.expectEqual(.directory, created_stat.kind);
+
+    var empty_arguments = [_]Value{staticStringValue("")};
+    roots[1] = try nodeCreateTemporaryDirectoryBuiltin(&runtime, &empty_arguments);
+    const empty_created = try valueUtf8LossyAlloc(&runtime, roots[1]);
+    defer runtime.allocator.free(empty_created);
+    defer std.Io.Dir.cwd().deleteTree(std.Io.Threaded.global_single_threaded.io(), empty_created) catch {};
+    try std.testing.expect(std.mem.startsWith(u8, empty_created, expected_prefix));
+    try std.testing.expectEqual(expected_prefix.len + 6, empty_created.len);
+    try std.testing.expect(!std.mem.eql(u8, created, empty_created));
 }
 
 test "AOT環境変数取得はC環境から値を読み未設定をundefinedにする" {

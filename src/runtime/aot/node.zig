@@ -467,15 +467,24 @@ pub fn nodeTemporaryDirectoryPrefixAlloc(runtime: *Runtime) ![]u8 {
 
 pub fn nodeCreateTemporaryDirectoryBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     if (arguments.len < 1) return error.InvalidArgumentCount;
-    const prefix = try valueUtf8LossyAlloc(runtime, arguments[0]);
-    defer runtime.allocator.free(prefix);
+    // 公式v3.7.24は引数がfalseyならos.tmpdir()をmkdtempSyncの接頭辞へそのまま
+    // 渡すため、Linuxでは`/tmpXXXXXX`を作ろうとして失敗する。公式v3.8.10は
+    // `<TMPDIR>/nako-`を接頭辞にして一時フォルダ配下へ作る。lnakoは省略・空・
+    // 空白のみのときにv3.8.10の既定動作を使い、明示した接頭辞はv3.7.24互換
+    // （prefix+6文字）のまま維持する。
+    const tag = @as(Tag, @fromBackingInt(@intCast(arguments[0].tag)));
+    const missing = tag == .undefined or tag == .null_value;
+    const prefix = if (missing) "" else try valueUtf8LossyAlloc(runtime, arguments[0]);
+    defer if (!missing) runtime.allocator.free(prefix);
 
     var fallback_prefix: ?[]u8 = null;
-    const effective_prefix = if (prefix.len == 0) blk: {
-        fallback_prefix = try nodeTemporaryDirectoryPrefixAlloc(runtime);
+    defer if (fallback_prefix) |value| runtime.allocator.free(value);
+    const effective_prefix = if (missing or std.mem.trim(u8, prefix, " \t\r\n").len == 0) blk: {
+        const temporary_directory = try nodeTemporaryDirectoryPrefixAlloc(runtime);
+        defer runtime.allocator.free(temporary_directory);
+        fallback_prefix = try std.fs.path.join(runtime.allocator, &.{ temporary_directory, "nako-" });
         break :blk fallback_prefix.?;
     } else prefix;
-    defer if (fallback_prefix) |value| runtime.allocator.free(value);
 
     const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
     const io = std.Io.Threaded.global_single_threaded.io();
