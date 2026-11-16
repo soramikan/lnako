@@ -46,9 +46,17 @@ const HostReleaseFn = *const fn (*anyopaque, usize, u64) callconv(.c) void;
 const HostExecFn = *const fn (*anyopaque, [*:0]const u8, [*c]const *const RawValue, usize) callconv(.c) ?*RawValue;
 
 pub extern fn lnako_qjs_new() ?*Engine;
-pub extern fn lnako_qjs_set_host(engine: *Engine, context: *anyopaque, get: HostGetFn, set: HostSetFn, invoke: HostInvokeFn, exec: HostExecFn) void;
+/// `context` と4つのコールバックはすべて省略可能。teardown では `null` を渡して
+/// QuickJS 側の host 呼出しを遮断する（`src/compat/quickjs_bridge.h` と同じ契約）。
+pub extern fn lnako_qjs_set_host(
+    engine: *Engine,
+    context: ?*anyopaque,
+    get: ?HostGetFn,
+    set: ?HostSetFn,
+    invoke: ?HostInvokeFn,
+    exec: ?HostExecFn,
+) void;
 pub extern fn lnako_qjs_set_host_release(engine: *Engine, release: ?HostReleaseFn) void;
-pub extern fn lnako_qjs_set_host_strict(engine: *Engine, strict: c_int) void;
 pub extern fn lnako_qjs_add_module_source(engine: *Engine, name: [*:0]const u8, source: [*]const u8, length: usize, package_root: ?[*:0]const u8) c_int;
 pub extern fn lnako_qjs_add_module_alias(engine: *Engine, alias: [*:0]const u8, target: [*:0]const u8) c_int;
 pub extern fn lnako_qjs_release(engine: *Engine) void;
@@ -98,17 +106,81 @@ pub extern fn lnako_qjs_to_number(value: *const RawValue, result: *f64) c_int;
 pub extern fn lnako_qjs_to_string(value: *const RawValue, length: *usize) ?[*:0]u8;
 pub extern fn lnako_qjs_value_free(value: *RawValue) void;
 
-/// AOT runtimeにはinterpreterのhost値bridgeが無い。ESM moduleの評価中に
-/// `sys.__getSysVar` 等が呼ばれても未定義動作にしないため、明示的な
-/// 未対応応答を返すstubを渡す。
+/// QuickJS の host 変数 bridge（`sys.__getSysVar` / `sys.__findVar` /
+/// `sys.__setSysVar`）から AOT runtime へ入る入口。context は使わず、
+/// 現在の実行 object を `state.active_runtime` から取る（interpreter の
+/// `hostGet` / `hostSet` と同じ役割）。
 var host_context: u8 = 0;
 
-fn hostGet(_: *anyopaque, _: [*:0]const u8, _: c_int) callconv(.c) ?*RawValue {
-    return null;
+/// `sys.__findVar(name, default)` は interpreter の `Effects.resolve` と同じ
+/// 統合解決（ローカル→動的グローバル→名前付き関数→システム定数）を使い、
+/// 公式と同じ truthiness 判定で falsy を既定値へ落とす。
+/// `sys.__getSysVar(name, default)` は公式 `effects.getGlobal` と同じく
+/// 動的グローバルの完全一致だけを探し、無ければシステム定数を見る。
+/// 解決失敗・未対応型は例外を残さず `null` を返し、QuickJS 側で既定値／
+/// `undefined` へフォールバックさせる。
+fn hostGet(_: *anyopaque, name_c: [*:0]const u8, find_variable: c_int) callconv(.c) ?*RawValue {
+    const runtime = if (state.active_runtime) |*active| active else return null;
+    const engine_value = engine orelse return null;
+    const name = std.mem.span(name_c);
+    const had_pending = runtime.has_pending_exception;
+    const value = if (find_variable != 0) blk: {
+        const resolved = (runtime.aotCompatResolve(name) catch {
+            clearNewPendingException(runtime, had_pending);
+            return null;
+        }) orelse return null;
+        // 公式の `__findVar` は Map の取得値を truthy 判定するため、0・false・
+        // 空文字列・null・undefined は「見つからない」扱いで既定値になる。
+        if (!state.valueTruthy(resolved)) return null;
+        break :blk resolved;
+    } else blk: {
+        var exact: ?Value = null;
+        for (runtime.dynamic_globals.items) |entry| {
+            if (!std.mem.eql(u8, entry.name, name)) continue;
+            const candidate = if (entry.slot) |slot| slot.* else entry.value;
+            if (!candidate.isUnbound()) exact = candidate;
+            break;
+        }
+        // 完全一致が未束縛なら、変数未使用時の初期値としてシステム定数を見る。
+        if (exact) |resolved| break :blk resolved;
+        break :blk (runtime.getAotSystemConstant(name) catch {
+            clearNewPendingException(runtime, had_pending);
+            return null;
+        }) orelse return null;
+    };
+    // 変換は Nako の object を確保するため、値が GC で回収されないよう root する。
+    var value_roots = [_]Value{value};
+    var value_frame: state.RootFrame = .{};
+    runtime.pushRoots(&value_frame, &value_roots, value_roots.len);
+    defer runtime.popRoots(&value_frame);
+    var sync = SyncState{ .full_values = true };
+    defer sync.deinit(runtime.allocator);
+    return compat_js_result.syncValueRaw(runtime, engine_value, value_roots[0], &sync, 0) catch {
+        clearNewPendingException(runtime, had_pending);
+        return null;
+    };
 }
 
-fn hostSet(_: *anyopaque, _: [*:0]const u8, _: *const RawValue) callconv(.c) c_int {
-    return -1;
+/// `sys.__setSysVar(name, value)`。QuickJS の C bridge はスタック上の借用
+/// `LnakoQuickJsValue` を渡すため、変換で消費する前に必ず dup する。
+fn hostSet(_: *anyopaque, name_c: [*:0]const u8, raw: *const RawValue) callconv(.c) c_int {
+    const runtime = if (state.active_runtime) |*active| active else return -1;
+    if (engine == null) return -1;
+    const had_pending = runtime.has_pending_exception;
+    const owned = lnako_qjs_dup(raw) orelse return -1;
+    const converted = compat_js_result.jsEvalResult(runtime, owned) catch {
+        clearNewPendingException(runtime, had_pending);
+        return -1;
+    };
+    var converted_roots = [_]Value{converted};
+    var converted_frame: state.RootFrame = .{};
+    runtime.pushRoots(&converted_frame, &converted_roots, converted_roots.len);
+    defer runtime.popRoots(&converted_frame);
+    state.upsertDynamicGlobal(runtime, std.mem.span(name_c), converted_roots[0]) catch {
+        clearNewPendingException(runtime, had_pending);
+        return -1;
+    };
+    return 0;
 }
 
 fn hostInvoke(_: *anyopaque, function_id: usize, generation: u64, raw_arguments: [*c]const *const RawValue, count: usize) callconv(.c) ?*RawValue {
@@ -210,7 +282,14 @@ fn compatTrace(rt: *state.Runtime) void {
     }.mark) catch {};
 }
 
-fn compatDeinit(rt: *state.Runtime) void {
+/// runtime の deinit から呼ばれる。QuickJS 側の host コールバックを先に
+/// 遮断してから host 関数テーブルを解放し、破棄済み runtime への dangling
+/// 参照を残さない（engine 自体の解放は `lnako_aot_compat_deinit` が行う）。
+pub fn compatDeinit(rt: *state.Runtime) void {
+    if (engine) |value| {
+        lnako_qjs_set_host_release(value, null);
+        lnako_qjs_set_host(value, null, null, null, null, null);
+    }
     if (host_runtime == rt) {
         deinitHostFunctions();
         rt.compat_trace = null;
@@ -290,10 +369,6 @@ fn clearNewPendingException(runtime: *state.Runtime, had_pending: bool) void {
     }
 }
 
-fn hostExec(_: *anyopaque, _: [*:0]const u8, _: [*c]const *const RawValue, _: usize) callconv(.c) ?*RawValue {
-    return null;
-}
-
 var engine: ?*Engine = null;
 var engine_failed = false;
 
@@ -302,25 +377,45 @@ pub fn activeEngine() ?*Engine {
     return engine;
 }
 
+fn bindHostBridge(engine_value: *Engine) void {
+    // `sys.__exec`（組み込み命令の文字列dispatch）は AOT では未対応のため、
+    // exec コールバックを渡さない。QuickJS 側が
+    // "lnako host command bridge is unavailable" を投げ、JS の try/catch で
+    // 捕捉できる明示エラーになる。
+    lnako_qjs_set_host(engine_value, @ptrCast(&host_context), hostGet, hostSet, hostInvoke, null);
+    // host 変数 bridge は `state.active_runtime` 経由で runtime を引くが、
+    // host 関数テーブルと GC hook は runtime ごとに所有する。engine 再利用時・
+    // 生成時のどちらでも、`compatDeinit` 後の再接続や runtime 切替えに備えて
+    // 実行中 runtime と結び付け直す。
+    if (state.active_runtime) |*rt| {
+        if (host_runtime != null and host_runtime != rt) deinitHostFunctions();
+        host_runtime = rt;
+        host_allocator = rt.allocator;
+        rt.compat_trace = compatTrace;
+        rt.compat_deinit = compatDeinit;
+    }
+    // `hostFunction` を経由せずに engine を生成／再利用した場合も、finalizer の
+    // 解放通知先をこのモジュールへ揃えておく。上の `deinitHostFunctions` が解除
+    // し得るため、runtime の結び付けより後に設定する。
+    lnako_qjs_set_host_release(engine_value, hostRelease);
+}
+
 pub fn ensureEngine() !*Engine {
-    if (engine) |value| return value;
+    if (engine) |value| {
+        bindHostBridge(value);
+        return value;
+    }
     if (engine_failed) return error.QuickJsInitializationFailed;
     const created = lnako_qjs_new() orelse {
         engine_failed = true;
         return error.QuickJsInitializationFailed;
     };
-    lnako_qjs_set_host(created, @ptrCast(&host_context), hostGet, hostSet, hostInvoke, hostExec);
     // ESM plugin の登録 shim は interpreter と同じ JS 環境を要する。
     if (!esm_manifest.installBootstrap(created, lnako_qjs_eval, lnako_qjs_value_free)) {
         engine_failed = true;
         return error.QuickJsInitializationFailed;
     }
-    // AOTにはinterpreterの変数bridgeが無い。`sys.__getSysVar` の直接読み取りは
-    // 未定義値を返さずJS例外にし、plugin初期化の取りこぼしを表面化させる。
-    lnako_qjs_set_host_strict(created, 1);
-    // `hostFunction` を経由せずに engine を生成した場合も、finalizer の解放
-    // 通知先をこのモジュールへ揃えておく（テーブルが空なら no-op）。
-    lnako_qjs_set_host_release(created, hostRelease);
+    bindHostBridge(created);
     engine = created;
     return created;
 }
@@ -1106,12 +1201,19 @@ pub export fn lnako_aot_compat_esm_register(manifest: ?[*]const u8, length: usiz
 /// プロセス終了時にQuickJS engineを解放する。生成物のmainがruntime deinitの
 /// 直前に呼ぶ。
 pub export fn lnako_aot_compat_deinit() callconv(.c) void {
-    // runtime.deinit() が先でも後でも、GC hook と host 関数テーブルを確実に
-    // 解除してから engine を解放する。
+    // runtime.deinit() が先でも後でも、host コールバック・GC hook・host 関数
+    // テーブルを確実に解除してから engine を解放する。`lnako_qjs_release` は
+    // 内部でも release 通知を外すが、それより先に host 呼出し自体を遮断する。
+    if (engine) |value| {
+        lnako_qjs_set_host_release(value, null);
+        lnako_qjs_set_host(value, null, null, null, null, null);
+    }
     if (host_runtime) |runtime| {
         runtime.compat_trace = null;
         runtime.compat_deinit = null;
     }
+    // 破棄済みテーブルへ finalizer が触れないよう、通知解除とテーブル解放は
+    // engine の release より前に行う（`deinitHostFunctions` 内でも解除する）。
     deinitHostFunctions();
     if (engine) |value| {
         lnako_qjs_release(value);

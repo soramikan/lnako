@@ -252,6 +252,56 @@ try {
   expectEqual(runBinary(defIdentityBinary), "true\n13", "AOTの名前付き関数(def_function)同一性と呼出し");
   // 1引数形の解決対象が無い場合の0引数・3引数以上の引数エラーは、上の
   // `unsupportedObjectCases` でAOT/interpreter両方の明示エラーを固定済み。
+  // このfixtureは cnako3 との3者比較には含めない: cnako3 3.7.24 の
+  // `__findVar` は外側クロージャのローカルと `__v0` のシステム定数を探索せず、
+  // 数値引数では例外になるため（3者比較は tools/compare_compat_js_oracle.mjs）。
+
+  // Issue #55 Unit 3: QuickJS ホスト変数bridge（`sys.__getSysVar` /
+  // `sys.__findVar` / `sys.__setSysVar` / `sys.__getSore` / `sys.__setSore`）。
+  // `compat-js-var-bridge.nako3` は cnako3/interpreter/AOT の3者一致fixtureで、
+  // ここでは interpreter と AOT の一致・期待出力を固定する（公式比較は
+  // tools/compare_compat_js_oracle.mjs）。
+  // `compat-js-var-bridge-lnako.nako3` は cnako3 3.7.24 が関数内ローカルを
+  // `sys.__findVar` で解決せず、無修飾 `__setSysVar` の値を無修飾
+  // `__findVar` で見ないため2者一致fixtureとして分離している。
+  const variableBridgeFixtures = [
+    [
+      "ホスト変数bridge（3者一致）",
+      "compat-js-var-bridge.nako3",
+      "missing\n5\n99\ndefault\ndefault\nfallback\n9\n9\nok\nmiss\n123\n123\n123\n0\n3.7.24\ncnako3\n13\nfunction\n77\n77\nbigint",
+    ],
+    [
+      "ホスト変数bridge（ローカル・無修飾setSysVarのlnako契約）",
+      "compat-js-var-bridge-lnako.nako3",
+      "1\n43\n1\nok\n123\n123\n123\n1",
+    ],
+  ];
+  for (const [index, [label, fixture, expected]] of variableBridgeFixtures.entries()) {
+    const fixturePath = join(root, "tests", "fixtures", fixture);
+    const interpreter = spawnSync(compiler, ["run", fixturePath, "--compat-js"], { encoding: "utf8" });
+    if (interpreter.status !== 0) {
+      fail(`${label}fixtureのインタプリタ実行が失敗しました: ${interpreter.stdout}${interpreter.stderr}`);
+    }
+    const binary = join(work, `compat-js-var-bridge-${index}`);
+    runCompiler(fixturePath, binary, ["--compat-js", "--backend", "aot"]);
+    const output = runBinary(binary);
+    expectEqual(output, interpreter.stdout.trim(), `${label}のAOT/インタプリタ一致`);
+    expectEqual(output, expected, `${label}の期待出力`);
+  }
+
+  // `sys.__exec`（組み込み命令の文字列dispatch）はAOTでは未対応のまま
+  // 明示エラーにする。interpreterは公式と同じく組み込み命令を呼べる。
+  const hostExecSource = join(work, "compat-js-host-exec.nako3");
+  writeFileSync(hostExecSource, 'JS実行(『sys.__exec("整数変換",["12.9"])』)を表示\n');
+  const hostExecInterpreter = spawnSync(compiler, ["run", hostExecSource, "--compat-js"], { encoding: "utf8" });
+  expectEqual((hostExecInterpreter.stdout ?? "").trim(), "12", "sys.__execのinterpreter結果");
+  const hostExecBinary = join(work, "compat-js-host-exec");
+  runCompiler(hostExecSource, hostExecBinary, ["--compat-js", "--backend", "aot"]);
+  const hostExecAot = spawnSync(hostExecBinary, [], { encoding: "utf8" });
+  const hostExecOutput = `${hostExecAot.stdout ?? ""}${hostExecAot.stderr ?? ""}`;
+  if (hostExecAot.status === 0 || !hostExecOutput.includes("lnako host command bridge is unavailable")) {
+    fail(`sys.__execのAOT境界が明示エラーになりません: status=${hostExecAot.status}\n${hostExecOutput}`);
+  }
 
   // `JS関数実行` の full 変換（ネスト配列・辞書、関数値、BigInt、bytes、循環、
   // 疎配列、Promise解決値）と、`JSオブジェクト取得` / `JSメソッド実行` の

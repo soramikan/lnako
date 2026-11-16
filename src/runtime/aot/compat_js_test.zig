@@ -471,6 +471,7 @@ fn callCompatJs(runtime: *state.Runtime, source: []const u8) !Value {
 test "compat AOT runtimeはJS関数実行の戻り値をJS実行と同じfull変換にする" {
     if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
     var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
     defer runtime.deinit();
     state.active_runtime = runtime;
     defer {
@@ -3570,4 +3571,414 @@ test "compat AOT runtimeはhostFunctionのJS側名前割当てOOM時に失敗し
     try std.testing.expect(compat.lnako_qjs_set_property(global, "__lnako_oom_existing", existing) > 0);
     roots[0] = try evalCompatJs(&state.active_runtime.?, "globalThis.__lnako_oom_existing()");
     try std.testing.expectEqual(@as(f64, 42), @as(f64, @bitCast(roots[0].payload)));
+}
+
+// ---------------------------------------------------------------------------
+// Issue #55 Unit 3: QuickJS ホスト変数bridge（`sys.__getSysVar` /
+// `sys.__findVar` / `sys.__setSysVar` / `sys.__getSore` / `sys.__setSore`）。
+//
+// C bridge の `host_get_common` は第2引数がある場合だけ既定値を返すため、
+// 既定値あり／なしの両方を評価して、返却値とフォールバック規則を固定する。
+// ---------------------------------------------------------------------------
+
+/// `sys.__setSysVar` / `sys.__findVar` 等を含む式を QuickJS で評価し、
+/// `JS実行` と同じ full 変換で Nako 値へ戻す（JS 側の例外文言も検査できる）。
+fn evalQuickJsValue(runtime: *state.Runtime, source: []const u8) !Value {
+    const engine_value = try ensureEngine();
+    const raw = lnako_qjs_eval(engine_value, source.ptr, source.len, "<test>") orelse {
+        if (lnako_qjs_take_error(engine_value)) |text| {
+            defer lnako_qjs_free_string(text);
+            std.debug.print("QuickJS eval failed: {s}\n", .{std.mem.span(text)});
+        }
+        return error.QuickJsEvalFailed;
+    };
+    return compat_result.jsEvalResult(runtime, raw);
+}
+
+fn expectQuickJsString(runtime: *state.Runtime, source: []const u8, expected: []const u8) !void {
+    const value = try evalQuickJsValue(runtime, source);
+    var roots = [_]Value{value};
+    var frame: state.RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.utf16_string)), roots[0].tag);
+    const units = try state.valueUtf16Alloc(runtime, roots[0]);
+    defer runtime.allocator.free(units);
+    const utf8 = try std.unicode.utf16LeToUtf8Alloc(runtime.allocator, units);
+    defer runtime.allocator.free(utf8);
+    try std.testing.expectEqualStrings(expected, utf8);
+}
+
+fn expectQuickJsNumber(runtime: *state.Runtime, source: []const u8, expected: f64) !void {
+    const value = try evalQuickJsValue(runtime, source);
+    var roots = [_]Value{value};
+    var frame: state.RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.number)), roots[0].tag);
+    try std.testing.expectEqual(expected, @as(f64, @bitCast(roots[0].payload)));
+}
+
+fn expectQuickJsBoolean(runtime: *state.Runtime, source: []const u8, expected: bool) !void {
+    const value = try evalQuickJsValue(runtime, source);
+    var roots = [_]Value{value};
+    var frame: state.RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.boolean)), roots[0].tag);
+    try std.testing.expectEqual(@intFromBool(expected), roots[0].payload);
+}
+
+fn expectQuickJsNull(runtime: *state.Runtime, source: []const u8) !void {
+    const value = try evalQuickJsValue(runtime, source);
+    var roots = [_]Value{value};
+    var frame: state.RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.null_value)), roots[0].tag);
+}
+
+fn expectQuickJsUndefined(runtime: *state.Runtime, source: []const u8) !void {
+    const value = try evalQuickJsValue(runtime, source);
+    var roots = [_]Value{value};
+    var frame: state.RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    try std.testing.expect(!roots[0].isUnbound());
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.undefined)), roots[0].tag);
+    try std.testing.expectEqual(@as(u64, 0), roots[0].payload);
+}
+
+test "compat AOT runtimeはsys.__getSysVarを完全一致とシステム定数で解決する" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+    _ = try ensureEngine();
+
+    // 完全一致は接尾辞より優先し、`__getSysVar` は接尾辞を解決しない
+    // （interpreter の `effects.getGlobal` と同じ）。
+    try state.upsertDynamicGlobal(active, "完全一致", state.numberValue(5));
+    try state.upsertDynamicGlobal(active, "mod__接尾辞", state.numberValue(4));
+    try expectQuickJsNumber(active, "sys.__getSysVar('完全一致','miss')", 5);
+    try expectQuickJsString(active, "sys.__getSysVar('接尾辞','miss')", "miss");
+    try expectQuickJsNumber(active, "sys.__getSysVar('mod__接尾辞','miss')", 4);
+
+    // falsy も既定値へ落とさず、そのまま返す（`__findVar` との差）。
+    try state.upsertDynamicGlobal(active, "ゼロ", state.numberValue(0));
+    try state.upsertDynamicGlobal(active, "偽", .{ .tag = @backingInt(Tag.boolean), .payload = 0 });
+    try state.upsertDynamicGlobal(active, "空文字", try testString(active, ""));
+    try state.upsertDynamicGlobal(active, "ヌル", .{ .tag = @backingInt(Tag.null_value) });
+    try expectQuickJsNumber(active, "sys.__getSysVar('ゼロ','miss')", 0);
+    try expectQuickJsBoolean(active, "sys.__getSysVar('偽','miss')", false);
+    try expectQuickJsString(active, "sys.__getSysVar('空文字','miss')", "");
+    try expectQuickJsNull(active, "sys.__getSysVar('ヌル','miss')");
+
+    // 完全一致が未束縛ならシステム定数へフォールバックする。
+    try state.upsertDynamicGlobal(active, "未束縛", Value.unboundValue());
+    try expectQuickJsString(active, "sys.__getSysVar('未束縛','miss')", "miss");
+    try expectQuickJsString(active, "sys.__getSysVar('undefined','miss')", "miss");
+    try expectQuickJsNumber(active, "sys.__getSysVar('PI','miss')", std.math.pi);
+    try expectQuickJsString(active, "sys.__getSysVar('ナデシコバージョン')", "3.7.24");
+    // システム定数の null は undefined ではないため既定値へ落ちない。
+    try expectQuickJsNull(active, "sys.__getSysVar('AJAX:ONERROR','miss')");
+    try expectQuickJsString(active, "sys.__getSysVar('存在しない','miss')", "miss");
+    try expectQuickJsUndefined(active, "sys.__getSysVar('存在しない')");
+
+    // ローカル変数は `__getSysVar` では解決しない（`__findVar` は解決する）。
+    var storage = [_]Value{state.numberValue(42)};
+    var storage_frame: state.RootFrame = .{};
+    active.pushRoots(&storage_frame, &storage, storage.len);
+    defer active.popRoots(&storage_frame);
+    var entries = [_]state.AotVarEntry{.{ .name_ptr = "局所".ptr, .name_len = "局所".len }};
+    var slots = [_]*const Value{&storage[0]};
+    var frame: state.AotVarFrame = .{};
+    active.pushVarFrame(&frame, &entries, entries.len, &slots);
+    defer active.popVarFrame(&frame);
+    try expectQuickJsString(active, "sys.__getSysVar('局所','miss')", "miss");
+    try expectQuickJsNumber(active, "sys.__findVar('局所',0)", 42);
+
+    // 曖昧なモジュールサフィックスは既定値へ落ち、AOT例外を残さない。
+    try state.upsertDynamicGlobal(active, "modA__重複", state.numberValue(1));
+    try state.upsertDynamicGlobal(active, "modB__重複", state.numberValue(2));
+    try expectQuickJsString(active, "sys.__findVar('重複','fallback')", "fallback");
+    try expectQuickJsString(active, "sys.__getSysVar('重複','miss')", "miss");
+    try std.testing.expect(!active.has_pending_exception);
+}
+
+test "compat AOT runtimeはsys.__findVarをローカル・グローバル・関数・定数で解決する" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+    _ = try ensureEngine();
+
+    // 動的グローバルの完全一致と `{module}__{name}` サフィックス。
+    try state.upsertDynamicGlobal(active, "完全一致", state.numberValue(3));
+    try state.upsertDynamicGlobal(active, "modA__接尾辞", state.numberValue(4));
+    try expectQuickJsNumber(active, "sys.__findVar('完全一致',0)", 3);
+    try expectQuickJsNumber(active, "sys.__findVar('接尾辞',0)", 4);
+
+    // ローカルフレーム（内側優先・未束縛フォールバック・BindingCell）。
+    var storage = [_]Value{
+        state.numberValue(1), // outer 共有
+        state.numberValue(2), // inner 共有
+        Value.unboundValue(), // inner 未束縛
+        state.numberValue(7), // outer 未束縛
+        .{}, // inner セル
+    };
+    var storage_frame: state.RootFrame = .{};
+    active.pushRoots(&storage_frame, &storage, storage.len);
+    defer active.popRoots(&storage_frame);
+    storage[4] = try active.createBindingCell(state.numberValue(42));
+    var outer_entries = [_]state.AotVarEntry{
+        .{ .name_ptr = "共有".ptr, .name_len = "共有".len },
+        .{ .name_ptr = "未束縛".ptr, .name_len = "未束縛".len },
+    };
+    var outer_slots = [_]*const Value{ &storage[0], &storage[3] };
+    var inner_entries = [_]state.AotVarEntry{
+        .{ .name_ptr = "共有".ptr, .name_len = "共有".len },
+        .{ .name_ptr = "未束縛".ptr, .name_len = "未束縛".len },
+        .{ .name_ptr = "セル".ptr, .name_len = "セル".len },
+    };
+    var inner_slots = [_]*const Value{ &storage[1], &storage[2], &storage[4] };
+    var outer_frame: state.AotVarFrame = .{};
+    var inner_frame: state.AotVarFrame = .{};
+    active.pushVarFrame(&outer_frame, &outer_entries, outer_entries.len, &outer_slots);
+    defer active.popVarFrame(&outer_frame);
+    active.pushVarFrame(&inner_frame, &inner_entries, inner_entries.len, &inner_slots);
+    defer active.popVarFrame(&inner_frame);
+    try expectQuickJsNumber(active, "sys.__findVar('共有',0)", 2);
+    try expectQuickJsNumber(active, "sys.__findVar('未束縛',0)", 7);
+    try expectQuickJsNumber(active, "sys.__findVar('セル',0)", 42);
+
+    // 名前付き関数は JS 関数として取得・呼出しできる。
+    var function_storage = [_]Value{try active.createNamedFunction(doubleFunction, 1, "F", &.{})};
+    var function_frame: state.RootFrame = .{};
+    active.pushRoots(&function_frame, &function_storage, function_storage.len);
+    defer active.popRoots(&function_frame);
+    try expectQuickJsString(active, "typeof sys.__findVar('F',null)", "function");
+    try expectQuickJsNumber(active, "sys.__findVar('F',null)(4)", 8);
+
+    // 真値のシステム定数はそのまま、falsy は既定値へ落ちる。
+    try expectQuickJsNumber(active, "sys.__findVar('PI','miss')", std.math.pi);
+    try expectQuickJsString(active, "sys.__findVar('ナデシコ種類','miss')", "cnako3");
+    try expectQuickJsString(active, "sys.__findVar('AJAX:ONERROR','miss')", "miss");
+    try expectQuickJsString(active, "sys.__findVar('未定義','miss')", "miss");
+
+    // falsy な動的グローバルは既定値へ落ちる（公式の truthiness 判定）。
+    try state.upsertDynamicGlobal(active, "ゼロ", state.numberValue(0));
+    try state.upsertDynamicGlobal(active, "偽", .{ .tag = @backingInt(Tag.boolean), .payload = 0 });
+    try state.upsertDynamicGlobal(active, "空文字", try testString(active, ""));
+    try state.upsertDynamicGlobal(active, "ヌル", .{ .tag = @backingInt(Tag.null_value) });
+    try state.upsertDynamicGlobal(active, "未定義値", .{});
+    try state.upsertDynamicGlobal(active, "空配列", try active.createArray(&.{}));
+    try expectQuickJsString(active, "sys.__findVar('ゼロ','d')", "d");
+    try expectQuickJsString(active, "sys.__findVar('偽','d')", "d");
+    try expectQuickJsString(active, "sys.__findVar('空文字','d')", "d");
+    try expectQuickJsString(active, "sys.__findVar('ヌル','d')", "d");
+    try expectQuickJsString(active, "sys.__findVar('未定義値','d')", "d");
+    try expectQuickJsUndefined(active, "sys.__findVar('ゼロ')");
+    // 配列は truthy なので真値として返る。
+    try expectQuickJsBoolean(active, "Array.isArray(sys.__findVar('空配列',null))", true);
+    try expectQuickJsString(active, "sys.__findVar('存在しない','fallback')", "fallback");
+    try std.testing.expect(!active.has_pending_exception);
+}
+
+test "compat AOT runtimeはsys.__setSysVarで動的グローバルを更新する" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+    _ = try ensureEngine();
+
+    // 新規エントリは slot を持たず、entry.value が正本になる。
+    try expectQuickJsNumber(active, "sys.__setSysVar('新規', 7); sys.__getSysVar('新規')", 7);
+    const created = state.dynamicGlobal(active, "新規") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(created.slot == null);
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.number)), created.value.tag);
+    try std.testing.expectEqual(@as(f64, 7), @as(f64, @bitCast(created.value.payload)));
+
+    // `@lnako.global` 相当の slot 付きエントリは slot だけを更新し、
+    // entry.value は未束縛のまま（古い値のGCルート滞留を避ける）。
+    var slot = [_]Value{state.numberValue(1)};
+    var slot_frame: state.RootFrame = .{};
+    active.pushRoots(&slot_frame, &slot, slot.len);
+    defer active.popRoots(&slot_frame);
+    state.lnako_aot_dynamic_global_register("静的".ptr, "静的".len, &slot[0]);
+    try std.testing.expect(!active.has_pending_exception);
+    try expectQuickJsNumber(active, "sys.__setSysVar('静的', 9); sys.__getSysVar('静的')", 9);
+    try std.testing.expectEqual(@as(f64, 9), @as(f64, @bitCast(slot[0].payload)));
+    const static_entry = state.dynamicGlobal(active, "静的") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(static_entry.slot != null);
+    try std.testing.expect(!static_entry.value.isUnbound());
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.undefined)), static_entry.value.tag);
+    try std.testing.expectEqual(@as(u64, 0), static_entry.value.payload);
+
+    // slot から外れた旧オブジェクトは次の GC で回収される。
+    slot[0] = try active.createArray(&.{});
+    const before_collect = active.object_count;
+    try expectQuickJsNumber(active, "sys.__setSysVar('静的', 10); sys.__getSysVar('静的')", 10);
+    _ = active.collect();
+    try std.testing.expect(active.object_count < before_collect);
+
+    // JS のオブジェクト・配列・関数・BigInt を型を保って往復する。
+    try expectQuickJsNumber(active, "sys.__setSysVar('オブ', {a: 41}); sys.__findVar('オブ').a + 1", 42);
+    try expectQuickJsString(active, "sys.__setSysVar('配', [1,2]); sys.__findVar('配').length + ',' + sys.__getSysVar('配')[1]", "2,2");
+    try expectQuickJsString(active, "sys.__setSysVar('関', (x) => x * 3); typeof sys.__getSysVar('関') + ',' + sys.__getSysVar('関')(3)", "function,9");
+    try expectQuickJsString(active, "sys.__setSysVar('大', 123n); typeof sys.__getSysVar('大') + ':' + sys.__getSysVar('大').toString()", "bigint:123");
+
+    // 変換に失敗する値は JS の InternalError になり、AOT runtime を壊さない。
+    try expectQuickJsString(
+        active,
+        "try { sys.__setSysVar('失敗', {get a(){ throw new Error('boom'); }}); 'no-throw' } catch (error) { error.name }",
+        "InternalError",
+    );
+    try std.testing.expect(!active.has_pending_exception);
+    try expectQuickJsNumber(active, "sys.__setSysVar('回復', 1); sys.__getSysVar('回復')", 1);
+
+    // 同期変換できない Promise/iterator を保持するグローバルは、例外を残さず
+    // 既定値へ落ちる（`__getSysVar` は完全一致、`__findVar` は truthy の後で
+    // 変換に失敗する）。
+    var special_storage = [_]Value{
+        try state.createAotPromise(active),
+        try active.createIterator(&.{state.numberValue(1)}, false, 0, false),
+    };
+    var special_frame: state.RootFrame = .{};
+    active.pushRoots(&special_frame, &special_storage, special_storage.len);
+    defer active.popRoots(&special_frame);
+    try state.upsertDynamicGlobal(active, "約束", special_storage[0]);
+    try state.upsertDynamicGlobal(active, "反復子", special_storage[1]);
+    try expectQuickJsString(active, "sys.__getSysVar('約束','miss')", "miss");
+    try expectQuickJsString(active, "sys.__getSysVar('反復子','miss')", "miss");
+    try expectQuickJsString(active, "sys.__findVar('約束','miss')", "miss");
+    try expectQuickJsString(active, "sys.__findVar('反復子','miss')", "miss");
+    try std.testing.expect(!active.has_pending_exception);
+}
+
+test "compat AOT runtimeはsys.__setSoreとsys.__getSoreをNakoのそれへ接続する" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+    _ = try ensureEngine();
+
+    var slot = [_]Value{state.numberValue(1)};
+    var slot_frame: state.RootFrame = .{};
+    active.pushRoots(&slot_frame, &slot, slot.len);
+    defer active.popRoots(&slot_frame);
+    state.lnako_aot_dynamic_global_register("それ".ptr, "それ".len, &slot[0]);
+
+    try expectQuickJsNumber(active, "sys.__setSore(77); sys.__getSore()", 77);
+    try std.testing.expectEqual(@as(f64, 77), @as(f64, @bitCast(slot[0].payload)));
+    try expectQuickJsString(active, "sys.__setSore('それ文字列'); sys.__getSore()", "それ文字列");
+    try std.testing.expect(!active.has_pending_exception);
+}
+
+fn evalQuickJsOnEngine(runtime: *state.Runtime, engine_value: *compat.Engine, source: []const u8) !Value {
+    const raw = lnako_qjs_eval(engine_value, source.ptr, source.len, "<test>") orelse {
+        if (lnako_qjs_take_error(engine_value)) |text| {
+            defer lnako_qjs_free_string(text);
+            std.debug.print("QuickJS eval failed: {s}\n", .{std.mem.span(text)});
+        }
+        return error.QuickJsEvalFailed;
+    };
+    return compat_result.jsEvalResult(runtime, raw);
+}
+
+test "compat AOT runtimeはcompatDeinitでhost変数bridgeを遮断する" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+    const engine_value = try ensureEngine();
+    try state.upsertDynamicGlobal(active, "X", state.numberValue(5));
+    try expectQuickJsNumber(active, "sys.__getSysVar('X','miss')", 5);
+
+    compat.compatDeinit(active);
+    // C 側の host_get / host_set が NULL に戻り、同じ runtime の値でも
+    // bridge は既定値へ落ちる（ensureEngine を呼ばず既存 engine で確認する）。
+    const detached_get = try evalQuickJsOnEngine(active, engine_value, "sys.__getSysVar('X','miss')");
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.utf16_string)), detached_get.tag);
+    const detached_find = try evalQuickJsOnEngine(active, engine_value, "sys.__findVar('X','miss')");
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.utf16_string)), detached_find.tag);
+    const detached_set = try evalQuickJsOnEngine(active, engine_value, "sys.__setSysVar('Y', 1)");
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.undefined)), detached_set.tag);
+    try std.testing.expect(!active.has_pending_exception);
+
+    // engine を残したまま次の runtime / 再接続で ensureEngine() を呼ぶと、
+    // 既存 engine に対しても host コールバックと GC hook が再バインドされる。
+    try std.testing.expect(compat.activeEngine() != null);
+    var func_roots = [_]Value{try active.createNamedFunction(doubleFunction, 1, "F_rebind", &.{})};
+    var func_frame: state.RootFrame = .{};
+    pushTestRoots(active, &func_frame, &func_roots);
+    defer active.popRoots(&func_frame);
+    _ = try ensureEngine();
+    try std.testing.expect(active.compat_trace != null);
+    try std.testing.expect(active.compat_deinit != null);
+    try expectQuickJsNumber(active, "sys.__getSysVar('X','miss')", 5);
+    try expectQuickJsNumber(active, "sys.__setSysVar('Y', 12); sys.__getSysVar('Y','miss')", 12);
+    try expectQuickJsNumber(active, "sys.__findVar('F_rebind', null)(6)", 12);
+    try std.testing.expect(!active.has_pending_exception);
+}
+
+test "compat AOT runtimeはlnako_aot_compat_deinitでhost状態を解放し再初期化できる" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+    const engine_value = try ensureEngine();
+    var roots = [_]Value{.{}};
+    var frame: state.RootFrame = .{};
+    pushTestRoots(active, &frame, &roots);
+    defer active.popRoots(&frame);
+    roots[0] = try active.createNamedFunction(doubleFunction, 1, "F", &.{});
+    _ = try compat.hostFunction(active, engine_value, roots[0]);
+    try std.testing.expectEqual(@as(usize, 1), compat.registeredHostFunctionCount());
+
+    lnako_aot_compat_deinit();
+    try std.testing.expect(compat.activeEngine() == null);
+    try std.testing.expectEqual(@as(usize, 0), compat.registeredHostFunctionCount());
+
+    // 再初期化すると同じ runtime に host bridge が繋がり直す。
+    _ = try ensureEngine();
+    try expectQuickJsNumber(active, "sys.__setSysVar('再', 1); sys.__getSysVar('再')", 1);
+    try expectQuickJsNumber(active, "sys.__findVar('F', null)(5)", 10);
+    try std.testing.expect(!active.has_pending_exception);
 }
