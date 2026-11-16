@@ -173,6 +173,7 @@ const nodeBasenameWideFor = state.nodeBasenameWideFor;
 const nodeChangeDirectoryBuiltin = state.nodeChangeDirectoryBuiltin;
 const nodeCreateTemporaryDirectoryBuiltin = state.nodeCreateTemporaryDirectoryBuiltin;
 const nodeTemporaryDirectoryPrefixAlloc = state.nodeTemporaryDirectoryPrefixAlloc;
+const temporaryDirectoryFromEnvironmentValues = state.temporaryDirectoryFromEnvironmentValues;
 const nodeCryptoBuiltin = state.nodeCryptoBuiltin;
 const nodeCurrentDirectoryBuiltin = state.nodeCurrentDirectoryBuiltin;
 const nodeDirectoryBuiltin = state.nodeDirectoryBuiltin;
@@ -1750,12 +1751,14 @@ test "AOT Nodeの環境依存ディレクトリ命令はOSの環境値を使う"
     defer runtime.allocator.free(documents);
     try expectUtf16String(&runtime, roots[2], documents);
 
-    const fallback = if (builtin.os.tag == .windows) "." else "/tmp";
-    const raw = if (builtin.os.tag == .windows)
-        std.c.getenv("TEMP") orelse std.c.getenv("TMP") orelse fallback
-    else
-        std.c.getenv("TMPDIR") orelse fallback;
-    const temporary = std.mem.span(raw);
+    const temp = std.c.getenv("TEMP");
+    const tmp = std.c.getenv("TMP");
+    const tmpdir = std.c.getenv("TMPDIR");
+    const temporary = temporaryDirectoryFromEnvironmentValues(
+        if (temp) |value| std.mem.span(value) else null,
+        if (tmp) |value| std.mem.span(value) else null,
+        if (tmpdir) |value| std.mem.span(value) else null,
+    );
     const trimmed = std.mem.trimEnd(u8, temporary, "/\\");
     try expectUtf16String(&runtime, roots[3], if (trimmed.len == 0) temporary else trimmed);
 }
@@ -1819,7 +1822,7 @@ test "AOT一時フォルダ作成は6文字suffixと衝突回避を保つ" {
 test "AOT一時フォルダ作成は省略時にテンポラリ配下のnako-接頭辞を使う" {
     var runtime = Runtime{ .allocator = std.testing.allocator, .random_state = default_random_seed };
     defer runtime.deinit();
-    var roots = @as([2]Value, @splat(.{}));
+    var roots = @as([5]Value, @splat(.{}));
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -1839,6 +1842,7 @@ test "AOT一時フォルダ作成は省略時にテンポラリ配下のnako-接
     const created_stat = try std.Io.Dir.cwd().statFile(std.Io.Threaded.global_single_threaded.io(), created, .{});
     try std.testing.expectEqual(.directory, created_stat.kind);
 
+    // 空・ASCII空白・全角空白・NBSPはすべてECMAScriptの空白のみとして既定扱いにする。
     var empty_arguments = [_]Value{staticStringValue("")};
     roots[1] = try nodeCreateTemporaryDirectoryBuiltin(&runtime, &empty_arguments);
     const empty_created = try valueUtf8LossyAlloc(&runtime, roots[1]);
@@ -1847,6 +1851,44 @@ test "AOT一時フォルダ作成は省略時にテンポラリ配下のnako-接
     try std.testing.expect(std.mem.startsWith(u8, empty_created, expected_prefix));
     try std.testing.expectEqual(expected_prefix.len + 6, empty_created.len);
     try std.testing.expect(!std.mem.eql(u8, created, empty_created));
+
+    var ascii_arguments = [_]Value{staticStringValue(" \t ")};
+    roots[2] = try nodeCreateTemporaryDirectoryBuiltin(&runtime, &ascii_arguments);
+    const ascii_created = try valueUtf8LossyAlloc(&runtime, roots[2]);
+    defer runtime.allocator.free(ascii_created);
+    defer std.Io.Dir.cwd().deleteTree(std.Io.Threaded.global_single_threaded.io(), ascii_created) catch {};
+    try std.testing.expect(std.mem.startsWith(u8, ascii_created, expected_prefix));
+    try std.testing.expectEqual(expected_prefix.len + 6, ascii_created.len);
+
+    var full_width_arguments = [_]Value{staticStringValue("　")};
+    roots[3] = try nodeCreateTemporaryDirectoryBuiltin(&runtime, &full_width_arguments);
+    const full_width_created = try valueUtf8LossyAlloc(&runtime, roots[3]);
+    defer runtime.allocator.free(full_width_created);
+    defer std.Io.Dir.cwd().deleteTree(std.Io.Threaded.global_single_threaded.io(), full_width_created) catch {};
+    try std.testing.expect(std.mem.startsWith(u8, full_width_created, expected_prefix));
+    try std.testing.expectEqual(expected_prefix.len + 6, full_width_created.len);
+
+    var nbsp_arguments = [_]Value{staticStringValue("\u{00a0}")};
+    roots[4] = try nodeCreateTemporaryDirectoryBuiltin(&runtime, &nbsp_arguments);
+    const nbsp_created = try valueUtf8LossyAlloc(&runtime, roots[4]);
+    defer runtime.allocator.free(nbsp_created);
+    defer std.Io.Dir.cwd().deleteTree(std.Io.Threaded.global_single_threaded.io(), nbsp_created) catch {};
+    try std.testing.expect(std.mem.startsWith(u8, nbsp_created, expected_prefix));
+    try std.testing.expectEqual(expected_prefix.len + 6, nbsp_created.len);
+}
+
+test "AOT一時フォルダの空環境変数は未設定として扱う" {
+    try std.testing.expectEqualStrings(
+        if (builtin.os.tag == .windows) "." else "/tmp",
+        temporaryDirectoryFromEnvironmentValues("", "", ""),
+    );
+    if (builtin.os.tag == .windows) {
+        try std.testing.expectEqualStrings("C:\\Temp", temporaryDirectoryFromEnvironmentValues("", "C:\\Temp", null));
+        try std.testing.expectEqualStrings("D:\\Work", temporaryDirectoryFromEnvironmentValues("D:\\Work", "C:\\Temp", null));
+    } else {
+        try std.testing.expectEqualStrings("/var/tmp", temporaryDirectoryFromEnvironmentValues(null, null, "/var/tmp"));
+        try std.testing.expectEqualStrings("/tmp", temporaryDirectoryFromEnvironmentValues("/ignored", "/ignored", ""));
+    }
 }
 
 test "AOT環境変数取得はC環境から値を読み未設定をundefinedにする" {

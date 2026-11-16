@@ -264,36 +264,38 @@ test "一時フォルダ作成は省略・空指定をテンポラリ配下のna
         .createTemporaryDirectoryFn = TestHost.create,
     };
 
+    // 実装はstd.fs.path.joinで組み立てるため、期待値も同じ関数から作って
+    // Windowsの区切り文字差でテストが落ちないようにする。
+    const expected_prefix = try std.fs.path.join(std.testing.allocator, &.{ context.temporary_directory, "nako-" });
+    defer std.testing.allocator.free(expected_prefix);
+    const expected_path = try std.fmt.allocPrint(std.testing.allocator, "{s}ABC123", .{expected_prefix});
+    defer std.testing.allocator.free(expected_path);
+
     {
         const result = (try call(&runtime, &state, context, null, "一時フォルダ作成", &.{})).?;
-        try std.testing.expectEqualStrings("/tmp/lnako-test/nako-", host.seen[0..host.seen_length]);
+        try std.testing.expectEqualStrings(expected_prefix, host.seen[0..host.seen_length]);
         const text = try result.string.toUtf8Lossy(std.testing.allocator);
         defer std.testing.allocator.free(text);
-        try std.testing.expectEqualStrings("/tmp/lnako-test/nako-ABC123", text);
+        try std.testing.expectEqualStrings(expected_path, text);
     }
-    {
-        const empty = try runtime.stringUtf8("");
-        const result = (try call(&runtime, &state, context, null, "一時フォルダ作成", &.{empty})).?;
-        try std.testing.expectEqualStrings("/tmp/lnako-test/nako-", host.seen[0..host.seen_length]);
+    // 空・ASCII空白・全角空白・NBSPはすべてECMAScriptの空白のみとして既定扱いにする。
+    const blank_cases = [_][]const u8{ "", " \t ", "　", "\u{00a0}" };
+    for (blank_cases) |case| {
+        const value = try runtime.stringUtf8(case);
+        var arguments = [_]shared.Value{value};
+        const result = (try call(&runtime, &state, context, null, "一時フォルダ作成", &arguments)).?;
+        try std.testing.expectEqualStrings(expected_prefix, host.seen[0..host.seen_length]);
         const text = try result.string.toUtf8Lossy(std.testing.allocator);
         defer std.testing.allocator.free(text);
-        try std.testing.expectEqualStrings("/tmp/lnako-test/nako-ABC123", text);
-    }
-    {
-        const blank = try runtime.stringUtf8(" \t ");
-        const result = (try call(&runtime, &state, context, null, "一時フォルダ作成", &.{blank})).?;
-        try std.testing.expectEqualStrings("/tmp/lnako-test/nako-", host.seen[0..host.seen_length]);
-        const text = try result.string.toUtf8Lossy(std.testing.allocator);
-        defer std.testing.allocator.free(text);
-        try std.testing.expectEqualStrings("/tmp/lnako-test/nako-ABC123", text);
+        try std.testing.expectEqualStrings(expected_path, text);
     }
     {
         const null_value = shared.Value.null_value;
         const result = (try call(&runtime, &state, context, null, "一時フォルダ作成", &.{null_value})).?;
-        try std.testing.expectEqualStrings("/tmp/lnako-test/nako-", host.seen[0..host.seen_length]);
+        try std.testing.expectEqualStrings(expected_prefix, host.seen[0..host.seen_length]);
         const text = try result.string.toUtf8Lossy(std.testing.allocator);
         defer std.testing.allocator.free(text);
-        try std.testing.expectEqualStrings("/tmp/lnako-test/nako-ABC123", text);
+        try std.testing.expectEqualStrings(expected_path, text);
     }
     {
         const prefix = try runtime.stringUtf8("work-");

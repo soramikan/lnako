@@ -20,6 +20,7 @@ const valueToNumber = aot_state.valueToNumber;
 const valueToNumberRuntime = aot_state.valueToNumberRuntime;
 const valueUtf8LossyAlloc = aot_state.valueUtf8LossyAlloc;
 const valueUtf16Alloc = aot_state.valueUtf16Alloc;
+const utf16UnitsToUtf8LossyAlloc = aot_state.utf16UnitsToUtf8LossyAlloc;
 const runtimeUtf8String = aot_state.runtimeUtf8String;
 const runtimeUtf8StringLossy = aot_state.runtimeUtf8StringLossy;
 const isString = aot_state.isString;
@@ -428,14 +429,36 @@ pub const aotClientIsCallbackCommand = node_http_module.aotClientIsCallbackComma
 pub const aotClientIsResponsePromiseCommand = node_http_module.aotClientIsResponsePromiseCommand;
 pub const nodeHttpBuiltin = node_http_module.nodeHttpBuiltin;
 
+/// Nodeの`os.tmpdir()`と同じ候補順（WindowsはTEMP→TMP、それ以外は
+/// TMPDIR）で一時フォルダの基点を選ぶ。空文字はfalseyとして未設定と同じに
+/// 扱い、次の候補へフォールバックする。
+pub fn temporaryDirectoryFromEnvironmentValues(temp: ?[]const u8, tmp: ?[]const u8, tmpdir: ?[]const u8) []const u8 {
+    const fallback = if (builtin.os.tag == .windows) "." else "/tmp";
+    if (builtin.os.tag == .windows) return nonEmptyText(temp) orelse nonEmptyText(tmp) orelse fallback;
+    return nonEmptyText(tmpdir) orelse fallback;
+}
+
+fn nonEmptyText(value: ?[]const u8) ?[]const u8 {
+    const text = value orelse return null;
+    return if (text.len == 0) null else text;
+}
+
+fn environmentValue(name: [:0]const u8) ?[]const u8 {
+    const raw = std.c.getenv(name) orelse return null;
+    return std.mem.span(raw);
+}
+
+fn temporaryDirectoryFromEnvironment() []const u8 {
+    return temporaryDirectoryFromEnvironmentValues(
+        environmentValue("TEMP"),
+        environmentValue("TMP"),
+        environmentValue("TMPDIR"),
+    );
+}
+
 pub fn nodeDirectoryBuiltin(runtime: *Runtime, command: aot_builtin.Command) !Value {
     if (command == .node_temporary_directory) {
-        const fallback = if (builtin.os.tag == .windows) "." else "/tmp";
-        const raw = if (builtin.os.tag == .windows)
-            std.c.getenv("TEMP") orelse std.c.getenv("TMP") orelse fallback
-        else
-            std.c.getenv("TMPDIR") orelse fallback;
-        const value = std.mem.span(raw);
+        const value = temporaryDirectoryFromEnvironment();
         const trimmed = std.mem.trimEnd(u8, value, "/\\");
         return runtimeUtf8StringLossy(runtime, if (trimmed.len == 0) value else trimmed);
     }
@@ -455,12 +478,7 @@ pub fn nodeDirectoryBuiltin(runtime: *Runtime, command: aot_builtin.Command) !Va
 }
 
 pub fn nodeTemporaryDirectoryPrefixAlloc(runtime: *Runtime) ![]u8 {
-    const fallback = if (builtin.os.tag == .windows) "." else "/tmp";
-    const raw = if (builtin.os.tag == .windows)
-        std.c.getenv("TEMP") orelse std.c.getenv("TMP") orelse fallback
-    else
-        std.c.getenv("TMPDIR") orelse fallback;
-    const value = std.mem.span(raw);
+    const value = temporaryDirectoryFromEnvironment();
     const trimmed = std.mem.trimEnd(u8, value, "/\\");
     return runtime.allocator.dupe(u8, if (trimmed.len == 0) value else trimmed);
 }
@@ -471,20 +489,28 @@ pub fn nodeCreateTemporaryDirectoryBuiltin(runtime: *Runtime, arguments: []const
     // 渡すため、Linuxでは`/tmpXXXXXX`を作ろうとして失敗する。公式v3.8.10は
     // `<TMPDIR>/nako-`を接頭辞にして一時フォルダ配下へ作る。lnakoは省略・空・
     // 空白のみのときにv3.8.10の既定動作を使い、明示した接頭辞はv3.7.24互換
-    // （prefix+6文字）のまま維持する。
+    // （prefix+6文字）のまま維持する。空白判定はASCIIではなくECMAScriptの
+    // 空白文字集合（全角空白・NBSP等を含む）で行う。
     const tag = @as(Tag, @fromBackingInt(@intCast(arguments[0].tag)));
     const missing = tag == .undefined or tag == .null_value;
-    const prefix = if (missing) "" else try valueUtf8LossyAlloc(runtime, arguments[0]);
-    defer if (!missing) runtime.allocator.free(prefix);
+    var prefix: ?[]u8 = null;
+    defer if (prefix) |value| runtime.allocator.free(value);
+    if (!missing) {
+        const units = try valueUtf16Alloc(runtime, arguments[0]);
+        defer runtime.allocator.free(units);
+        if (string_mod.trimWhitespace(units).len != 0) {
+            prefix = try utf16UnitsToUtf8LossyAlloc(runtime.allocator, units);
+        }
+    }
 
     var fallback_prefix: ?[]u8 = null;
     defer if (fallback_prefix) |value| runtime.allocator.free(value);
-    const effective_prefix = if (missing or std.mem.trim(u8, prefix, " \t\r\n").len == 0) blk: {
+    const effective_prefix = if (prefix) |value| value else blk: {
         const temporary_directory = try nodeTemporaryDirectoryPrefixAlloc(runtime);
         defer runtime.allocator.free(temporary_directory);
         fallback_prefix = try std.fs.path.join(runtime.allocator, &.{ temporary_directory, "nako-" });
         break :blk fallback_prefix.?;
-    } else prefix;
+    };
 
     const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
     const io = std.Io.Threaded.global_single_threaded.io();

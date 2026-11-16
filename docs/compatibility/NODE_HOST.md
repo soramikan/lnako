@@ -83,6 +83,15 @@ Node pluginの短い命令説明だけでは、引数型、OS差、外部tool、
 - 差分テストID: `plugin-node-line-message-discontinued`、`plugin-node-line-image-discontinued`
 - TODO識別子: なし
 
+## 一時フォルダの既定prefixと空白判定
+
+- 公式実測・source根拠: 公式v3.7.24の`一時フォルダ作成`は引数を`fs.mkdtempSync`の接頭辞へそのまま渡し、省略・空のときは`os.tmpdir()`を接頭辞にします。公式v3.8.10は`<TMPDIR>/nako-`を接頭辞にして一時フォルダ配下へ作ります。`os.tmpdir()`は空文字の`TMPDIR`／`TEMP`／`TMP`をfalseyとして次の候補へフォールバックします。
+- lnakoの現在動作: 省略・空・ECMAScriptの空白のみ（ASCII空白、全角空白U+3000、NBSP U+00A0等）の引数を既定扱いにし、`<TMPDIR>/nako-`＋6文字suffixで作ります。明示した接頭辞はv3.7.24互換（prefix＋6文字）です。一時フォルダの基点は空文字の環境変数を未設定として扱い、Windowsは`TEMP`→`TMP`→`.`、それ以外は`TMPDIR`→`/tmp`の順で選びます。
+- 判定: 仕様（v3.8.10の既定動作を採用）
+- 対象経路: Interpreter / AOT
+- 差分テストID: `plugin-node-temporary-directory`、`native-node-temporary-directory`
+- TODO識別子: なし
+
 ## 公式generated JavaScriptの登録差
 
 - 公式実測・source根拠: 一部pluginは公式CLI直接実行では登録されますが、standalone generated JavaScriptでは登録されず、呼出し時に `...is not a function` になる場合があります。これは公式sourceをoracleに選ぶ必要があるroute差です。
