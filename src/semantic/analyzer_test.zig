@@ -431,6 +431,56 @@ test "厳チェックの未定義名を警告にし、定数再代入はエラ�
     try std.testing.expectEqual(diagnostic.Severity.error_severity, call_program.diagnostics[0].severity);
 }
 
+test "未定義の命令呼出しと定数呼出しを公式同様に診断する" {
+    const parser = @import("../frontend/parser.zig");
+    const Case = struct {
+        source: []const u8,
+        code: diagnostic.Code,
+        line: u32,
+        message: []const u8,
+    };
+    const cases = [_]Case{
+        .{
+            .source = "XYZ(1)\n",
+            .code = .undefined_symbol,
+            .line = 0,
+            .message = "関数『undefined-command__XYZ』が見当たりません。",
+        },
+        .{
+            .source = "XYZ\n",
+            .code = .incomplete_statement,
+            .line = 0,
+            .message = "不完全な文です。単語『undefined-command__XYZ』が解決していません。",
+        },
+        .{
+            .source = "もし 1=1 ならば\n  「A」と表示\nそうでなければ\n  「B」と表示\nここまで\n",
+            .code = .incomplete_statement,
+            .line = 2,
+            .message = "不完全な文です。単語『それ』が解決していません。",
+        },
+        .{
+            .source = "回数()\n",
+            .code = .undefined_symbol,
+            .line = 0,
+            .message = "『回数』は関数ではありません。",
+        },
+    };
+    for (cases) |case| {
+        var parsed = try parser.parse(std.testing.allocator, case.source, "undefined-command.nako3");
+        defer parsed.deinit();
+        var program = try analyze(std.testing.allocator, parsed.root.?, "undefined-command.nako3");
+        defer program.deinit();
+        try std.testing.expect(!program.succeeded());
+        var found = false;
+        for (program.diagnostics) |item| {
+            if (item.code != case.code or !std.mem.eql(u8, item.message, case.message)) continue;
+            found = true;
+            try std.testing.expectEqual(case.line, item.span.line);
+        }
+        try std.testing.expect(found);
+    }
+}
+
 test "組み込み命令名と関数名への代入を診断する" {
     // 公式は`func token`＋`=`を代入的呼出しの名残として構文エラーにする。
     const parser = @import("../frontend/parser.zig");

@@ -343,5 +343,27 @@
     "id": "semantic-diagnostic-assign-to-later-nested-function",
     "source": "F=1\n●外とは\n●Fとは\n1で戻る\nここまで\nここまで\n",
     "code": "assign_to_function"
+  },
+  {
+    "id": "semantic-diagnostic-undefined-command",
+    "source": "XYZ(1)\n",
+    "code": "undefined_symbol"
+  },
+  {
+    "id": "semantic-diagnostic-undefined-command-bare",
+    "source": "XYZ\n",
+    "code": "incomplete_statement"
+  },
+  {
+    "id": "semantic-diagnostic-else-typo",
+    "source": "もし 1=1 ならば\n  「A」と表示\nそうでなければ\n  「B」と表示\nここまで\n",
+    "code": "incomplete_statement",
+    "checkMessage": true
+  },
+  {
+    "id": "semantic-diagnostic-system-constant-call",
+    "source": "回数()\n",
+    "code": "undefined_symbol",
+    "checkMessage": true
   }
 ]

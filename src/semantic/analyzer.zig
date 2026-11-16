@@ -857,6 +857,8 @@ pub const Analyzer = struct {
             declared_gate = true;
         }
         if (self.builtins.get(name) != null) {
+            // システム定数を関数として呼ぶ公式エラーを再現する。
+            if (try unresolved_words.rejectNonCallableBuiltin(self, module_index, node, name)) return;
             // 組み込み命令も公式のfunc token相当のため同じ規則を適用する
             // （『改行』など命令表に無い名前は変数なので対象外）
             if (node.bare_index_word and !callable and builtin_catalog.findArity(name) != null) {
@@ -955,6 +957,11 @@ pub const Analyzer = struct {
             } else {
                 try self.noteUninspectedPackageCommand(module_index, alias, name, node.span, true);
             }
+        }
+        const uninspected_call = if (declared_alias) |alias| !declared_available or declared_command == null or alias.target_module == std.math.maxInt(u32) else false;
+        if (callable and !uninspected_call) {
+            try unresolved_words.rejectUndefinedCommand(self, module_index, node, name);
+            return;
         }
         if (self.modules.items[module_index].strict) {
             const message = try std.fmt.allocPrint(self.allocator, "未定義の{s}『{s}』です", .{ if (callable) "命令" else "変数", name });

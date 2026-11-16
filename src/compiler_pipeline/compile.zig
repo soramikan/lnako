@@ -783,7 +783,7 @@ const FrontendTimer = struct {
 test "package経由のnative plugin命令は公開namespaceで修飾されAOT dispatchされる" {
     const TestProvider = struct {
         fn read(_: *anyopaque, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
-            if (pathHasSuffix(path, "main.nako3")) return allocator.dupe(u8, "!「pkg:nativepkg」を取り込む\nnativepkg__外部追加(1, 2)\n外部追加(1, 2)\n");
+            if (pathHasSuffix(path, "main.nako3")) return allocator.dupe(u8, "!「pkg:nativepkg」を取り込む\nnativepkg__外部追加(1, 2)\n●(AとBを)外部追加とは\n0で戻る\nここまで\n外部追加(1, 2)\n");
             return error.FileNotFound;
         }
     };
@@ -819,7 +819,7 @@ test "package経由のnative plugin命令は公開namespaceで修飾されAOT di
 
     // `nativepkg__外部追加` は修飾名なので isQualifiedGlobal に見えるが、
     // package対応表により plugin dispatch へ分類される。無修飾の `外部追加`
-    // は動的builtinに束縛されず plugin dispatch にも流れない。
+    // はローカル関数へ束縛され plugin dispatch にも流れない。
     const backend_module = lnako.backend.llvm.module;
     var qualified_plugin_call = false;
     for (compiled.functions) |function| {
