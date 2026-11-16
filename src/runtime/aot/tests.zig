@@ -79,6 +79,7 @@ const codePointFindBuiltin = state.codePointFindBuiltin;
 const compareValues = state.compareValues;
 const concat = state.concat;
 const crypto = state.crypto;
+const currentTimeMilliseconds = state.currentTimeMilliseconds;
 const currentDirectoryAlloc = state.currentDirectoryAlloc;
 const cutEndIndex = state.cutEndIndex;
 const datetimeAddDatePluginEpoch = state.datetimeAddDatePluginEpoch;
@@ -99,6 +100,7 @@ const drainAotNativePluginTasks = state.drainAotNativePluginTasks;
 const drainAotTimers = state.drainAotTimers;
 const dynamicPromiseToAotValue = state.dynamicPromiseToAotValue;
 const eraDataBuiltin = state.eraDataBuiltin;
+const hostWallClockMilliseconds = state.hostWallClockMilliseconds;
 const expectJsonAotString = state.expectJsonAotString;
 const incrementNumber = state.incrementNumber;
 const incrementValue = state.incrementValue;
@@ -256,8 +258,26 @@ const lnako_aot_debug_breakpoint_wait_call = state.lnako_aot_debug_breakpoint_wa
 const normalizeDebugSourcePath = state.normalizeDebugSourcePath;
 const pluginManagementBuiltin = state.pluginManagementBuiltin;
 const pollAotInterrupt = state.pollAotInterrupt;
+const testNowMilliseconds = state.testNowMilliseconds;
 const timerBuiltin = state.timerBuiltin;
 const timerWaitBuiltin = state.timerWaitBuiltin;
+
+extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
+extern "c" fn unsetenv(name: [*:0]const u8) c_int;
+extern "c" fn _putenv_s(name: [*:0]const u8, value: [*:0]const u8) c_int;
+
+fn setTestEnvironment(name: [*:0]const u8, value: [*:0]const u8) !void {
+    const result = if (builtin.os.tag == .windows) _putenv_s(name, value) else setenv(name, value, 1);
+    if (result != 0) return error.EnvironmentSetFailed;
+}
+
+fn unsetTestEnvironment(name: [*:0]const u8) void {
+    if (builtin.os.tag == .windows) {
+        _ = _putenv_s(name, "");
+    } else {
+        _ = unsetenv(name);
+    }
+}
 
 fn expectAotUnaryNumber(value: Value, operator: UnaryOperator, expected: f64) !void {
     var result: Value = .{};
@@ -791,6 +811,52 @@ test "AOT日時の現在時刻・日付・年月命令を固定時計で処理�
     try std.testing.expectEqual(@as(f64, 2), @as(f64, @bitCast(roots[10].payload)));
     roots[11] = try datetimeBuiltin(&runtime, .datetime_previous_month, &.{});
     try std.testing.expectEqual(@as(f64, 12), @as(f64, @bitCast(roots[11].payload)));
+}
+
+test "AOT壁時計は実時間のミリ秒解像度を返す" {
+    const io = std.Io.Threaded.global_single_threaded.io();
+    const baseline = @as(i64, @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, std.time.ns_per_ms)));
+    var saw_subsecond = false;
+    var advanced = false;
+    var previous = hostWallClockMilliseconds();
+    // 秒精度へ退行した場合は常に1000の倍数になるため、複数回の観測で
+    // ミリ秒成分が現れることと時計が進むことを確認する。
+    try std.testing.expect(@abs(previous - baseline) < 5_000);
+    var sample: usize = 0;
+    while (sample < 32) : (sample += 1) {
+        try std.Io.sleep(io, std.Io.Duration.fromMilliseconds(1), .awake);
+        const current = hostWallClockMilliseconds();
+        if (@mod(current, 1000) != 0) saw_subsecond = true;
+        if (current > previous) advanced = true;
+        try std.testing.expect(@abs(current - baseline) < 5_000);
+        previous = current;
+    }
+    try std.testing.expect(saw_subsecond);
+    try std.testing.expect(advanced);
+}
+
+test "AOT壁時計はLNAKO_TEST_NOW_MSの固定値を優先する" {
+    const key = "LNAKO_TEST_NOW_MS";
+    const allocator = std.testing.allocator;
+    const previous = if (std.c.getenv(key)) |value| try allocator.dupeSentinel(u8, std.mem.span(value), 0) else null;
+    defer if (previous) |value| allocator.free(value);
+    defer if (previous) |value| {
+        setTestEnvironment(key, value.ptr) catch {};
+    } else {
+        unsetTestEnvironment(key);
+    };
+
+    try setTestEnvironment(key, "1735689845678");
+    var runtime = Runtime{ .allocator = allocator };
+    defer runtime.deinit();
+    try std.testing.expectEqual(@as(i64, 1_735_689_845_678), currentTimeMilliseconds(&runtime));
+    try std.testing.expectEqual(@as(?i64, 1_735_689_845_678), testNowMilliseconds("1735689845678"));
+
+    // 数値でない上書き値は実時間の壁時計へフォールバックする。
+    try setTestEnvironment(key, "not-a-number");
+    try std.testing.expectEqual(@as(?i64, null), testNowMilliseconds("not-a-number"));
+    const wall_clock = hostWallClockMilliseconds();
+    try std.testing.expect(@abs(currentTimeMilliseconds(&runtime) - wall_clock) < 5_000);
 }
 
 test "AOT曜日命令はAsia/Tokyoの日曜始まり番号を処理する" {

@@ -20,7 +20,6 @@ const arrayAppendBuiltin = state.arrayAppendBuiltin;
 const staticStringValue = state.staticStringValue;
 const toml_temporal = state.toml_temporal;
 const string_mod = shared.string_mod;
-const time = state.time;
 
 pub fn eraDataBuiltin(runtime: *Runtime) !Value {
     if (runtime.era_data.tag != @backingInt(Tag.undefined)) return runtime.era_data;
@@ -132,9 +131,15 @@ pub fn datetimeBuiltin(runtime: *Runtime, command: aot_builtin.Command, argument
 pub fn currentTimeMilliseconds(runtime: *Runtime) i64 {
     if (runtime.clock_milliseconds) |value| return value;
     if (std.c.getenv("LNAKO_TEST_NOW_MS")) |environment| {
-        return std.fmt.parseInt(i64, std.mem.span(environment), 10) catch hostWallClockMilliseconds();
+        return testNowMilliseconds(std.mem.span(environment)) orelse hostWallClockMilliseconds();
     }
     return hostWallClockMilliseconds();
+}
+
+/// `LNAKO_TEST_NOW_MS` の文字列をミリ秒へ変換する。数値として解釈できない場合は
+/// null を返し、呼び出し側は実時間の壁時計へフォールバックする。
+pub fn testNowMilliseconds(text: []const u8) ?i64 {
+    return std.fmt.parseInt(i64, text, 10) catch null;
 }
 
 pub fn datetimePluginRouteEnabled() bool {
@@ -143,8 +148,11 @@ pub fn datetimePluginRouteEnabled() bool {
 }
 
 pub fn hostWallClockMilliseconds() i64 {
-    const seconds = time(null);
-    return std.math.mul(i64, seconds, datetime_milliseconds_per_second) catch if (seconds < 0) std.math.minInt(i64) else std.math.maxInt(i64);
+    // libc の time() は秒精度なので、AOT でもインタプリタと同じ実時間クロックの
+    // ナノ秒値をミリ秒へ切り捨てる。std.Io が Linux/macOS の clock_gettime と
+    // Windows の RtlGetSystemTimePrecise を吸収する。
+    const timestamp = std.Io.Timestamp.now(std.Io.Threaded.global_single_threaded.io(), .real);
+    return @intCast(@divTrunc(timestamp.nanoseconds, std.time.ns_per_ms));
 }
 
 pub fn datetimeFieldsFromEpoch(milliseconds: i64) AotDateFields {
