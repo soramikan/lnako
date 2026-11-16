@@ -846,6 +846,68 @@ test "『{関数}名』の動的プラグイン命令はdynamic_builtinとして
     try std.testing.expect(saw_dynamic);
 }
 
+test "動的評価へ引き継いだ実行時登録命令名を動的builtinへ束縛する" {
+    const parser = @import("../frontend/parser.zig");
+    // `ナデシコ`/`ナデシコ続` の動的コードは取り込み辺を持たないため、
+    // interpreterが実行時registryから渡すdispatch名だけを受理する。
+    const registered = [_]DynamicCommandAlias{
+        .{ .source_namespace = "ネイティブ加算", .dispatch_namespace = "ネイティブ加算", .exact = true },
+        .{ .source_namespace = "nativepkg__外部追加", .dispatch_namespace = "nativepkg__外部追加", .exact = true },
+    };
+    var parsed = try parser.parse(
+        std.testing.allocator,
+        "ネイティブ加算(2, 3)\nnativepkg__外部追加(1, 2)\nF={関数}ネイティブ加算\n",
+        "<dynamic>.nako3",
+    );
+    defer parsed.deinit();
+    try std.testing.expect(parsed.succeeded());
+    var program = try analyzeModules(std.testing.allocator, &.{.{
+        .name = "main",
+        .path = "<dynamic>.nako3",
+        .root = parsed.root.?,
+        .dynamic_command_aliases = &registered,
+    }});
+    defer program.deinit();
+    try std.testing.expect(program.succeeded());
+    var unqualified = false;
+    var namespaced = false;
+    var function_pointer = false;
+    for (program.bindings) |binding| {
+        if (binding.kind != .builtin or !binding.dynamic_builtin) continue;
+        if (std.mem.eql(u8, binding.resolved_name, "ネイティブ加算")) {
+            if (binding.node.kind == .function_pointer) function_pointer = true else unqualified = true;
+        }
+        if (std.mem.eql(u8, binding.resolved_name, "nativepkg__外部追加")) namespaced = true;
+    }
+    try std.testing.expect(unqualified);
+    try std.testing.expect(namespaced);
+    try std.testing.expect(function_pointer);
+}
+
+test "動的評価へ引き継いだ実行時登録命令名に無い呼出しは未定義命令として診断する" {
+    const parser = @import("../frontend/parser.zig");
+    const registered = [_]DynamicCommandAlias{
+        .{ .source_namespace = "ネイティブ加算", .dispatch_namespace = "ネイティブ加算", .exact = true },
+    };
+    var parsed = try parser.parse(std.testing.allocator, "未登録命令(1)\n", "<dynamic>.nako3");
+    defer parsed.deinit();
+    try std.testing.expect(parsed.succeeded());
+    var program = try analyzeModules(std.testing.allocator, &.{.{
+        .name = "main",
+        .path = "<dynamic>.nako3",
+        .root = parsed.root.?,
+        .dynamic_command_aliases = &registered,
+    }});
+    defer program.deinit();
+    try std.testing.expect(!program.succeeded());
+    var diagnosed = false;
+    for (program.diagnostics) |item| {
+        if (item.code != .undefined_symbol) continue;
+        if (std.mem.eql(u8, item.message, "関数『未登録命令』が見当たりません。")) diagnosed = true;
+    }
+    try std.testing.expect(diagnosed);
+}
+
 test "package内scopeの依存命令は所有者修飾のdispatch名へ束縛する" {
     const parser = @import("../frontend/parser.zig");
     // 別package scopeで同じaliasを使う推移依存は、ソース上の `util__命令`

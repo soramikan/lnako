@@ -22,6 +22,8 @@ try {
     source,
     `!「${importPath}」を取り込む
 ネイティブ加算(2,3)を表示
+「ネイティブ加算(7,8)を表示」をナデシコ
+「ネイティブ加算(9,10)を表示」をナデシコ続
 JSON変換(ネイティブ配列("x"))を表示
 ネイティブホスト呼出(ネイティブ配列("y"))を表示
 F=関数(V)それはV*2
@@ -48,6 +50,8 @@ Rの失敗した時には
   );
   const result = spawnSync(executable, ["run", source], { cwd: root, encoding: "utf8", maxBuffer: 8 * 1024 * 1024 });
   const expected = `5
+15
+19
 ["x","native"]
 ["y","native"]
 12

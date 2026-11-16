@@ -1,5 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const build_options = @import("build_options");
 const istate = @import("state.zig");
 const shared = @import("shared.zig");
 const value_mod = @import("../value.zig");
@@ -4421,4 +4422,36 @@ test "Interpreter低レイヤーのstatfs/reflink/領域検索/領域確保は�
         const source_stat = try low_level_fs.stat(std.testing.io, source_path, true);
         try std.testing.expectEqual(@as(u64, 16512), source_stat.size);
     }
+}
+
+test "ナデシコとナデシコ続は実行時登録済みESM plugin命令を実行できる" {
+    // Issue #228レビュー指摘: 動的評価の意味解析は取り込み辺を持たないため、
+    // 実行時registry（ここでは --compat-js のESM plugin）に登録済みの命令名を
+    // 引き継がなければ `DynamicSemanticFailed` で拒否してしまう。
+    if (!build_options.quickjs_enabled) return error.SkipZigTest;
+    const source =
+        "「ESM動的加算(2,3)を表示」をナデシコ\n" ++
+        "「ESM動的加算(4,5)を表示」をナデシコ続\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    // 直接path取り込み相当の無修飾登録（空sentinel namespace）を再現する。
+    var modules = [_]ir.JavaScriptModule{.{
+        .path = "dynamic-plugin.mjs",
+        .source = "export default { ESM動的加算: { type: 'func', josi: [['と'], ['を']], pure: true, fn: (a, b) => Number(a) + Number(b) } };",
+        .is_plugin = true,
+        .namespaces = &.{""},
+    }};
+    fixture.ir_program.compat_js = true;
+    fixture.ir_program.javascript_modules = &modules;
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("5\n9\n", host.written());
 }

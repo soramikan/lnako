@@ -713,6 +713,21 @@ pub const State = struct {
         return false;
     }
 
+    /// 動的評価（`ナデシコ`/`ナデシコ続`）の意味解析へ引き継ぐため、登録済み
+    /// 命令のdispatch名を`list`へ複製する。namespace無しは無修飾名、
+    /// namespace有りは`findCommand`が解決する`{namespace}__{命令}`を返す。
+    /// 各要素は呼出し側が`allocator`で解放する。
+    pub fn appendRegisteredCommandNames(self: *State, allocator: std.mem.Allocator, list: *std.ArrayList([]const u8)) !void {
+        for (self.commands.items) |command| {
+            const dispatch_name = if (command.namespace) |namespace|
+                try std.fmt.allocPrint(allocator, "{s}__{s}", .{ namespace, command.name })
+            else
+                try allocator.dupe(u8, command.name);
+            errdefer allocator.free(dispatch_name);
+            try list.append(allocator, dispatch_name);
+        }
+    }
+
     /// 同一plugin識別子の重複登録判定。namespace所有の命令同士は
     /// `{namespace}__{name}`が等しい場合のみ衝突とみなすため、別packageが
     /// 同名命令を登録しても互いを隠さない。

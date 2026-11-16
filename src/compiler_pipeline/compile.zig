@@ -780,33 +780,52 @@ const FrontendTimer = struct {
     }
 };
 
-test "package経由のnative plugin命令は公開namespaceで修飾されAOT dispatchされる" {
-    const TestProvider = struct {
-        fn read(_: *anyopaque, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
-            if (pathHasSuffix(path, "main.nako3")) return allocator.dupe(u8, "!「pkg:nativepkg」を取り込む\nnativepkg__外部追加(1, 2)\n●(AとBを)外部追加とは\n0で戻る\nここまで\n外部追加(1, 2)\n");
-            return error.FileNotFound;
-        }
-    };
-    const TestResolver = struct {
-        fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, _: ?[]const u8, specifier: []const u8) !lnako.semantic.module_graph.ResolvedPackageImport {
-            if (!std.mem.eql(u8, specifier, "pkg:nativepkg")) return error.PackageNotFound;
-            return .{
-                .path = try std.fs.path.resolve(allocator, &.{"packages/nativepkg/plugin.so"}),
-                .canonical_id = try allocator.dupe(u8, "pkg:nativepkg/main"),
-                .namespace = "nativepkg",
-                .package_root = try std.fs.path.resolve(allocator, &.{"packages/nativepkg"}),
-            };
-        }
-    };
+/// package経由native pluginの名前解決テスト用provider。`source`だけを
+/// main.nako3として返し、plugin本体は読ませない（静的metadataだけで解決する）。
+const PackageNativePluginTestProvider = struct {
+    source: []const u8,
+
+    fn read(context: *anyopaque, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+        const self: *PackageNativePluginTestProvider = @ptrCast(@alignCast(context));
+        if (pathHasSuffix(path, "main.nako3")) return allocator.dupe(u8, self.source);
+        return error.FileNotFound;
+    }
+};
+
+const PackageNativePluginTestResolver = struct {
+    fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, _: ?[]const u8, specifier: []const u8) !lnako.semantic.module_graph.ResolvedPackageImport {
+        if (!std.mem.eql(u8, specifier, "pkg:nativepkg")) return error.PackageNotFound;
+        return .{
+            .path = try std.fs.path.resolve(allocator, &.{"packages/nativepkg/plugin.so"}),
+            .canonical_id = try allocator.dupe(u8, "pkg:nativepkg/main"),
+            .namespace = "nativepkg",
+            .package_root = try std.fs.path.resolve(allocator, &.{"packages/nativepkg"}),
+        };
+    }
+};
+
+/// package経由native pluginを1件だけ解決するprovider/resolverでcompileする。
+fn compilePackageNativePluginTest(
+    source: []const u8,
+    stderr: *std.Io.Writer,
+) !?lnako.ir.nako_ir.Program {
+    var provider = PackageNativePluginTestProvider{ .source = source };
     var context: u8 = 0;
-    var stderr: std.Io.Writer.Allocating = .init(std.testing.allocator);
-    defer stderr.deinit();
-    const program = try compileInputWithProvider(
+    return compileInputWithProvider(
         std.testing.allocator,
         "main.nako3",
-        .{ .package_resolver = .{ .context = &context, .resolveFn = TestResolver.resolve } },
+        .{ .package_resolver = .{ .context = &context, .resolveFn = PackageNativePluginTestResolver.resolve } },
+        stderr,
+        .{ .context = &provider, .readFn = PackageNativePluginTestProvider.read },
+    );
+}
+
+test "package経由のnative plugin命令は公開namespaceで修飾されAOT dispatchされる" {
+    var stderr: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer stderr.deinit();
+    const program = try compilePackageNativePluginTest(
+        "!「pkg:nativepkg」を取り込む\nnativepkg__外部追加(1, 2)\n",
         &stderr.writer,
-        .{ .context = &context, .readFn = TestProvider.read },
     );
     var compiled = program orelse return error.UnexpectedCompileFailure;
     defer compiled.deinit();
@@ -818,8 +837,7 @@ test "package経由のnative plugin命令は公開namespaceで修飾されAOT di
     try std.testing.expectEqual(@as(usize, 1), compiled.native_plugin_paths.len);
 
     // `nativepkg__外部追加` は修飾名なので isQualifiedGlobal に見えるが、
-    // package対応表により plugin dispatch へ分類される。無修飾の `外部追加`
-    // はローカル関数へ束縛され plugin dispatch にも流れない。
+    // package対応表により plugin dispatch へ分類される。
     const backend_module = lnako.backend.llvm.module;
     var qualified_plugin_call = false;
     for (compiled.functions) |function| {
@@ -827,14 +845,55 @@ test "package経由のnative plugin命令は公開namespaceで修飾されAOT di
             for (block.instructions) |instruction| {
                 if (instruction.opcode != .call) continue;
                 if (!backend_module.isNativePluginCall(compiled, function, instruction)) continue;
-                // plugin dispatchへ流れるのはpackage修飾名のみ。無修飾の
-                // `外部追加`はlocal宣言へ束縛されpluginへ届かない。
                 try std.testing.expect(std.mem.startsWith(u8, instruction.name, "nativepkg__"));
                 if (std.mem.eql(u8, instruction.name, "nativepkg__外部追加")) qualified_plugin_call = true;
             }
         }
     }
     try std.testing.expect(qualified_plugin_call);
+}
+
+test "package経由のnative pluginは無修飾名を公開せず未定義命令として診断する" {
+    // 元のnamespace隔離保証。無修飾の`外部追加`はpluginのcatch-allへ
+    // 流れず、未定義命令としてcompileを失敗させる。
+    var stderr: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer stderr.deinit();
+    const program = try compilePackageNativePluginTest(
+        "!「pkg:nativepkg」を取り込む\nnativepkg__外部追加(1, 2)\n外部追加(1, 2)\n",
+        &stderr.writer,
+    );
+    try std.testing.expect(program == null);
+    try std.testing.expect(std.mem.indexOf(u8, stderr.writer.buffered(), "関数『外部追加』が見当たりません") != null);
+}
+
+test "package経由のnative plugin命令より同一moduleのローカル関数を優先する" {
+    // ローカル関数がある場合の正常系。無修飾`外部追加`はローカル関数へ
+    // 解決され、plugin dispatchへはpackage修飾名だけが流れる。
+    var stderr: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer stderr.deinit();
+    const program = try compilePackageNativePluginTest(
+        "!「pkg:nativepkg」を取り込む\nnativepkg__外部追加(1, 2)\n●(AとBを)外部追加とは\n0で戻る\nここまで\n外部追加(1, 2)\n",
+        &stderr.writer,
+    );
+    var compiled = program orelse return error.UnexpectedCompileFailure;
+    defer compiled.deinit();
+
+    const backend_module = lnako.backend.llvm.module;
+    var qualified_plugin_call = false;
+    var local_call = false;
+    for (compiled.functions) |function| {
+        for (function.blocks) |block| {
+            for (block.instructions) |instruction| {
+                if (instruction.opcode != .call) continue;
+                if (std.mem.eql(u8, instruction.name, "main__外部追加")) local_call = true;
+                if (!backend_module.isNativePluginCall(compiled, function, instruction)) continue;
+                try std.testing.expect(std.mem.startsWith(u8, instruction.name, "nativepkg__"));
+                if (std.mem.eql(u8, instruction.name, "nativepkg__外部追加")) qualified_plugin_call = true;
+            }
+        }
+    }
+    try std.testing.expect(qualified_plugin_call);
+    try std.testing.expect(local_call);
 }
 
 test "直接importとpackage aliasが併存するESM moduleは無修飾と修飾名の両方を登録する" {
