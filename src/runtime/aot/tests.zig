@@ -6079,6 +6079,60 @@ test "AOT byte bufferの数値文字列キーはTypedArrayの要素規則に従�
     try std.testing.expectEqual(@as(f64, 7), valueToNumber(runtime.indexGet(roots[2], staticStringValue("2"))));
 }
 
+test "AOT byte bufferの要素設定は無効添字でも右辺をToNumberする" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+    var roots = @as([5]Value, @splat(.{}));
+    var frame = RootFrame{};
+    active.pushRoots(&frame, &roots, roots.len);
+    defer active.popRoots(&frame);
+
+    roots[0] = try active.createBytes(&.{ 1, 2, 3, 4, 5 });
+    roots[1] = try active.createBindingCell(numberValue(0));
+    roots[2] = try active.createFunction(testAotCapturedIncrement, 0, &.{roots[1]});
+    roots[3] = try active.createDictionary(&.{});
+    try active.setDictionary(&roots[3].object().?.payload.dictionary, staticStringValue("valueOf"), roots[2]);
+
+    // TypedArrayのIntegerIndexedElementSetは添字の有効性より先に右辺を
+    // ToNumberする。範囲外・負数・NaN・小数では要素を書き換えず、
+    // valueOfの副作用だけが1回ずつ観測される。
+    const invalid_keys = [_]Value{
+        staticStringValue("99"),
+        staticStringValue("-1"),
+        staticStringValue("NaN"),
+        numberValue(99),
+        numberValue(-1),
+        numberValue(1.5),
+    };
+    for (invalid_keys) |key| try active.indexSet(roots[0], key, roots[3]);
+    try std.testing.expectEqual(@as(f64, 6), valueToNumber(roots[1].object().?.payload.binding_cell));
+    try std.testing.expectEqual(@as(usize, 0), roots[0].object().?.array_properties.entries.items.len);
+    try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3, 4, 5 }, roots[0].object().?.payload.byte_buffer.bytes);
+
+    // 範囲内の添字は変換結果を1回だけ書き込む。
+    try active.indexSet(roots[0], staticStringValue("2"), roots[3]);
+    try std.testing.expectEqual(@as(f64, 7), valueToNumber(roots[1].object().?.payload.binding_cell));
+    try std.testing.expectEqual(@as(u8, 7), roots[0].object().?.payload.byte_buffer.bytes[2]);
+
+    // 非正準の"02"は通常のownプロパティで、ToNumberしない。
+    try active.indexSet(roots[0], staticStringValue("02"), roots[3]);
+    try std.testing.expectEqual(@as(f64, 7), valueToNumber(roots[1].object().?.payload.binding_cell));
+    try std.testing.expectEqual(@as(usize, 1), roots[0].object().?.array_properties.entries.items.len);
+
+    // BigIntは無効添字・範囲外でも例外になり、副作用より先に失敗する。
+    roots[4] = try active.createBigInt("1n");
+    try std.testing.expectError(error.CannotConvertBigIntToNumber, active.indexSet(roots[0], staticStringValue("99"), roots[4]));
+    try std.testing.expectError(error.CannotConvertBigIntToNumber, active.indexSet(roots[0], numberValue(99), roots[4]));
+    try std.testing.expectError(error.CannotConvertBigIntToNumber, active.indexSet(roots[0], staticStringValue("-1"), roots[4]));
+    try std.testing.expectEqual(@as(f64, 7), valueToNumber(roots[1].object().?.payload.binding_cell));
+}
+
 test "AOT byte bufferの非正準キーと内部ownプロパティを要素から分離する" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();

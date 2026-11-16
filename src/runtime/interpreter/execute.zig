@@ -1204,17 +1204,19 @@ fn setOne(self: *Interpreter, container: Value, key: Value, value: Value) !void 
         // such as "02" still use the ordinary property path below.
         if (rooted[0].bytes.kind != .array_buffer) switch (try typed_array_key.classifyAlloc(key_units, self.allocator)) {
             .index => |index| {
+                // ECMAScriptのIntegerIndexedElementSetは添字の有効性より
+                // 先に右辺をToNumberする。範囲外でもvalueOfの副作用と
+                // BigIntのTypeErrorを観測できる。
+                const byte = typed_array_key.byteFromNumber(try self.runtime.valueToNumber(rooted[2]));
                 const position = std.math.cast(usize, index) orelse return;
-                if (position >= rooted[0].bytes.bytes.len) return;
-                const number = try self.runtime.valueToNumber(rooted[2]);
-                const byte: u8 = if (!std.math.isFinite(number) or number == 0)
-                    0
-                else
-                    @intFromFloat(@mod(@trunc(number), 256));
-                rooted[0].bytes.set(position, byte);
+                if (position < rooted[0].bytes.bytes.len) rooted[0].bytes.set(position, byte);
                 return;
             },
-            .ignored => return,
+            .ignored => {
+                // 無効添字でもToNumberだけは実行する（副作用の観測）。
+                _ = typed_array_key.byteFromNumber(try self.runtime.valueToNumber(rooted[2]));
+                return;
+            },
             .property => {},
         };
         if (std.mem.eql(u16, key_units, &.{ '_', '_', 'p', 'r', 'o', 't', 'o', '_', '_' }) and

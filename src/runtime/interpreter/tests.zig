@@ -791,6 +791,37 @@ test "バイト列の数値文字列キーはTypedArrayの要素規則に従う"
     try std.testing.expectEqualStrings("66\n66\n0\n1\n66\n3\n4\n7\n7\n7\n7\n", host.written());
 }
 
+test "バイト列の要素設定は無効添字でも右辺をToNumberする" {
+    const TestNode = struct {
+        pub fn cwd(_: *anyopaque, allocator: std.mem.Allocator) ![]u8 {
+            return allocator.dupe(u8, ".");
+        }
+
+        pub fn randomBytes(_: *anyopaque, output: []u8) !void {
+            for (output, 0..) |*byte, index| byte.* = @intCast(index);
+        }
+    };
+    // TypedArrayのIntegerIndexedElementSetは添字の有効性より先に右辺を
+    // ToNumberする。範囲外・負数・NaN・小数のどれでもvalueOfの副作用が
+    // 1回ずつ観測され、BigIntは範囲外でもTypeErrorになる。
+    const source = "N=0\nF=関数()\nN=N+1\nそれは7\nここまで\nO={}\nO[\"valueOf\"]=F\nB=5のランダム配列生成\nB[\"99\"]=O\nB[\"-1\"]=O\nB[\"NaN\"]=O\nB[99]=O\nB[\"1.5\"]=O\nB[\"02\"]=O\n「{N}」を表示\nB[2]=O\n「{N}:{B[2]}」を表示\nエラー監視\nB[\"-1\"]=1n\nエラーならば\n「e:{エラーメッセージ}」を表示\nここまで\n「{N}」を表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var runtime_host = host.host();
+    runtime_host.node_context = .{ .context = &host, .cwdFn = TestNode.cwd, .randomBytesFn = TestNode.randomBytes };
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, runtime_host);
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("5\n6:7\ne:Cannot convert a BigInt value to a number\n6\n", host.written());
+}
+
 test "連続表示は公式処理系と同じく改行する" {
     var fixture = try compileForTest(std.testing.allocator, "\"100%安全%s\"を連続表示\n\"次\"を表示\n");
     defer fixture.ir_program.deinit();

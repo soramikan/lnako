@@ -86,6 +86,14 @@ pub fn classifyAlloc(units: []const u16, scratch_allocator: std.mem.Allocator) !
     return valueKey(number);
 }
 
+/// TypedArrayの要素設定（`IntegerIndexedElementSet`）が要素へ格納する
+/// ToUint8の結果。NaN・±0・±Infinityは0、それ以外は切り捨てて256で
+/// 剰余を取る。呼び出し側は添字の有効性より先にToNumberを済ませる。
+pub fn byteFromNumber(number: f64) u8 {
+    if (!std.math.isFinite(number) or number == 0) return 0;
+    return @intFromFloat(@mod(@trunc(number), 256));
+}
+
 fn valueKey(number: f64) TypedArrayKey {
     if (!std.math.isFinite(number)) return .ignored;
     if (number == 0) return if (std.math.signbit(number)) .ignored else .{ .index = 0 };
@@ -166,4 +174,16 @@ test "TypedArrayの数値文字列キーを正準数値インデックスとし�
         const actual = try classifyAlloc(units_buffer[0..case.text.len], std.testing.allocator);
         try std.testing.expect(std.meta.eql(actual, case.expected));
     }
+}
+
+test "TypedArray要素へ格納するToUint8" {
+    try std.testing.expectEqual(@as(u8, 0), byteFromNumber(std.math.nan(f64)));
+    try std.testing.expectEqual(@as(u8, 0), byteFromNumber(std.math.inf(f64)));
+    try std.testing.expectEqual(@as(u8, 0), byteFromNumber(-std.math.inf(f64)));
+    try std.testing.expectEqual(@as(u8, 0), byteFromNumber(0));
+    try std.testing.expectEqual(@as(u8, 0), byteFromNumber(-0.0));
+    try std.testing.expectEqual(@as(u8, 7), byteFromNumber(7));
+    try std.testing.expectEqual(@as(u8, 44), byteFromNumber(300));
+    try std.testing.expectEqual(@as(u8, 255), byteFromNumber(-1));
+    try std.testing.expectEqual(@as(u8, 255), byteFromNumber(255.9));
 }
