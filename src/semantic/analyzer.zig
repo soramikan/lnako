@@ -386,10 +386,8 @@ pub const Analyzer = struct {
         self.stream_order += 1;
         if (node.kind == .property_assignment)
             try self.property_assignment_order.put(self.allocator, node, self.stream_order);
-        if (node.kind == .function_definition or node.kind == .test_definition) {
-            if (!expansion) try self.declareModuleFunction(node, module_index);
-            return;
-        }
+        // 関数宣言の引数情報は事前走査で確定済み。
+        if (node.kind == .function_definition or node.kind == .test_definition) return;
         if (node.kind == .anonymous_function) return;
         // 公式は`引数`をソース上で最初に参照・代入・宣言した時点で変数登録
         // する（genVar/varname_setのnames.add相当）。読み出しだけの文でも

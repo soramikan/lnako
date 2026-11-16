@@ -134,6 +134,43 @@ test "同名の関数定義はコード生成順の後勝ちで上書きする" 
     try std.testing.expectEqual(@as(usize, 1), f_symbols);
 }
 
+test "入れ子の同名関数が確定済みの引数情報を上書きしない" {
+    // predeclareModuleFunctions が最後の定義（ここではモジュール直下の
+    // 1引数F）で arity・助詞を確定する。後続の入れ子定義の再宣言で
+    // 2引数の定義へ戻ると、F(2) が引数不足として拒否される（Issue #195）。
+    const parser = @import("../frontend/parser.zig");
+    const source = "●外とは\n●(AとBの)Fとは\nA+Bを表示\nここまで\nここまで\n●(Aの)Fとは\nAを表示\nここまで\nF(2)\n";
+    var parsed = try parser.parse(std.testing.allocator, source, "nested-order.nako3");
+    defer parsed.deinit();
+    var program = try analyze(std.testing.allocator, parsed.root.?, "nested-order.nako3");
+    defer program.deinit();
+    try std.testing.expect(program.succeeded());
+    const function = program.findSymbol("nested-order__F") orelse return error.TestExpectedFunction;
+    try std.testing.expectEqual(@as(usize, 1), function.argument_count);
+    try std.testing.expectEqual(@as(usize, 1), function.parameter_josi.len);
+    try std.testing.expectEqualStrings("の", function.parameter_josi[0]);
+}
+
+test "入れ子定義より前の同名関数呼出しを最終定義の引数情報で解決する" {
+    // 外側関数の本体は入れ子定義より前に F(1) を呼ぶ。最終定義は
+    // モジュール直下の1引数Fであり、入れ子定義（2引数）の再宣言で
+    // 巻き戻るとこの呼出しが引数不足になる（Issue #195）。
+    const parser = @import("../frontend/parser.zig");
+    const source = "●外とは\nF(1)\n●(AとBの)Fとは\nA+Bを表示\nここまで\nここまで\n●(Aの)Fとは\nAを表示\nここまで\n外\n";
+    var parsed = try parser.parse(std.testing.allocator, source, "nested-before.nako3");
+    defer parsed.deinit();
+    var program = try analyze(std.testing.allocator, parsed.root.?, "nested-before.nako3");
+    defer program.deinit();
+    try std.testing.expect(program.succeeded());
+    const function = program.findSymbol("nested-before__F") orelse return error.TestExpectedFunction;
+    try std.testing.expectEqual(@as(usize, 1), function.argument_count);
+    var calls: usize = 0;
+    for (program.bindings) |binding| {
+        if (binding.kind == .call and std.mem.eql(u8, binding.resolved_name, "nested-before__F")) calls += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 1), calls);
+}
+
 test "無名関数の代入は外側の可変束縛を解決する" {
     const parser = @import("../frontend/parser.zig");
     const source = "●(Aを)作るとは\nF=関数()\nA=A+1\nここまで\nFで戻る\nここまで\n";
