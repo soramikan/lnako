@@ -304,8 +304,8 @@ try {
   expectEqual(valueOfOutput, valueOfInterpreter.stdout.trim(), "valueOfからのローカル解決のAOT/インタプリタ一致");
   expectEqual(valueOfOutput, "6", "valueOfからのローカル解決結果");
 
-  // `sys.__exec`（組み込み命令の文字列dispatch）はAOTでは未対応のまま
-  // 明示エラーにする。interpreterは公式と同じく組み込み命令を呼べる。
+  // `sys.__exec`（組み込み命令の文字列dispatch）はAOTでもinterpreterと
+  // 同じ結果になる。Unit 1 のコア命令ディスパッチを出力一致で固定する。
   const hostExecSource = join(work, "compat-js-host-exec.nako3");
   writeFileSync(hostExecSource, 'JS実行(『sys.__exec("整数変換",["12.9"])』)を表示\n');
   const hostExecInterpreter = spawnSync(compiler, ["run", hostExecSource, "--compat-js"], { encoding: "utf8" });
@@ -314,9 +314,10 @@ try {
   runCompiler(hostExecSource, hostExecBinary, ["--compat-js", "--backend", "aot"]);
   const hostExecAot = spawnSync(hostExecBinary, [], { encoding: "utf8" });
   const hostExecOutput = `${hostExecAot.stdout ?? ""}${hostExecAot.stderr ?? ""}`;
-  if (hostExecAot.status === 0 || !hostExecOutput.includes("lnako host command bridge is unavailable")) {
-    fail(`sys.__execのAOT境界が明示エラーになりません: status=${hostExecAot.status}\n${hostExecOutput}`);
+  if (hostExecAot.status !== 0) {
+    fail(`sys.__execのAOT実行が失敗しました: status=${hostExecAot.status}\n${hostExecOutput}`);
   }
+  expectEqual((hostExecAot.stdout ?? "").trim(), "12", "sys.__execのAOT結果");
 
   // `JS関数実行` の full 変換（ネスト配列・辞書、関数値、BigInt、bytes、循環、
   // 疎配列、Promise解決値）と、`JSオブジェクト取得` / `JSメソッド実行` の

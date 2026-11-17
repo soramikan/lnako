@@ -35,11 +35,10 @@ try {
     }
   }
 
-  // `--compat-js --backend aot` も公式・interpreterと比較する。ただし次の
-  // 3ケースはAOTの対象外なので理由付きで除外する。
-  // - `compat-js-host`: §9.1 のとおり `sys.__exec`（組み込み命令の文字列
-  //   dispatch）を含み、AOTでは明示エラーになる。境界そのものは
-  //   tools/check_aot_quickjs_separation.mjs で固定する。
+  // `--compat-js --backend aot` も公式・interpreterと比較する。`sys.__exec`
+  // （組み込み命令の文字列dispatch）を含む `compat-js-host` は、AOTの
+  // コア命令ディスパッチ接続後に3者一致の対象へ含める。残る次の2ケースは
+  // AOTの対象外なので理由付きで除外する。
   // - `compat-js-hatena`: `JS:`指定のハテナ関数はAOTが
   //   JavaScriptCompatibilityRequiredで拒否する（interpreter専用）。
   // - `compat-js-plugin-imports`: namespaceを持たないbare ESM pluginの命令を
@@ -51,7 +50,6 @@ try {
   // は外側クロージャのローカルや `__v0` のシステム定数を探索せず、数値引数で
   // 例外になるため、このfixtureを公式との3者比較には含めない。
   const aotSkips = new Map([
-    ["compat-js-host", "sys.__exec（組み込み命令の動的dispatch）はAOT未対応"],
     ["compat-js-hatena", "JS:指定のハテナ関数はAOT未対応"],
     ["compat-js-plugin-imports", "bare ESM plugin命令のAOT codegen未対応"],
   ]);

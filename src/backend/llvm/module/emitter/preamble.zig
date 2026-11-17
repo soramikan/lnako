@@ -314,7 +314,31 @@ pub fn collectModuleData(emitter: *Emitter) !void {
             "マイドキュメント",
             "テンポラリフォルダ",
             "母艦パス",
+            // `sys.__exec` から実行時に呼ばれるビルトイン命令が暗黙に
+            // 読み書きするシステム変数。ソース内で直接参照されなくても
+            // 固定アドレスの `@lnako.global.N` を確保し、`sys.__getSysVar`
+            // と `.nako3` 側の双方から同じ値を観測できるようにする。
+            "それ",
+            "対象",
+            "そ",
+            "表示ログ",
+            "抽出文字列",
+            "対象キー",
+            "回数",
+            "エラーメッセージ",
+            "プラグイン名",
             "名前空間",
+            "圧縮解凍ツールパス",
+            "AJAXオプション",
+            "AJAX:ONERROR",
+            "ファイルコピーデフォルト動作",
+            "HTTPメソッド",
+            "GETデータ",
+            "POSTデータ",
+            "FILESデータ",
+            "__DEBUGブレイクポイント一覧",
+            "__DEBUG強制待機",
+            "__DEBUG待機フラグ",
         }) |name| {
             if (emitter.globalIndex(name) == null) try emitter.appendGlobal(name);
         }
