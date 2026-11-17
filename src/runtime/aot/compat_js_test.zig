@@ -5080,6 +5080,11 @@ test "compat AOT runtimeはsys.__execでそれと省略引数をインタプリ�
     try expectQuickJsString(active, "sys.__exec('置換', ['aba', 'a'])", ",b,");
     try expectQuickJsString(active, "sys.__exec('正規表現置換', ['aba', 'a'])", "undefinedbundefined");
 
+    const say_empty = try evalCompatJs(active, "sys.__exec('言', [])");
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.undefined)), say_empty.tag);
+    const console_empty = try evalCompatJs(active, "sys.__exec('コンソール表示', [])");
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.undefined)), console_empty.tag);
+
     var throw_out: Value = .{};
     compat.execCompatBuiltin(active, "エラー発生", &.{}, &throw_out);
     try expectPendingFailureContains(active, "エラー");

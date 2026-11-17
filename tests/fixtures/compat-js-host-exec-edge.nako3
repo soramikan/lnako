@@ -39,3 +39,5 @@ JS実行(『sys.__exec("足",[])』)を表示
 JS実行(『sys.__exec("切取",["abc"])』)を表示
 JS実行(『sys.__exec("置換",["aba","a"])』)を表示
 JS実行(『sys.__exec("正規表現置換",["aba","a"])』)を表示
+JS実行(『sys.__exec("言", []); "done-say"』)を表示
+JS実行(『sys.__exec("コンソール表示", []); "done-console"』)を表示

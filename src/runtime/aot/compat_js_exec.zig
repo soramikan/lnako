@@ -150,6 +150,7 @@ fn minCommandArgs(command: aot_builtin.Command) usize {
         .stdio_continue_display,
         .stdio_continue_display_many,
         .stdio_clear_log,
+        .stdio_write_all,
         .namespace_pop,
         .timer_wait,
         .timer_stop_all,
