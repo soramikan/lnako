@@ -30,6 +30,7 @@ const quickjs = @import("../../compat/quickjs.zig");
 const environment = @import("../environment.zig");
 const shared = @import("shared.zig");
 const execute = @import("execute.zig");
+const indexing = @import("indexing.zig");
 const iterator_ops = @import("iterators.zig");
 const events = @import("events.zig");
 const plugins = @import("plugins.zig");
@@ -1028,23 +1029,23 @@ pub const Interpreter = struct {
     }
 
     pub fn getIndexed(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !Value {
-        return execute.getIndexed(self, frame, instruction);
+        return indexing.getIndexed(self, frame, instruction);
     }
 
     pub fn getOne(self: *Interpreter, container: Value, key: Value) !Value {
-        return execute.getOne(self, container, key);
+        return indexing.getOne(self, container, key);
     }
 
     pub fn elementSet(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !void {
-        return execute.elementSet(self, frame, instruction);
+        return indexing.elementSet(self, frame, instruction);
     }
 
     pub fn ensureArrayVar(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !void {
-        return execute.ensureArrayVar(self, frame, instruction);
+        return indexing.ensureArrayVar(self, frame, instruction);
     }
 
     pub fn initArrayIndex(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !void {
-        return execute.initArrayIndex(self, frame, instruction);
+        return indexing.initArrayIndex(self, frame, instruction);
     }
 
     pub fn makeClosure(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !Value {
