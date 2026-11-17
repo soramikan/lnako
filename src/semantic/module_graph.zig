@@ -408,7 +408,10 @@ pub const ModuleGraph = struct {
                         if (item.namespace) |alias| {
                             var listed = false;
                             for (dynamic_command_aliases.items) |existing| {
-                                if (std.mem.eql(u8, existing.source_namespace, alias)) {
+                                if (!existing.unqualified and
+                                    !existing.exact and
+                                    std.mem.eql(u8, existing.source_namespace, alias))
+                                {
                                     listed = true;
                                     break;
                                 }

@@ -687,22 +687,22 @@ pub fn hasRegisteredFunctionKey(state: *State, allocator: std.mem.Allocator, nam
     const engine = state.engine orelse return false;
     const commands = try globalProperty(engine, "__lnako_commands");
     defer lnako_qjs_value_free(commands);
-    var lookup_name = name;
-    var name_z = try allocator.dupeSentinel(u8, lookup_name, 0);
+    const name_z = try allocator.dupeSentinel(u8, name, 0);
     defer allocator.free(name_z);
-    var definition_value = lnako_qjs_get_property(commands, name_z.ptr) orelse return quickJsError(engine);
-    if (lnako_qjs_kind(definition_value) == .undefined and !isPackageNamespacedName(state, name)) {
+    var definition_value: ?*RawValue = lnako_qjs_get_property(commands, name_z.ptr) orelse return quickJsError(engine);
+    defer if (definition_value) |value| lnako_qjs_value_free(value);
+    if (lnako_qjs_kind(definition_value.?) == .undefined and !isPackageNamespacedName(state, name)) {
         if (std.mem.lastIndexOf(u8, name, "__")) |separator| {
-            lnako_qjs_value_free(definition_value);
-            lookup_name = name[separator + 2 ..];
-            allocator.free(name_z);
-            name_z = try allocator.dupeSentinel(u8, lookup_name, 0);
-            definition_value = lnako_qjs_get_property(commands, name_z.ptr) orelse return quickJsError(engine);
+            const fallback_name_z = try allocator.dupeSentinel(u8, name[separator + 2 ..], 0);
+            defer allocator.free(fallback_name_z);
+            lnako_qjs_value_free(definition_value.?);
+            definition_value = null;
+            definition_value = lnako_qjs_get_property(commands, fallback_name_z.ptr) orelse return quickJsError(engine);
         }
     }
-    defer lnako_qjs_value_free(definition_value);
-    if (lnako_qjs_kind(definition_value) == .undefined) return false;
-    const type_value = lnako_qjs_get_property(definition_value, "type") orelse return false;
+    const resolved = definition_value.?;
+    if (lnako_qjs_kind(resolved) == .undefined) return false;
+    const type_value = lnako_qjs_get_property(resolved, "type") orelse return false;
     defer lnako_qjs_value_free(type_value);
     const type_text = rawText(type_value) catch return false;
     defer lnako_qjs_free_string(type_text.pointer);

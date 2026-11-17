@@ -53,7 +53,6 @@ pub fn binds(allows_dynamic_commands: bool, allows_from: usize, aliases: []const
                 selected_exact = alias;
         }
     }
-    if (selected_exact) |alias| return alias;
     // 最長 namespace を優先する（`foo` と `foo__bar` が併存するとき短い
     // 方が先に一致して誤配送しないよう、analyzer の namespace alias と同じ
     // longest-prefix 規則）。
@@ -67,7 +66,6 @@ pub fn binds(allows_dynamic_commands: bool, allows_from: usize, aliases: []const
             if (selected == null or alias.source_namespace.len > selected.?.source_namespace.len) selected = alias;
         }
     }
-    if (selected) |alias| return alias;
     // package内相対native/非静的ESM: 取り込み位置以降の無修飾命令を owner 修飾
     // dispatch へ写す。複数ある場合はより後の取り込みを優先する（後勝ち）。
     var selected_unqualified: ?DynamicCommandAlias = null;
@@ -77,6 +75,18 @@ pub fn binds(allows_dynamic_commands: bool, allows_from: usize, aliases: []const
         if (selected_unqualified == null or alias.import_position >= selected_unqualified.?.import_position)
             selected_unqualified = alias;
     }
+    // 後発の動的ESM/native pluginやprefix aliasが後から取り込まれている場合は、
+    // 先発ESM pluginの完全一致aliasより後勝ち規則を優先する。
+    if (selected_exact) |exact_alias| {
+        if (selected) |prefix_alias| {
+            if (prefix_alias.import_position > exact_alias.import_position) return prefix_alias;
+        }
+        if (selected_unqualified) |unqualified_alias| {
+            if (unqualified_alias.import_position > exact_alias.import_position) return unqualified_alias;
+        }
+        return exact_alias;
+    }
+    if (selected) |alias| return alias;
     if (selected_unqualified) |alias| return alias;
     if (allows_dynamic_commands and use_position >= allows_from) return .{ .source_namespace = name, .dispatch_namespace = name };
     return null;
@@ -130,16 +140,22 @@ pub fn appendJavaScriptPluginAliases(
         const prev_is_dot = index > 0 and isPunct(items[index - 1], ".");
         if (depth == 0 and !prev_is_dot and isIdent(token, "export") and index + 1 < items.len and isIdent(items[index + 1], "default")) {
             found_plugin_site = true;
-            const expr_start = unwrapParens(items, index + 2, items.len);
+            const raw_start = index + 2;
+            const expr_start = unwrapParens(items, raw_start, items.len);
+            const open_parens = expr_start - raw_start;
             if (expr_start >= items.len) {
                 all_static_complete = false;
             } else if (isPunct(items[expr_start], "{")) {
-                const ok = try extractObjectLiteralKeys(allocator, aliases, items, expr_start, dispatch_namespace, import_position);
-                if (!ok) all_static_complete = false;
-            } else if (items[expr_start].kind == .identifier and !isExpressionKeyword(items[expr_start].text) and isSimpleIdentEnd(items, expr_start)) {
-                if (findVariableObjectInitializer(items, index, items[expr_start].text)) |obj_brace| {
-                    const ok = try extractObjectLiteralKeys(allocator, aliases, items, obj_brace, dispatch_namespace, import_position);
-                    if (!ok) all_static_complete = false;
+                const result = try extractObjectLiteralKeys(allocator, aliases, items, expr_start, dispatch_namespace, import_position);
+                if (!result.complete or result.close_brace_index == null or
+                    !isExportDefaultExpressionEnd(source, items, result.close_brace_index.?, open_parens))
+                    all_static_complete = false;
+            } else if (items[expr_start].kind == .identifier and !isExpressionKeyword(items[expr_start].text) and
+                isExportDefaultExpressionEnd(source, items, expr_start, open_parens))
+            {
+                if (findVariableObjectInitializer(source, items, index, items[expr_start].text)) |obj_brace| {
+                    const result = try extractObjectLiteralKeys(allocator, aliases, items, obj_brace, dispatch_namespace, import_position);
+                    if (!result.complete or result.close_brace_index == null) all_static_complete = false;
                 } else {
                     all_static_complete = false;
                 }
@@ -148,7 +164,7 @@ pub fn appendJavaScriptPluginAliases(
             }
         } else if (isIdent(token, "addPluginObject") and !(index > 0 and isIdent(items[index - 1], "function")) and index + 1 < items.len and isPunct(items[index + 1], "(")) {
             found_plugin_site = true;
-            const ok = try extractAddPluginObjectSecondArg(allocator, aliases, items, index + 1, dispatch_namespace, import_position);
+            const ok = try extractAddPluginObjectSecondArg(allocator, aliases, source, items, index + 1, dispatch_namespace, import_position);
             if (!ok) all_static_complete = false;
         }
         if (isOpenDelim(token)) {
@@ -159,6 +175,11 @@ pub fn appendJavaScriptPluginAliases(
     }
     return found_plugin_site and all_static_complete;
 }
+
+const ObjectExtractResult = struct {
+    complete: bool,
+    close_brace_index: ?usize,
+};
 
 fn isPunct(token: js_scanner.JavaScriptToken, expected: []const u8) bool {
     return token.kind == .punctuation and std.mem.eql(u8, token.text, expected);
@@ -184,25 +205,160 @@ fn isExpressionKeyword(text: []const u8) bool {
         std.mem.eql(u8, text, "new");
 }
 
-fn isSimpleIdentEnd(items: []const js_scanner.JavaScriptToken, ident_index: usize) bool {
-    if (ident_index + 1 >= items.len) return true;
-    const next_token = items[ident_index + 1];
-    return !(isPunct(next_token, ".") or
-        isPunct(next_token, "(") or
-        isPunct(next_token, "[") or
-        isPunct(next_token, "+") or
-        isPunct(next_token, "?"));
-}
-
 fn unwrapParens(items: []const js_scanner.JavaScriptToken, start: usize, limit: usize) usize {
     var pos = start;
     while (pos < limit and isPunct(items[pos], "(")) pos += 1;
     return pos;
 }
 
-fn findVariableObjectInitializer(items: []const js_scanner.JavaScriptToken, limit: usize, name: []const u8) ?usize {
+fn consumeClosingParens(items: []const js_scanner.JavaScriptToken, after_expr: usize, open_parens: usize) ?usize {
+    var pos = after_expr;
+    var remaining = open_parens;
+    while (remaining > 0) : (remaining -= 1) {
+        if (pos >= items.len or !isPunct(items[pos], ")")) return null;
+        pos += 1;
+    }
+    return pos;
+}
+
+fn hasNewlineBetween(source: []const u8, prev: js_scanner.JavaScriptToken, next: js_scanner.JavaScriptToken) bool {
+    const source_start = @intFromPtr(source.ptr);
+    const source_end = source_start + source.len;
+    const prev_ptr = @intFromPtr(prev.text.ptr);
+    const next_ptr = @intFromPtr(next.text.ptr);
+    if (prev_ptr < source_start or next_ptr < source_start) return false;
+    const prev_end = (prev_ptr - source_start) + prev.text.len + @intFromBool(prev.kind == .string);
+    const next_start = (next_ptr - source_start) -| @intFromBool(next.kind == .string);
+    if (prev_end > next_start or prev_ptr + prev.text.len > source_end or next_start > source.len) return false;
+    return std.mem.indexOfAny(u8, source[prev_end..next_start], "\n\r") != null;
+}
+
+fn isContinuationToken(items: []const js_scanner.JavaScriptToken, pos: usize) bool {
+    const token = items[pos];
+    if (token.kind == .identifier) {
+        return std.mem.eql(u8, token.text, "in") or std.mem.eql(u8, token.text, "instanceof");
+    }
+    if (token.kind != .punctuation or token.text.len != 1) return false;
+    return switch (token.text[0]) {
+        '.', '(', '[', ',', '?', ':', '+', '-', '*', '/', '%', '=', '&', '|', '^', '<', '>' => true,
+        '!' => pos + 1 < items.len and isPunct(items[pos + 1], "="),
+        else => false,
+    };
+}
+
+fn isExportDefaultExpressionEnd(
+    source: []const u8,
+    items: []const js_scanner.JavaScriptToken,
+    expr_end_index: usize,
+    open_parens: usize,
+) bool {
+    const end_pos = consumeClosingParens(items, expr_end_index + 1, open_parens) orelse return false;
+    if (end_pos >= items.len) return true;
+    if (isPunct(items[end_pos], ";")) return true;
+    if (!hasNewlineBetween(source, items[end_pos - 1], items[end_pos])) return false;
+    return !isContinuationToken(items, end_pos);
+}
+
+fn isCallArgEnd(items: []const js_scanner.JavaScriptToken, after_expr: usize, open_parens: usize) bool {
+    const end_pos = consumeClosingParens(items, after_expr, open_parens) orelse return false;
+    return end_pos < items.len and (isPunct(items[end_pos], ")") or isPunct(items[end_pos], ","));
+}
+
+fn isVarInitEnd(
+    source: []const u8,
+    items: []const js_scanner.JavaScriptToken,
+    close_brace_index: usize,
+    open_parens: usize,
+) bool {
+    const end_pos = consumeClosingParens(items, close_brace_index + 1, open_parens) orelse return false;
+    if (end_pos >= items.len) return true;
+    if (isPunct(items[end_pos], ";") or isPunct(items[end_pos], ",")) return true;
+    if (!hasNewlineBetween(source, items[end_pos - 1], items[end_pos])) return false;
+    return !isContinuationToken(items, end_pos);
+}
+
+fn matchingCloseBrace(items: []const js_scanner.JavaScriptToken, open_brace_index: usize) ?usize {
     var depth: usize = 0;
-    var found: ?usize = null;
+    var pos = open_brace_index;
+    while (pos < items.len) : (pos += 1) {
+        const token = items[pos];
+        if (isOpenDelim(token)) {
+            depth += 1;
+        } else if (isCloseDelim(token)) {
+            if (depth == 0) return null;
+            depth -= 1;
+            if (depth == 0) return if (isPunct(token, "}")) pos else null;
+        }
+    }
+    return null;
+}
+
+fn isObjectPropertyKey(items: []const js_scanner.JavaScriptToken, index: usize) bool {
+    if (index == 0 or index + 1 >= items.len) return false;
+    return (isPunct(items[index - 1], "{") or isPunct(items[index - 1], ",")) and isPunct(items[index + 1], ":");
+}
+
+fn isAddPluginObjectSecondArgRef(items: []const js_scanner.JavaScriptToken, comma_index: usize) bool {
+    var nested: usize = 0;
+    var pos = comma_index;
+    while (pos > 0) {
+        pos -= 1;
+        const token = items[pos];
+        if (isCloseDelim(token)) {
+            nested += 1;
+        } else if (isOpenDelim(token)) {
+            if (nested == 0) {
+                return isPunct(token, "(") and pos >= 1 and isIdent(items[pos - 1], "addPluginObject") and
+                    !(pos >= 2 and isIdent(items[pos - 2], "function"));
+            }
+            nested -= 1;
+        } else if (nested == 0 and isPunct(token, ",")) {
+            return false;
+        }
+    }
+    return false;
+}
+
+fn isAllowedPluginReference(source: []const u8, items: []const js_scanner.JavaScriptToken, ref_index: usize) bool {
+    var start = ref_index;
+    while (start > 0 and isPunct(items[start - 1], "(")) start -= 1;
+    const open_parens = ref_index - start;
+    if (start >= 2 and isIdent(items[start - 2], "export") and isIdent(items[start - 1], "default") and
+        !(start >= 3 and isPunct(items[start - 3], ".")))
+    {
+        return isExportDefaultExpressionEnd(source, items, ref_index, open_parens);
+    }
+    if (start >= 1 and isPunct(items[start - 1], ",") and isCallArgEnd(items, ref_index + 1, open_parens)) {
+        return isAddPluginObjectSecondArgRef(items, start - 1);
+    }
+    return false;
+}
+
+fn hasVariableMutationOrEscape(
+    source: []const u8,
+    items: []const js_scanner.JavaScriptToken,
+    name: []const u8,
+    decl_name_index: usize,
+) bool {
+    for (items, 0..) |token, index| {
+        if (index == decl_name_index) continue;
+        if (!isIdent(token, name)) continue;
+        if (index > 0 and isPunct(items[index - 1], ".")) continue;
+        if (isObjectPropertyKey(items, index)) continue;
+        if (!isAllowedPluginReference(source, items, index)) return true;
+    }
+    return false;
+}
+
+fn findVariableObjectInitializer(
+    source: []const u8,
+    items: []const js_scanner.JavaScriptToken,
+    limit: usize,
+    name: []const u8,
+) ?usize {
+    var depth: usize = 0;
+    var found_brace: ?usize = null;
+    var decl_name_index: ?usize = null;
     var index: usize = 0;
     while (index < limit) : (index += 1) {
         const token = items[index];
@@ -210,8 +366,15 @@ fn findVariableObjectInitializer(items: []const js_scanner.JavaScriptToken, limi
             (std.mem.eql(u8, token.text, "const") or std.mem.eql(u8, token.text, "let") or std.mem.eql(u8, token.text, "var")) and
             index + 2 < limit and isIdent(items[index + 1], name) and isPunct(items[index + 2], "="))
         {
-            const rhs = unwrapParens(items, index + 3, limit);
-            found = if (rhs < limit and isPunct(items[rhs], "{")) rhs else null;
+            if (found_brace != null) return null;
+            const raw_rhs = index + 3;
+            const rhs = unwrapParens(items, raw_rhs, limit);
+            const open_parens = rhs - raw_rhs;
+            if (rhs >= limit or !isPunct(items[rhs], "{")) return null;
+            const close_brace = matchingCloseBrace(items, rhs) orelse return null;
+            if (!isVarInitEnd(source, items, close_brace, open_parens)) return null;
+            found_brace = rhs;
+            decl_name_index = index + 1;
         }
         if (isOpenDelim(token)) {
             depth += 1;
@@ -219,12 +382,16 @@ fn findVariableObjectInitializer(items: []const js_scanner.JavaScriptToken, limi
             depth -= 1;
         }
     }
-    return found;
+    const obj_brace = found_brace orelse return null;
+    const decl_index = decl_name_index orelse return null;
+    if (hasVariableMutationOrEscape(source, items, name, decl_index)) return null;
+    return obj_brace;
 }
 
 fn extractAddPluginObjectSecondArg(
     allocator: std.mem.Allocator,
     aliases: *std.ArrayList(DynamicCommandAlias),
+    source: []const u8,
     items: []const js_scanner.JavaScriptToken,
     open_paren_index: usize,
     dispatch_namespace: []const u8,
@@ -248,15 +415,20 @@ fn extractAddPluginObjectSecondArg(
     }
     const raw_start = arg2_start orelse return false;
     const expr_start = unwrapParens(items, raw_start, items.len);
+    const open_parens = expr_start - raw_start;
     if (expr_start >= items.len) return false;
     if (isPunct(items[expr_start], "{")) {
-        return extractObjectLiteralKeys(allocator, aliases, items, expr_start, dispatch_namespace, import_position);
+        const result = try extractObjectLiteralKeys(allocator, aliases, items, expr_start, dispatch_namespace, import_position);
+        return result.complete and
+            result.close_brace_index != null and
+            isCallArgEnd(items, result.close_brace_index.? + 1, open_parens);
     }
     if (items[expr_start].kind == .identifier and !isExpressionKeyword(items[expr_start].text) and
-        (expr_start + 1 >= items.len or isPunct(items[expr_start + 1], ",") or isPunct(items[expr_start + 1], ")")))
+        isCallArgEnd(items, expr_start + 1, open_parens))
     {
-        const obj_brace = findVariableObjectInitializer(items, open_paren_index, items[expr_start].text) orelse return false;
-        return extractObjectLiteralKeys(allocator, aliases, items, obj_brace, dispatch_namespace, import_position);
+        const obj_brace = findVariableObjectInitializer(source, items, open_paren_index, items[expr_start].text) orelse return false;
+        const result = try extractObjectLiteralKeys(allocator, aliases, items, obj_brace, dispatch_namespace, import_position);
+        return result.complete and result.close_brace_index != null;
     }
     return false;
 }
@@ -268,11 +440,11 @@ fn extractObjectLiteralKeys(
     open_brace_index: usize,
     dispatch_namespace: []const u8,
     import_position: usize,
-) !bool {
+) !ObjectExtractResult {
     var complete = true;
     var pos = open_brace_index + 1;
     while (pos < items.len) {
-        if (isPunct(items[pos], "}")) return complete;
+        if (isPunct(items[pos], "}")) return .{ .complete = complete, .close_brace_index = pos };
         // Skip empty comma if present
         if (isPunct(items[pos], ",")) {
             pos += 1;
@@ -288,7 +460,7 @@ fn extractObjectLiteralKeys(
         }
         // Skip optional generator star `*`
         if (isPunct(items[pos], "*")) pos += 1;
-        if (pos >= items.len) return false;
+        if (pos >= items.len) return .{ .complete = false, .close_brace_index = null };
         // Skip `get`/`set`/`async` method modifier when followed by a property name (not `:`, `(`, `,`, `}`)
         if (items[pos].kind == .identifier and
             (std.mem.eql(u8, items[pos].text, "get") or std.mem.eql(u8, items[pos].text, "set") or std.mem.eql(u8, items[pos].text, "async")) and
@@ -297,7 +469,7 @@ fn extractObjectLiteralKeys(
         {
             pos += 1;
             if (isPunct(items[pos], "*")) pos += 1;
-            if (pos >= items.len) return false;
+            if (pos >= items.len) return .{ .complete = false, .close_brace_index = null };
         }
         var raw_key: ?[]const u8 = null;
         if (items[pos].kind == .identifier) {
@@ -344,7 +516,7 @@ fn extractObjectLiteralKeys(
         }
         pos = skipPropertyRemainder(items, pos);
     }
-    return false;
+    return .{ .complete = false, .close_brace_index = null };
 }
 
 fn unescapeSimpleString(allocator: std.mem.Allocator, raw: []const u8) !?[]const u8 {
@@ -432,6 +604,43 @@ test "appendJavaScriptPluginAliases は spread や動的生成式で false を�
     try std.testing.expectEqual(@as(usize, 0), dynamic_aliases.items.len);
 }
 
+test "appendJavaScriptPluginAliases は式終端が単一オブジェクトでない場合や宣言後に変更される変数を不完全と判定する" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    // カンマ演算子・後続プロパティアクセス・改行越しチェーンは false にして fallback を残す。
+    const incomplete_cases = [_][]const u8{
+        "export default ({ 外部甲: { type: 'func', fn: () => 1 } }, { 外部乙: { type: 'func', fn: () => 2 } });",
+        "export default { 外部甲: { type: 'func', fn: () => 1 } }.extra;",
+        "export default { 外部甲: { type: 'func', fn: () => 1 } }\n  .extra;",
+        "navigator.nako3.addPluginObject('extra', { 外部甲: { type: 'func', fn: () => 1 } }.extra);",
+        "navigator.nako3.addPluginObject('extra', ({ 外部甲: { type: 'func', fn: () => 1 } }, { 外部乙: { type: 'func', fn: () => 2 } }));",
+        "const plugin = {}; plugin.外部乙 = { type: 'func', fn: () => 2 }; export default plugin;",
+        "const plugin = { 外部甲: { type: 'func', fn: () => 1 } }; Object.assign(plugin, extra); export default plugin;",
+        "let plugin = { 外部甲: { type: 'func', fn: () => 1 } }; plugin = other; export default plugin;",
+    };
+    for (incomplete_cases) |source| {
+        var aliases: std.ArrayList(DynamicCommandAlias) = .empty;
+        const ok = try appendJavaScriptPluginAliases(allocator, &aliases, source, "pkg:test:dyn.mjs", 10);
+        try std.testing.expect(!ok);
+    }
+
+    // 改行 ASI で後続文が続くケースと、無変更変数の export default は true を維持する。
+    const complete_cases = [_][]const u8{
+        "export default ({ 外部甲: { type: 'func', fn: () => 1 } })\nconst helper = 1;\n",
+        "const plugin = ({ 外部甲: { type: 'func', fn: () => 1 } }); export default (plugin);",
+        "const plugin = { 外部甲: { type: 'func', fn: () => 1 } }; navigator.nako3.addPluginObject('p', (plugin));",
+    };
+    for (complete_cases) |source| {
+        var aliases: std.ArrayList(DynamicCommandAlias) = .empty;
+        const ok = try appendJavaScriptPluginAliases(allocator, &aliases, source, "pkg:test:ok.mjs", 10);
+        try std.testing.expect(ok);
+        try std.testing.expectEqual(@as(usize, 1), aliases.items.len);
+        try std.testing.expectEqualStrings("外部甲", aliases.items[0].source_namespace);
+    }
+}
+
 test "binds の exact alias は import_position 以降のみ許可し後勝ちで選ぶ" {
     const aliases = [_]DynamicCommandAlias{
         .{ .source_namespace = "外部甲", .dispatch_namespace = "pkg:a:one.mjs__外部甲", .import_position = 10, .exact = true },
@@ -443,4 +652,23 @@ test "binds の exact alias は import_position 以降のみ許可し後勝ち�
     try std.testing.expectEqualStrings("pkg:a:one.mjs__外部甲", first.dispatch_namespace);
     const second = binds(false, 0, &aliases, "外部甲", 40) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("pkg:a:two.mjs__外部甲", second.dispatch_namespace);
+}
+
+test "binds は先発 exact alias より後の動的 catch-all を後勝ちで優先する" {
+    const aliases = [_]DynamicCommandAlias{
+        .{ .source_namespace = "外部甲", .dispatch_namespace = "pkg:a:static.mjs__外部甲", .import_position = 10, .exact = true },
+        .{ .source_namespace = "", .dispatch_namespace = "pkg:a:dynamic.mjs", .import_position = 30, .unqualified = true },
+        .{ .source_namespace = "外部乙", .dispatch_namespace = "pkg:a:later.mjs__外部乙", .import_position = 50, .exact = true },
+    };
+    // 位置 20: exact(10) のみ有効
+    const before_dynamic = binds(false, 0, &aliases, "外部甲", 20) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("pkg:a:static.mjs__外部甲", before_dynamic.dispatch_namespace);
+    // 位置 40: 後発の dynamic catch-all(30) が先発 exact(10) より優先
+    const after_dynamic = binds(false, 0, &aliases, "外部甲", 40) orelse return error.TestUnexpectedResult;
+    try std.testing.expect(after_dynamic.unqualified);
+    try std.testing.expectEqualStrings("pkg:a:dynamic.mjs", after_dynamic.dispatch_namespace);
+    // 位置 60: さらに後の exact(50) は dynamic catch-all(30) より優先
+    const after_later_static = binds(false, 0, &aliases, "外部乙", 60) orelse return error.TestUnexpectedResult;
+    try std.testing.expect(after_later_static.exact);
+    try std.testing.expectEqualStrings("pkg:a:later.mjs__外部乙", after_later_static.dispatch_namespace);
 }

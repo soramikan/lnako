@@ -1301,3 +1301,24 @@ test "interpreterはhostFunctionのJS側名前割当てOOM時に失敗し既存�
     };
     try std.testing.expectEqual(@as(f64, 42), converted.number);
 }
+
+test "hasRegisteredFunctionKeyはfallback名再確保OOM時に二重解放せずOutOfMemoryを返す" {
+    if (!build_options.quickjs_enabled) return error.SkipZigTest;
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    const engine = try newEngine();
+    defer q.lnako_qjs_release(engine);
+    var state = initState(&runtime, engine);
+    defer deinitState(&state);
+
+    const setup = try evalRaw(engine, "globalThis.__lnako_commands = { 登録命令: { type: 'func' } }; 0");
+    q.lnako_qjs_value_free(setup);
+
+    try std.testing.expect(try q.hasRegisteredFunctionKey(&state, std.testing.allocator, "plugin__登録命令"));
+
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 1 });
+    try std.testing.expectError(
+        error.OutOfMemory,
+        q.hasRegisteredFunctionKey(&state, failing.allocator(), "plugin__登録命令"),
+    );
+}
