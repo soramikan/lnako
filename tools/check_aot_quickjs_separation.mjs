@@ -54,6 +54,19 @@ try {
       fail(`通常AOT成果物に ${forbidden} が混入しています`);
     }
   }
+  const runtimeLibSymbols = listArchiveSymbols(runtimeLib);
+  for (const forbidden of ["lnako_aot_compat_", "compat_js_exec", "lnako.compat.esm.manifest", "JS_NewRuntime", "JS_Eval"]) {
+    if (runtimeLibSymbols.some((entry) => entry.line.includes(forbidden))) {
+      fail(`通常AOT runtime library に ${forbidden} が混入しています`);
+    }
+  }
+  for (const entry of runtimeLibSymbols) {
+    if (entry.type !== "U" && entry.symbol.includes("lnako_qjs_")) {
+      if (!entry.prefix.includes("quickjs_stub.o")) {
+        fail(`通常AOT runtime library の quickjs_stub 以外に ${entry.symbol} が定義されています: ${entry.line}`);
+      }
+    }
+  }
   const compatSymbols = listSymbols(compatBinary);
   for (const required of ["lnako_qjs_", "lnako_aot_compat_js_eval", "lnako.compat.esm.manifest"]) {
     if (!compatSymbols.some((symbol) => symbol.includes(required))) {
@@ -346,6 +359,16 @@ try {
       "compat-js-host-exec-plugin.nako3",
       "42\n42\nplugin\nplugin",
     ],
+    [
+      "動的タイマーの終了時自動drain（静的タイマー命令なし）",
+      "compat-js-host-exec-timer-drain.nako3",
+      "queued\ntimer",
+    ],
+    [
+      "sys.__exec例外捕捉伝播・それ非破壊・省略引数パリティ",
+      "compat-js-host-exec-edge.nako3",
+      "42\n42\n7\n99\nlog\n99:true\n99\n99:B\nInternalError\n-Infinity\nInfinity\nNaN\nabc\n,b,\nundefinedbundefined",
+    ],
   ];
   for (const [index, [label, fixture, expected]] of hostExecParityFixtures.entries()) {
     const fixturePath = join(root, "tests", "fixtures", fixture);
@@ -577,6 +600,25 @@ function listSymbols(path) {
   const result = spawnSync(nm, ["-g", path], { encoding: "utf8" });
   if (result.status !== 0) fail(`シンボル一覧の取得に失敗しました: ${path}\n${result.stderr}`);
   return result.stdout.split("\n").map((line) => line.trim()).filter(Boolean);
+}
+
+function listArchiveSymbols(path) {
+  const result = spawnSync(nm, ["-g", "-A", path], { encoding: "utf8" });
+  if (result.status !== 0) fail(`アーカイブのシンボル一覧取得に失敗しました: ${path}\n${result.stderr}`);
+  return result.stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const match = line.match(/^(.*?)\s+([A-Za-z?])\s+(\S+)$/);
+      if (match) {
+        return { line, prefix: match[1], type: match[2], symbol: match[3] };
+      }
+      const parts = line.split(/\s+/);
+      const symbol = parts.at(-1) ?? "";
+      const type = parts.length >= 2 ? parts.at(-2) : "";
+      return { line, prefix: line, type, symbol };
+    });
 }
 
 function expectEqual(actual, expected, label) {

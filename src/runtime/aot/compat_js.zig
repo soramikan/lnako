@@ -203,7 +203,6 @@ fn hostCallCommon(runtime: *state.Runtime, target: HostCallTarget, raw_arguments
     const engine_value = engine orelse return null;
     if (count != 0 and raw_arguments == null) return null;
     const had_pending = runtime.has_pending_exception;
-    const start_epoch = runtime.failure_epoch;
     var result_roots = [_]Value{
         switch (target) {
             .callable => |value| value,
@@ -242,11 +241,11 @@ fn hostCallCommon(runtime: *state.Runtime, target: HostCallTarget, raw_arguments
         .callable => functions.lnako_aot_function_call(&result_roots[1], &result_roots[0], if (arguments.len == 0) null else arguments.ptr, arguments.len),
         .exec_name => |cmd_name| dispatchCompatExec(runtime, cmd_name, arguments, &result_roots, had_pending),
     }
-    if (!had_pending and (runtime.has_pending_exception or runtime.failure_epoch != start_epoch)) {
-        // Nako callback / ビルトイン命令が失敗した。null を返すと QuickJS が
-        // InternalError へ変換するため、JS 側の try/catch で捕捉できる。
-        // Nako の未捕捉例外はここで解消し、JS が捕捉しなかった場合だけ
-        // 呼出し元の `fail` が報告する。
+    if (!had_pending and runtime.has_pending_exception) {
+        // Nako callback / ビルトイン命令が未捕捉例外を残して失敗した。
+        // null を返すと QuickJS が InternalError へ変換するため、JS 側の
+        // try/catch で捕捉できる。捕捉済み例外（failure_epoch だけ増加）は
+        // 再送出しない。
         clearNewPendingException(runtime, had_pending);
         return null;
     }
