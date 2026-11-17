@@ -1,0 +1,20 @@
+# `sys.__exec` → なでしこ関数 → `JS実行` → `sys.__exec` の再入と、
+# JS の try/catch 捕捉後に AOT/インタプリタが正常継続することを固定する。
+●内側(Aを)
+  それはJS実行(『sys.__exec("足",[3,4])』)
+ここまで
+JS実行(『sys.__exec("内側",[1])』)を表示
+
+●外側()
+  それはJS実行(『sys.__exec("内側",[0]) + 1』)
+ここまで
+JS実行(『sys.__exec("外側",[])』)を表示
+
+# 未知命令の JS 例外を捕捉しても、同じ JS 評価内の次の `sys.__exec` は成功する。
+JS実行(『(function(){try{sys.__exec("存在しない命令",[]);}catch(e){}; return sys.__exec("足",[5,6]);})()』)を表示
+
+# `エラー発生` は JS の InternalError として捕捉できる。
+JS実行(『(function(){try{sys.__exec("エラー発生",["失敗"]);return "no";}catch(e){return "caught:"+e.name;}})()』)を表示
+
+# 捕捉後に再入しても成功する。
+JS実行(『(function(){try{sys.__exec("内側",[0]);}catch(e){return "inner";}return "ok";})()』)を表示

@@ -4608,3 +4608,364 @@ test "compat AOT runtimeはsys.__execのエラーをJSのtry/catchで捕捉し�
     try std.testing.expect(active.has_pending_exception);
     _ = active.takeException();
 }
+
+fn registerTestGlobalSlot(runtime: *state.Runtime, name: []const u8, storage: *Value) void {
+    _ = runtime;
+    state.lnako_aot_dynamic_global_register(name.ptr, name.len, storage);
+}
+
+var test_timer_fired: usize = 0;
+
+fn markTimerFired(out: *Value, _: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {
+    test_timer_fired += 1;
+    out.* = .{};
+}
+
+var test_promise_settled: f64 = -1;
+
+fn recordPromiseNumber(out: *Value, _: *anyopaque, arguments_slice: ?[*]const Value, count: usize) callconv(.c) void {
+    out.* = .{};
+    if (count == 0 or arguments_slice == null) return;
+    const argument = arguments_slice.?[0];
+    if (argument.tag != @backingInt(Tag.number)) return;
+    test_promise_settled = @bitCast(argument.payload);
+}
+
+fn resolvePromiseImmediately(out: *Value, _: *anyopaque, arguments_slice: ?[*]const Value, count: usize) callconv(.c) void {
+    out.* = .{};
+    if (count < 1 or arguments_slice == null) return;
+    var resolver = arguments_slice.?[0];
+    var settled = [_]Value{state.numberValue(42)};
+    state.lnako_aot_function_call(out, &resolver, &settled, settled.len);
+}
+
+fn rejectPromiseImmediately(out: *Value, _: *anyopaque, arguments_slice: ?[*]const Value, count: usize) callconv(.c) void {
+    out.* = .{};
+    if (count < 2 or arguments_slice == null) return;
+    var rejecter = arguments_slice.?[1];
+    var reason = [_]Value{state.numberValue(7)};
+    state.lnako_aot_function_call(out, &rejecter, &reason, reason.len);
+}
+
+test "compat AOT runtimeはsys.__execで圧縮解凍ツールパスとAJAX設定を保持する" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+
+    // ツールパスは `圧縮解凍ツールパス` スロットへ書き戻る。
+    try expectQuickJsString(
+        active,
+        "sys.__exec('圧縮解凍ツールパス変更', ['lnako-archive-helper']); sys.__getSysVar('圧縮解凍ツールパス')",
+        "lnako-archive-helper",
+    );
+    // AJAX オプションは辞書のまま保持される。
+    try expectQuickJsString(
+        active,
+        "(function(){sys.__exec('AJAXオプション設定', [{method:'PUT',body:'x'}]);const o=sys.__getSysVar('AJAXオプション');return o.method+':'+o.body;})()",
+        "PUT:x",
+    );
+    // 失敗ハンドラは関数値として保持される。
+    try expectQuickJsString(
+        active,
+        "(function(){sys.__exec('AJAX失敗時', [() => 1]);return typeof sys.__getSysVar('AJAX:ONERROR');})()",
+        "function",
+    );
+    // いずれも既定スロットが無い単体テスト環境でも再入でクラッシュしない。
+    try std.testing.expect(!active.has_pending_exception);
+}
+
+test "compat AOT runtimeはsys.__execで内蔵ZIPの圧縮解凍を実行する" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "source.txt", .data = "日本語ABC" });
+    const base = try temporary.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base);
+    const source = try std.fs.path.join(std.testing.allocator, &.{ base, "source.txt" });
+    defer std.testing.allocator.free(source);
+    const archive = try std.fs.path.join(std.testing.allocator, &.{ base, "archive.zip" });
+    defer std.testing.allocator.free(archive);
+    const output = try std.fs.path.join(std.testing.allocator, &.{ base, "output" });
+    defer std.testing.allocator.free(output);
+
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+    try state.upsertDynamicGlobal(active, "P_source", try testString(active, source));
+    try state.upsertDynamicGlobal(active, "P_archive", try testString(active, archive));
+    try state.upsertDynamicGlobal(active, "P_output", try testString(active, output));
+
+    // ツールパス未変更なら内蔵 ZIP が使われ、外部 7z を起動しない。
+    try expectQuickJsBoolean(
+        active,
+        "sys.__exec('圧縮', [sys.__getSysVar('P_source'), sys.__getSysVar('P_archive')])",
+        true,
+    );
+    try expectQuickJsBoolean(
+        active,
+        "sys.__exec('解凍', [sys.__getSysVar('P_archive'), sys.__getSysVar('P_output')])",
+        true,
+    );
+    const extracted = try temporary.dir.readFileAlloc(std.testing.io, "output/source.txt", std.testing.allocator, .limited(1024));
+    defer std.testing.allocator.free(extracted);
+    try std.testing.expectEqualStrings("日本語ABC", extracted);
+    try std.testing.expect(!active.has_pending_exception);
+}
+
+test "compat AOT runtimeはsys.__execでファイル操作の既定動作と列挙を実行する" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "a.txt", .data = "one" });
+    const base = try temporary.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base);
+    const source = try std.fs.path.join(std.testing.allocator, &.{ base, "a.txt" });
+    defer std.testing.allocator.free(source);
+    const destination = try std.fs.path.join(std.testing.allocator, &.{ base, "b.txt" });
+    defer std.testing.allocator.free(destination);
+    const sub = try std.fs.path.join(std.testing.allocator, &.{ base, "sub" });
+    defer std.testing.allocator.free(sub);
+
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+    try state.upsertDynamicGlobal(active, "P_base", try testString(active, base));
+    try state.upsertDynamicGlobal(active, "P_source", try testString(active, source));
+    try state.upsertDynamicGlobal(active, "P_destination", try testString(active, destination));
+    try state.upsertDynamicGlobal(active, "P_sub", try testString(active, sub));
+
+    try expectQuickJsNumber(active, "sys.__exec('ファイル列挙', [sys.__getSysVar('P_base')]).length", 1);
+    try expectQuickJsString(active, "sys.__exec('ファイル列挙', [sys.__getSysVar('P_base')])[0]", "a.txt");
+    try expectQuickJsUndefined(active, "sys.__exec('フォルダ作成', [sys.__getSysVar('P_sub')])");
+    var sub_directory = try temporary.dir.openDir(std.testing.io, "sub", .{});
+    sub_directory.close(std.testing.io);
+
+    // 既定の `上書禁止` では既存コピー先への上書きを拒否する。
+    try expectQuickJsUndefined(
+        active,
+        "sys.__exec('ファイルコピー', [sys.__getSysVar('P_source'), sys.__getSysVar('P_destination')])",
+    );
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "a.txt", .data = "two" });
+    try expectQuickJsString(
+        active,
+        "(function(){try{sys.__exec('ファイルコピー',[sys.__getSysVar('P_source'),sys.__getSysVar('P_destination')]);return 'no';}catch(e){return e.name;}})()",
+        "InternalError",
+    );
+    const rejected = try temporary.dir.readFileAlloc(std.testing.io, "b.txt", std.testing.allocator, .limited(1024));
+    defer std.testing.allocator.free(rejected);
+    try std.testing.expectEqualStrings("one", rejected);
+
+    // `ファイルコピーデフォルト動作` を変更すると同じ命令が上書きする。
+    try expectQuickJsUndefined(active, "sys.__setSysVar('ファイルコピーデフォルト動作', '上書')");
+    try expectQuickJsUndefined(
+        active,
+        "sys.__exec('ファイルコピー', [sys.__getSysVar('P_source'), sys.__getSysVar('P_destination')])",
+    );
+    const overwritten = try temporary.dir.readFileAlloc(std.testing.io, "b.txt", std.testing.allocator, .limited(1024));
+    defer std.testing.allocator.free(overwritten);
+    try std.testing.expectEqualStrings("two", overwritten);
+
+    try expectQuickJsUndefined(active, "sys.__exec('ファイル削除', [sys.__getSysVar('P_destination')])");
+    try std.testing.expectError(error.FileNotFound, temporary.dir.access(std.testing.io, "b.txt", .{}));
+    try std.testing.expect(!active.has_pending_exception);
+}
+
+test "compat AOT runtimeはsys.__execでタイマーを登録・停止する" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+    var roots = [_]Value{ .{}, .{} };
+    var frame: state.RootFrame = .{};
+    pushTestRoots(active, &frame, &roots);
+    defer active.popRoots(&frame);
+    // `対象` に固定スロットを登録しないと、非同期コールバックがスタック上の
+    // アドレスを保持し得る。登録済みスロット経由の経路を固定する。
+    registerTestGlobalSlot(active, "対象", &roots[0]);
+    roots[1] = try active.createNamedFunction(markTimerFired, 1, "タイマー記録", &.{});
+
+    test_timer_fired = 0;
+    try expectQuickJsString(active, "typeof sys.__exec('秒後', ['タイマー記録', 0])", "number");
+    try std.testing.expectEqual(@as(usize, 1), active.timers.items.len);
+    try state.drainAotTimers(active);
+    try std.testing.expectEqual(@as(usize, 1), test_timer_fired);
+    try std.testing.expectEqual(@as(usize, 0), active.timers.items.len);
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.number)), roots[0].tag);
+
+    // 発火しない長い待機を登録し、`タイマー停止` と `全タイマー停止` で
+    // 取り消せることを固定する。
+    try expectQuickJsBoolean(
+        active,
+        "(function(){const id=sys.__exec('秒後',['タイマー記録',60000]);return sys.__exec('タイマー停止',[id]);})()",
+        true,
+    );
+    try std.testing.expectEqual(@as(usize, 0), active.timers.items.len);
+    _ = try evalCompatJs(active, "sys.__exec('秒後', ['タイマー記録', 60000]); sys.__exec('全タイマー停止')");
+    try std.testing.expectEqual(@as(usize, 0), active.timers.items.len);
+    try std.testing.expect(!active.has_pending_exception);
+}
+
+test "compat AOT runtimeはsys.__execのPromise命令を静的スロット経由で実行する" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+    var roots = [_]Value{ .{}, .{}, .{} };
+    var frame: state.RootFrame = .{};
+    pushTestRoots(active, &frame, &roots);
+    defer active.popRoots(&frame);
+    registerTestGlobalSlot(active, "そ", &roots[0]);
+    registerTestGlobalSlot(active, "対象", &roots[1]);
+
+    roots[2] = try active.createFunction(resolvePromiseImmediately, 1, &.{});
+    var create_arguments = [_]Value{roots[2]};
+    var promise: Value = .{};
+    compat.execCompatBuiltin(active, "動時", &create_arguments, &promise);
+    try std.testing.expect(!active.has_pending_exception);
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.promise)), roots[0].tag);
+    try std.testing.expectEqual(roots[0].payload, promise.payload);
+
+    // `成功時` は `そ` を読み、連鎖した Promise を `そ` へ書き戻す。
+    test_promise_settled = -1;
+    const success_callback = try active.createFunction(recordPromiseNumber, 1, &.{});
+    var success_arguments = [_]Value{ success_callback, roots[0] };
+    var chained: Value = .{};
+    compat.execCompatBuiltin(active, "成功時", &success_arguments, &chained);
+    try std.testing.expect(!active.has_pending_exception);
+    try state.drainAotPromiseTasks(active);
+    try std.testing.expectEqual(@as(f64, 42), test_promise_settled);
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.promise)), roots[0].tag);
+
+    // `束` は配列要素の非 Promise 値をそのまま結果へ含める。
+    // `成功時` の連鎖結果は標準 `.then` と同じくコールバックの戻り値
+    // （ここでは undefined）になるため、元 Promise を束ねて 42 を観測する。
+    var all_arguments = [_]Value{ promise, state.numberValue(7) };
+    var bundled: Value = .{};
+    compat.execCompatBuiltin(active, "束", &all_arguments, &bundled);
+    try std.testing.expect(!active.has_pending_exception);
+    const settled = try state.awaitAotPromise(active, bundled);
+    try std.testing.expectEqual(@as(usize, 2), settled.object().?.payload.array.items.len);
+    try std.testing.expectEqual(@as(f64, 42), @as(f64, @bitCast(settled.object().?.payload.array.items[0].payload)));
+    try std.testing.expectEqual(@as(f64, 7), @as(f64, @bitCast(settled.object().?.payload.array.items[1].payload)));
+
+    // `失敗時` は reject 理由をコールバックへ渡す。
+    const rejector = try active.createFunction(rejectPromiseImmediately, 2, &.{});
+    var reject_arguments = [_]Value{rejector};
+    var rejected_promise: Value = .{};
+    compat.execCompatBuiltin(active, "動時", &reject_arguments, &rejected_promise);
+    try std.testing.expect(!active.has_pending_exception);
+    test_promise_settled = -1;
+    const failure_callback = try active.createFunction(recordPromiseNumber, 1, &.{});
+    var failure_arguments = [_]Value{ failure_callback, rejected_promise };
+    var failed_chain: Value = .{};
+    compat.execCompatBuiltin(active, "失敗時", &failure_arguments, &failed_chain);
+    try std.testing.expect(!active.has_pending_exception);
+    try state.drainAotPromiseTasks(active);
+    try std.testing.expectEqual(@as(f64, 7), test_promise_settled);
+}
+
+test "compat AOT runtimeはHTTPサーバ命令の未起動時にスロットを残留させない" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+
+    // 固定スロットが無い場合、専用 ABI が設定した `http_globals` は
+    // 呼出し前の値へ戻され、スタック上の temp を指したまま残らない。
+    try std.testing.expect(active.http_globals == null);
+    try expectQuickJsString(
+        active,
+        "(function(){try{sys.__exec('簡易HTTPサーバ出力', ['x']);return 'no';}catch(e){return e.name;}})()",
+        "InternalError",
+    );
+    try std.testing.expect(active.http_globals == null);
+    try std.testing.expect(!active.has_pending_exception);
+
+    // 固定スロットがある場合はそのアドレスが `http_globals` に残る。
+    var slots = [_]Value{ .{}, .{}, .{}, .{} };
+    var frame: state.RootFrame = .{};
+    pushTestRoots(active, &frame, &slots);
+    defer active.popRoots(&frame);
+    registerTestGlobalSlot(active, "HTTPメソッド", &slots[0]);
+    registerTestGlobalSlot(active, "GETデータ", &slots[1]);
+    registerTestGlobalSlot(active, "POSTデータ", &slots[2]);
+    registerTestGlobalSlot(active, "FILESデータ", &slots[3]);
+    _ = try evalCompatJs(active, "try{sys.__exec('簡易HTTPサーバ出力', ['x']);}catch(e){}");
+    const globals = active.http_globals orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(?*Value, &slots[0]), globals.method);
+    try std.testing.expectEqual(@as(?*Value, &slots[1]), globals.get_data);
+    try std.testing.expectEqual(@as(?*Value, &slots[2]), globals.post_data);
+    try std.testing.expectEqual(@as(?*Value, &slots[3]), globals.files_data);
+    try std.testing.expect(!active.has_pending_exception);
+}
+
+test "compat AOT runtimeはsys.__execでESM plugin命令とplugin内sys.__execを実行する" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+    // plugin 命令は AOT codegen ではなく実行時の `sys.__exec` からのみ呼ぶ。
+    // 各命令は plugin 内の `sys.__exec` でビルトイン・別 plugin 命令を呼ぶ。
+    const manifest =
+        \\[{"path":"/lnako-compat-test/exec-plugin.mjs","source":"export default { 加算: { type: 'func', fn: (sys) => sys.__exec('足', [20, 22]) }, 委譲: { type: 'func', fn: (sys) => sys.__exec('加算', []) }, 表示委譲: { type: 'func', fn: (sys) => { sys.__exec('表示', ['plugin']); return sys.__getSysVar('表示ログ'); } } };","is_plugin":true,"namespaces":[],"package_root":null,"bare_aliases":[]}]
+    ;
+    lnako_aot_compat_esm_register(manifest.ptr, manifest.len);
+    try std.testing.expect(!active.has_pending_exception);
+    try std.testing.expectEqual(@as(usize, 1), active.esm_modules.items.len);
+
+    try expectQuickJsNumber(active, "sys.__exec('加算', [])", 42);
+    try expectQuickJsNumber(active, "sys.__exec('委譲', [])", 42);
+    try expectQuickJsString(active, "sys.__exec('表示委譲', [])", "plugin\n");
+    try std.testing.expect(!active.has_pending_exception);
+
+    // 未知の plugin 命令は従来どおり JS の InternalError になる。
+    try expectQuickJsString(
+        active,
+        "(function(){try{sys.__exec('存在しないプラグイン命令', []);return 'no';}catch(e){return e.name;}})()",
+        "InternalError",
+    );
+    try std.testing.expect(!active.has_pending_exception);
+}

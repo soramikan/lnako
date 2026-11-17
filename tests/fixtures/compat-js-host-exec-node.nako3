@@ -1,0 +1,38 @@
+# `sys.__exec` 経由のファイル操作・タイマー・Promise を固定する。
+# AOT とインタプリタの stdout 一致を
+# tools/check_aot_quickjs_separation.mjs が検証する。
+#
+# パスは Nako 変数へ置き、JS 側は `sys.__findVar` で受け取る。こうすると
+# Windows の path separator を JS 文字列へ埋め込まずに済む。
+DIR=テンポラリフォルダ & "/lnako-exec-node-fixture"
+SRC=母艦パス & "/compat-js-host-exec-node.nako3"
+DST=DIR & "/copied.nako3"
+
+# 1. 前回の残骸を消してからフォルダを作り、空であることを列挙で確認する。
+JS実行(『(function(){try{sys.__exec("ファイル削除",[sys.__findVar("DIR")]);}catch(e){};return 0;})()』)を表示
+JS実行(『sys.__exec("フォルダ作成",[sys.__findVar("DIR")]); sys.__exec("ファイル列挙",[sys.__findVar("DIR")]).length』)を表示
+
+# 2. `ファイルコピー` と `ファイル列挙`。コピー先の basename を観測する。
+JS実行(『sys.__exec("ファイルコピー",[sys.__findVar("SRC"),sys.__findVar("DST")]); sys.__exec("ファイル列挙",[sys.__findVar("DIR")])[0]』)を表示
+
+# 3. 既定の `ファイルコピーデフォルト動作` は `上書禁止` のため、既存の
+#    コピー先への再コピーは JS の InternalError になる。
+JS実行(『(function(){try{sys.__exec("ファイルコピー",[sys.__findVar("SRC"),sys.__findVar("DST")]);return "no";}catch(e){return e.name;}})()』)を表示
+
+# 4. `ファイルコピーデフォルト動作` を `上書` に変えると同じ命令が成功する。
+JS実行(『sys.__setSysVar("ファイルコピーデフォルト動作","上書"); sys.__exec("ファイルコピー",[sys.__findVar("SRC"),sys.__findVar("DST")]); "上書き"』)を表示
+
+# 5. `秒後` / `タイマー停止` / `全タイマー停止`。発火しない長い待機を使い、
+#    タイマー id の値そのものは出力しない（プロセス間で一致させるため）。
+JS実行(『(function(){const id=sys.__exec("秒後",[function(){},60000]);return sys.__exec("タイマー停止",[id]);})()』)を表示
+JS実行(『(function(){sys.__exec("秒後",[function(){},60000]);sys.__exec("全タイマー停止");return "stopped";})()』)を表示
+
+# 6. Promise 値は QuickJS bridge を越えられないため、`動時` / `束` /
+#    `成功時` は JS の InternalError として観測される。成功経路は
+#    compat_js_test.zig の単体テストで固定する。
+JS実行(『(function(){try{sys.__exec("動時",[(r)=>r(1)]);return "no";}catch(e){return e.name;}})()』)を表示
+JS実行(『(function(){try{sys.__exec("束",[1,2]);return "no";}catch(e){return e.name;}})()』)を表示
+JS実行(『(function(){try{sys.__exec("成功時",[(v)=>v,1]);return "no";}catch(e){return e.name;}})()』)を表示
+
+# 7. 後始末。
+JS実行(『sys.__exec("ファイル削除",[sys.__findVar("DIR")]); "deleted"』)を表示

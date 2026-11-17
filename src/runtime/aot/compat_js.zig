@@ -22,6 +22,7 @@ const compat_js_exec = @import("compat_js_exec.zig");
 /// テスト・診断用の再公開。`compat_js_exec.zig` の import はこの module に
 /// 限定し、通常 AOT のモジュールグラフへ漏らさない。
 pub const ManagedGlobalSlot = compat_js_exec.ManagedGlobalSlot;
+pub const execCompatBuiltin = compat_js_exec.execCompatBuiltin;
 
 const SyncState = compat_js_result.SyncState;
 
