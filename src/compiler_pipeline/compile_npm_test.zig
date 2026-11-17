@@ -846,7 +846,7 @@ test "package内の複数ESM plugin取り込みは先発pluginの無修飾命令
     if (!lnako.compat.quickjs.available()) return error.SkipZigTest;
     const gpa = testing.allocator;
     const io = testing.io;
-    var temporary = testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
 
     try temporary.dir.createDirPath(io, "packages/multi");
@@ -878,11 +878,11 @@ test "package内の複数ESM plugin取り込みは先発pluginの無修飾命令
             const self: *@This() = @ptrCast(@alignCast(context));
             if (!std.mem.eql(u8, specifier, "pkg:multi")) return error.PackageNotFound;
             return .{
-                .path = try std.fs.path.join(allocator, &.{ self.root, "packages/multi/index.nako3" }),
+                .path = try std.fs.path.join(allocator, &.{ self.root, "packages", "multi", "index.nako3" }),
                 .canonical_id = try allocator.dupe(u8, "pkg:multi/main"),
                 .namespace = "multi",
                 .package_owner = try allocator.dupe(u8, "pkg:multi"),
-                .package_root = try std.fs.path.join(allocator, &.{ self.root, "packages/multi" }),
+                .package_root = try std.fs.path.join(allocator, &.{ self.root, "packages", "multi" }),
             };
         }
     };
