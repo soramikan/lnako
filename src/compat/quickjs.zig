@@ -679,6 +679,36 @@ pub fn registeredFunctionKeys(state: *State, allocator: std.mem.Allocator) !?[][
     return registeredKeysOfType(state, allocator, "func");
 }
 
+/// `__lnako_commands` に `name` が `type === "func"` として登録済みか判定する。
+/// 動的評価内の `{関数}名` 解決で QuickJS registry を照会するために使う。
+/// 非 package 修飾の `plugin__cmd` については `callPlugin` と同じく末尾
+/// `__` を除去した名前でも確認する。
+pub fn hasRegisteredFunctionKey(state: *State, allocator: std.mem.Allocator, name: []const u8) !bool {
+    const engine = state.engine orelse return false;
+    const commands = try globalProperty(engine, "__lnako_commands");
+    defer lnako_qjs_value_free(commands);
+    var lookup_name = name;
+    var name_z = try allocator.dupeSentinel(u8, lookup_name, 0);
+    defer allocator.free(name_z);
+    var definition_value = lnako_qjs_get_property(commands, name_z.ptr) orelse return quickJsError(engine);
+    if (lnako_qjs_kind(definition_value) == .undefined and !isPackageNamespacedName(state, name)) {
+        if (std.mem.lastIndexOf(u8, name, "__")) |separator| {
+            lnako_qjs_value_free(definition_value);
+            lookup_name = name[separator + 2 ..];
+            allocator.free(name_z);
+            name_z = try allocator.dupeSentinel(u8, lookup_name, 0);
+            definition_value = lnako_qjs_get_property(commands, name_z.ptr) orelse return quickJsError(engine);
+        }
+    }
+    defer lnako_qjs_value_free(definition_value);
+    if (lnako_qjs_kind(definition_value) == .undefined) return false;
+    const type_value = lnako_qjs_get_property(definition_value, "type") orelse return false;
+    defer lnako_qjs_value_free(type_value);
+    const type_text = rawText(type_value) catch return false;
+    defer lnako_qjs_free_string(type_text.pointer);
+    return std.mem.eql(u8, type_text.slice(), "func");
+}
+
 /// `only_type` が非nullなら `__lnako_commands` entry の `type` 一致のみ返す。
 /// 各要素と外側スライスは`allocator`所有。
 fn registeredKeysOfType(state: *State, allocator: std.mem.Allocator, only_type: ?[]const u8) !?[][]const u8 {

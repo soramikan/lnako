@@ -1004,14 +1004,11 @@ fn makeClosureResolved(self: *Interpreter, frame: *Frame, instruction: ir.Instru
     } else self.findFunction(frame.owner_program, instruction.name) orelse {
         // `{関数}名`で組み込み命令を参照した場合は命令名ディスパッチの
         // 関数値を作る（公式はプラグイン関数のJS参照を返す）。ネイティブ
-        // プラグインや `--compat-js` のESM package命令を取り込んだ
-        // プログラムの動的命令名もcallBuiltin経由のディスパッチで呼べる
-        // 関数値にする。ただしプラグイン名は意味解析の動的束縛
-        // （dynamic_call印）を持つ参照に限る — 取り込み辺を持たない
-        // モジュールがpackage修飾名を書いても関数値を作らせない。
+        // プラグインや `--compat-js` のESM plugin命令も、意味解析の
+        // 動的束縛（dynamic_call印）があり実行時registryへ登録済みなら
+        // 関数値化する（`ナデシコ`/`ナデシコ続` 内の参照も含む）。
         if (isBuiltinReferenceName(instruction.name) or
-            (instruction.dynamic_call and
-                (frame.owner_program.native_plugin_paths.len > 0 or frame.owner_program.javascript_modules.len > 0)))
+            (instruction.dynamic_call and try plugins.allowsDynamicFunctionReference(self, instruction.name)))
             return makeBuiltinFunctionValue(self, instruction.name);
         return error.UnknownFunction;
     };

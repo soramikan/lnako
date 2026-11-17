@@ -841,3 +841,66 @@ fn buildTarGz(gpa: std.mem.Allocator, files: []const TarFile) ![]u8 {
     try compress.finish();
     return try out.toOwnedSlice();
 }
+
+test "package内の複数ESM plugin取り込みは先発pluginの無修飾命令を後続plugin追加後も実行できる" {
+    if (!lnako.compat.quickjs.available()) return error.SkipZigTest;
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var temporary = testing.tmpDir(.{});
+    defer temporary.cleanup();
+
+    try temporary.dir.createDirPath(io, "packages/multi");
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "main.nako3",
+        .data = "!「pkg:multi」を取り込む\n",
+    });
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "packages/multi/index.nako3",
+        .data = "!「./a.mjs」を取り込む\n!「./b.mjs」を取り込む\n外部甲(1)を表示\n外部乙(2)を表示\n",
+    });
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "packages/multi/a.mjs",
+        .data = "export default { meta: { type: 'const', value: {} }, 外部甲: { type: 'func', josi: [['の']], fn: (x) => `甲:${x}` } };\n",
+    });
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "packages/multi/b.mjs",
+        .data = "export default { meta: { type: 'const', value: {} }, 外部乙: { type: 'func', josi: [['の']], fn: (x) => `乙:${x}` } };\n",
+    });
+
+    const app_root = try temporary.dir.realPathFileAlloc(io, ".", gpa);
+    defer gpa.free(app_root);
+    const main_path = try std.fs.path.join(gpa, &.{ app_root, "main.nako3" });
+    defer gpa.free(main_path);
+
+    const Resolver = struct {
+        root: []const u8,
+        fn resolve(context: *anyopaque, allocator: std.mem.Allocator, _: []const u8, _: ?[]const u8, specifier: []const u8) !lnako.semantic.module_graph.ResolvedPackageImport {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            if (!std.mem.eql(u8, specifier, "pkg:multi")) return error.PackageNotFound;
+            return .{
+                .path = try std.fs.path.join(allocator, &.{ self.root, "packages/multi/index.nako3" }),
+                .canonical_id = try allocator.dupe(u8, "pkg:multi/main"),
+                .namespace = "multi",
+                .package_owner = try allocator.dupe(u8, "pkg:multi"),
+                .package_root = try std.fs.path.join(allocator, &.{ self.root, "packages/multi" }),
+            };
+        }
+    };
+    var resolver = Resolver{ .root = app_root };
+    var stderr: std.Io.Writer.Allocating = .init(gpa);
+    defer stderr.deinit();
+    var program = (try compile_pipeline.compileInput(gpa, io, main_path, .{
+        .compat_js = true,
+        .package_resolver = .{ .context = &resolver, .resolveFn = Resolver.resolve },
+    }, &stderr.writer)) orelse return error.UnexpectedCompileFailure;
+    defer program.deinit();
+
+    var runtime = lnako.runtime.value.Runtime.init(gpa);
+    defer runtime.deinit();
+    var host = lnako.runtime.interpreter.BufferHost{ .allocator = gpa };
+    defer host.deinit();
+    var interpreter = lnako.runtime.interpreter.Interpreter.init(gpa, &runtime, program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try testing.expectEqualStrings("甲:1\n乙:2\n", host.written());
+}
