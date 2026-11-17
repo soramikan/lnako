@@ -367,7 +367,7 @@ try {
     [
       "sys.__exec例外捕捉伝播・それ非破壊・省略引数パリティ",
       "compat-js-host-exec-edge.nako3",
-      "42\n42\n7\n99\nlog\n99:true\n99\n99:B\nInternalError\n-Infinity\nInfinity\nNaN\nabc\n,b,\nundefinedbundefined",
+      "42\n42\n7\n99\nlog\n99:true\n99\n99:B\nInternalError\n-Infinity\nInfinity\nNaN\nabc\n,b,\nundefinedbundefined\n\ndone-say\n\ndone-console",
     ],
   ];
   for (const [index, [label, fixture, expected]] of hostExecParityFixtures.entries()) {
