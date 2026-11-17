@@ -4488,6 +4488,30 @@ test "compat AOT runtimeはsys.__execで主要ビルトイン命令を実行す�
     try expectQuickJsNumber(active, "sys.__exec('範囲', [1, 3]).先頭", 1);
     try expectQuickJsNumber(active, "sys.__exec('範囲', [1, 3]).末尾", 3);
 
+    // `表示ログクリア` は `表示ログ` を空文字列へ戻す。
+    try expectQuickJsString(
+        active,
+        "sys.__exec('表示ログクリア'); sys.__getSysVar('表示ログ')",
+        "",
+    );
+
+    // プラグイン名・名前空間の管理命令もスロットを更新する。
+    try expectQuickJsString(
+        active,
+        "sys.__exec('プラグイン名設定', ['p']); sys.__getSysVar('プラグイン名')",
+        "p",
+    );
+    try expectQuickJsString(
+        active,
+        "sys.__exec('名前空間設定', ['ns']); sys.__getSysVar('名前空間')",
+        "ns",
+    );
+    try expectQuickJsString(
+        active,
+        "sys.__exec('名前空間ポップ'); typeof sys.__getSysVar('名前空間')",
+        "undefined",
+    );
+
     // `ASSERT` / `確認` はインタプリタと同じ truthiness 契約。
     try expectQuickJsBoolean(active, "sys.__exec('ASSERT', [true])", true);
     try expectQuickJsNumber(active, "sys.__exec('確認', [7])", 7);
