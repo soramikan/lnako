@@ -153,6 +153,8 @@ fn minCommandArgs(command: aot_builtin.Command) usize {
         .stdio_write_all,
         .namespace_pop,
         .timer_wait,
+        .timer_after,
+        .timer_every,
         .timer_stop_all,
         .promise_all,
         .async_noop,
@@ -215,8 +217,6 @@ fn minCommandArgs(command: aot_builtin.Command) usize {
         .regexp_extract,
         .regexp_split,
         .cut,
-        .timer_after,
-        .timer_every,
         .http_server_start,
         .http_server_static,
         .http_server_receive,
@@ -359,6 +359,71 @@ fn execCompatNativePluginBuiltin(
     out.* = result;
 }
 
+fn execCompatHatenaConfigure(runtime: *Runtime, arguments: []const Value) void {
+    runtime.hatena_callbacks.clearRetainingCapacity();
+    if (arguments.len == 0) return;
+
+    var roots = [_]Value{ arguments[arguments.len - 1], .{}, .{} };
+    var frame: state.RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    switch (@as(state.Tag, @fromBackingInt(@intCast(roots[0].tag)))) {
+        .function, .static_utf8_string, .utf16_string => {
+            runtime.hatena_callbacks.append(runtime.allocator, roots[0]) catch |err| {
+                runtime.setFailure(err);
+            };
+        },
+        .array => {
+            const initial_items = state.arrayItems(roots[0]) catch |err| {
+                runtime.setFailure(err);
+                return;
+            };
+            const item_count = initial_items.items.len;
+            for (0..item_count) |idx| {
+                const items = state.arrayItems(roots[0]) catch |err| {
+                    runtime.setFailure(err);
+                    return;
+                };
+                if (idx >= items.items.len) break;
+                const item = items.items[idx];
+                if (!state.isString(item)) {
+                    runtime.setFailure(error.InvalidHatenaCallback);
+                    return;
+                }
+                const name = state.stringUtf8Alloc(runtime, item) catch |err| {
+                    runtime.setFailure(err);
+                    return;
+                };
+                defer runtime.allocator.free(name);
+                if (std.mem.startsWith(u8, name, "JS:")) {
+                    roots[1] = state.runtimeUtf8String(runtime, name[3..]) catch |err| {
+                        runtime.setFailure(err);
+                        return;
+                    };
+                    roots[2] = .{};
+                    compat_js.lnako_aot_compat_js_eval(&roots[2], @ptrCast(&roots[1]), 1);
+                    if (runtime.has_pending_exception) return;
+                    if (roots[2].tag != @backingInt(state.Tag.function)) {
+                        runtime.setFailure(error.InvalidHatenaCallback);
+                        return;
+                    }
+                    runtime.hatena_callbacks.append(runtime.allocator, roots[2]) catch |err| {
+                        runtime.setFailure(err);
+                        return;
+                    };
+                } else {
+                    runtime.hatena_callbacks.append(runtime.allocator, item) catch |err| {
+                        runtime.setFailure(err);
+                        return;
+                    };
+                }
+            }
+        },
+        else => {},
+    }
+}
+
 /// `sys.__exec(name, args)` のビルトイン命令ディスパッチ。Unit 1 の範囲
 /// （特殊 lowering 命令・正規表現・はてな実行・ターゲット必須の主要命令・
 /// 汎用命令・補助命令）を AOT ランタイムの専用 ABI へ振り分ける。
@@ -452,6 +517,11 @@ pub fn execCompatBuiltin(runtime: *Runtime, cmd_name: []const u8, arguments: []c
                 @backingInt(command),
                 0,
             );
+            return;
+        },
+        // カテゴリ 2: ハテナ関数設定（compat 経路のみ `JS:` 形式を関数へ変換）。
+        .system_hatena_configure => {
+            execCompatHatenaConfigure(runtime, call_args);
             return;
         },
         // カテゴリ 2: はてな実行。
