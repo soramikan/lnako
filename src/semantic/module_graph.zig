@@ -452,28 +452,30 @@ pub const ModuleGraph = struct {
                                     break;
                                 }
                             }
-                            if (!listed) {
+                            // 重複排除は prefix alias の登録だけに限る。別ディレクトリの同名
+                            // plugin（`./one/plugin.mjs` と `./two/plugin.mjs`）は同じ
+                            // dispatch namespace へ別の plugin オブジェクトを登録し得るため、
+                            // 命令抽出と catch-all 判定は target ごとに必ず実行する。
+                            if (!listed) try dynamic_command_aliases.append(temp, .{
+                                .source_namespace = source_namespace,
+                                .dispatch_namespace = dispatch,
+                                .import_position = item.span.start,
+                            });
+                            // ESM pluginは公開命令を静的抽出して所有plugin単位の
+                            // exact alias へ解決する。複数pluginを取り込んでも
+                            // 後勝ちcatch-allで先発pluginの命令を誤配送しない。
+                            const emit_catch_all = if (target_module.kind == .javascript)
+                                !try dynamic_commands.appendJavaScriptPluginAliases(temp, &dynamic_command_aliases, target_module.source, dispatch, item.span.start)
+                            else
+                                true;
+                            if (emit_catch_all) {
+                                // 無修飾 catch-all: `外部追加` → `{owner}:{ns}__外部追加`
                                 try dynamic_command_aliases.append(temp, .{
-                                    .source_namespace = source_namespace,
+                                    .source_namespace = "",
                                     .dispatch_namespace = dispatch,
                                     .import_position = item.span.start,
+                                    .unqualified = true,
                                 });
-                                // ESM pluginは公開命令を静的抽出して所有plugin単位の
-                                // exact alias へ解決する。複数pluginを取り込んでも
-                                // 後勝ちcatch-allで先発pluginの命令を誤配送しない。
-                                const emit_catch_all = if (target_module.kind == .javascript)
-                                    !try dynamic_commands.appendJavaScriptPluginAliases(temp, &dynamic_command_aliases, target_module.source, dispatch, item.span.start)
-                                else
-                                    true;
-                                if (emit_catch_all) {
-                                    // 無修飾 catch-all: `外部追加` → `{owner}:{ns}__外部追加`
-                                    try dynamic_command_aliases.append(temp, .{
-                                        .source_namespace = "",
-                                        .dispatch_namespace = dispatch,
-                                        .import_position = item.span.start,
-                                        .unqualified = true,
-                                    });
-                                }
                             }
                         }
                     } else {

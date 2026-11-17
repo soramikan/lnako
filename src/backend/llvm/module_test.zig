@@ -803,3 +803,50 @@ test "ESM plugin のみの構成でもfallback候補付き関数参照をAOTで�
     // ESM が主配送先なので default_is_esm=1 で候補表を渡す。
     try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako.plugin.fallback.0 = private unnamed_addr constant [2 x %lnako.AotPluginCandidate]") != null);
 }
+
+test "fallback候補付き関数参照は直後に保留例外を確認し試す節のcatchへ分岐する" {
+    const allocator = std.testing.allocator;
+    const source = "エラー監視\n  F={関数}外部甲\nエラーならば\n  「捕捉」を表示\nここまで\n";
+    var parsed = try parser.parse(allocator, source, "main.nako3");
+    defer parsed.deinit();
+    try std.testing.expect(parsed.succeeded());
+    const aliases = [_]semantic.DynamicCommandAlias{
+        .{ .source_namespace = "外部甲", .dispatch_namespace = "pkg:multi:a.mjs__外部甲", .import_position = 0, .exact = true },
+        .{ .source_namespace = "", .dispatch_namespace = "pkg:multi:b.mjs", .import_position = 1, .unqualified = true },
+    };
+    var analyzed = try semantic.analyzeModules(allocator, &.{.{
+        .name = "main",
+        .path = "main.nako3",
+        .root = parsed.root.?,
+        .is_package = true,
+        .dynamic_command_aliases = &aliases,
+    }});
+    defer analyzed.deinit();
+    try std.testing.expect(analyzed.succeeded());
+    var hir_program = try hir.lower(allocator, &.{parsed.root.?}, &.{"main"}, &.{"main.nako3"}, &.{&.{}}, analyzed);
+    defer hir_program.deinit();
+    var program = try lower.lower(allocator, hir_program);
+    defer program.deinit();
+    program.compat_js = true;
+    const js_modules = try program.arena.allocator().alloc(ir.JavaScriptModule, 2);
+    js_modules[0] = .{ .path = "a.mjs", .source = "export default {};", .is_plugin = true, .namespaces = &.{"pkg:multi:a.mjs"}, .package_root = null, .bare_aliases = &.{} };
+    js_modules[1] = .{ .path = "b.mjs", .source = "export default {};", .is_plugin = true, .namespaces = &.{"pkg:multi:b.mjs"}, .package_root = null, .bare_aliases = &.{} };
+    program.javascript_modules = js_modules;
+
+    // IR: make_closure 直後に exception_pending があり、条件分岐で終わる。
+    var saw_checked = false;
+    for (program.functions) |function| for (function.blocks) |block| for (block.instructions, 0..) |instruction, index| {
+        if (instruction.opcode != .make_closure or instruction.fallback_names.len == 0) continue;
+        try std.testing.expect(index + 1 < block.instructions.len);
+        try std.testing.expectEqual(ir.Opcode.exception_pending, block.instructions[index + 1].opcode);
+        try std.testing.expect(block.terminator == .conditional_branch);
+        saw_checked = true;
+    };
+    try std.testing.expect(saw_checked);
+
+    var module = try generate(allocator, program, "main.nako3", false);
+    defer module.deinit(allocator);
+    // emit 結果でも fallback 関数生成の後に保留例外の確認が残る（dead-store 解析で除去されない）。
+    const call_at = std.mem.indexOf(u8, module.text, "call void @lnako_aot_plugin_function_new_fallback(ptr %root.slot.") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(std.mem.indexOf(u8, module.text[call_at..], "call i32 @lnako_aot_exception_pending()") != null);
+}

@@ -42,7 +42,12 @@ fn markInstruction(summary: *Summary, instruction: ir.Instruction) void {
             summary.reads_globals = true;
             summary.writes_globals = true;
         },
-        .make_array, .make_object, .arguments_array, .make_closure, .iterator_begin => summary.may_allocate = true,
+        .make_array, .make_object, .arguments_array, .iterator_begin => summary.may_allocate = true,
+        .make_closure => {
+            summary.may_allocate = true;
+            // plugin フォールバック参照は全候補未登録で UnknownFunction を投げ得る。
+            if (instruction.dynamic_call and instruction.fallback_names.len > 0) summary.may_throw = true;
+        },
         .binary, .unary => {
             summary.may_throw = true;
             summary.may_reenter = true;

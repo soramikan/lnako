@@ -1322,3 +1322,27 @@ test "hasRegisteredFunctionKeyはfallback名再確保OOM時に二重解放せず
         q.hasRegisteredFunctionKey(&state, failing.allocator(), "plugin__登録命令"),
     );
 }
+
+test "hasCallableCommandはfn取得の例外を未登録にせずエラーで返しundefinedはfalseにする" {
+    if (!build_options.quickjs_enabled) return error.SkipZigTest;
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    const engine = try newEngine();
+    defer q.lnako_qjs_release(engine);
+    var state = initState(&runtime, engine);
+    defer deinitState(&state);
+
+    const setup = try evalRaw(
+        engine,
+        "globalThis.__lnako_commands = { 例外: { type: 'func', get fn() { throw new Error('boom'); } }, 未定義: { type: 'func' }, 非関数: { type: 'func', fn: 1 }, 正常: { type: 'func', fn: () => 1 } }; 0",
+    );
+    q.lnako_qjs_value_free(setup);
+
+    // getter 例外は未登録（false）として握りつぶさず、実行失敗として報告する。
+    try std.testing.expectError(error.QuickJsExecutionFailed, q.hasCallableCommand(&state, std.testing.allocator, "例外"));
+    // fn が undefined / 非関数なら従来どおり未登録扱い。
+    try std.testing.expect(!try q.hasCallableCommand(&state, std.testing.allocator, "未定義"));
+    try std.testing.expect(!try q.hasCallableCommand(&state, std.testing.allocator, "非関数"));
+    try std.testing.expect(try q.hasCallableCommand(&state, std.testing.allocator, "正常"));
+    try std.testing.expect(!try q.hasCallableCommand(&state, std.testing.allocator, "存在しない"));
+}

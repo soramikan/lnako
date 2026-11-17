@@ -5205,3 +5205,39 @@ test "AOT plugin fallback関数参照は登録済み候補を解決し全候補�
     try std.testing.expect(slots[1].tag != @backingInt(Tag.function));
     _ = active.takeException();
 }
+
+test "AOT plugin fallback関数参照は登録照合の失敗をプロセス終了せず実行時エラーとして記録する" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+    // 主候補の `fn` getter が例外を投げる plugin。照合が失敗しても runtimeFailure
+    // （exit）ではなく setFailure で戻り、関数値は作らない。
+    const manifest =
+        \\[{"path":"/lnako-compat-test/fb-throw.mjs","source":"export default { 例外: { type: 'func', get fn() { throw new Error('boom'); } } };","is_plugin":true,"namespaces":["pkg:t:throw.mjs"],"package_root":null,"bare_aliases":[]}]
+    ;
+    lnako_aot_compat_esm_register(manifest.ptr, manifest.len);
+    try std.testing.expect(!active.has_pending_exception);
+
+    var slots = [_]Value{.{}};
+    var frame = state.RootFrame{};
+    pushTestRoots(active, &frame, &slots);
+    defer active.popRoots(&frame);
+
+    const candidates = fallbackCandidates(&.{ "pkg:t:throw.mjs__例外", "pkg:t:first.mjs__例外" });
+    state.lnako_aot_plugin_function_new_fallback(&slots[0], &candidates, candidates.len, true);
+    try std.testing.expect(active.has_pending_exception);
+    try std.testing.expect(slots[0].tag != @backingInt(Tag.function));
+    _ = active.takeException();
+
+    // 候補表が null の場合も同様に実行時エラーとして戻る。
+    state.lnako_aot_plugin_function_new_fallback(&slots[0], null, 0, true);
+    try std.testing.expect(active.has_pending_exception);
+    _ = active.takeException();
+}

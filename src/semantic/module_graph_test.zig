@@ -1897,3 +1897,99 @@ test "package内で静的ESM pluginの後に動的ESM pluginを取り込むとfa
     }
     try std.testing.expect(found);
 }
+
+test "package内で依存ESMへ自己登録を委ねるpluginは無修飾命令をcatch-allで受理する" {
+    var memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "!「pkg:math」を取り込む\n" },
+        .{ .suffix = "packages/math/index.nako3", .source = "!「./plugin.mjs」を取り込む\n外部甲(1)\n" },
+        .{ .suffix = "packages/math/plugin.mjs", .source = "import './commands.mjs';\nexport default {};\n" },
+        .{ .suffix = "packages/math/commands.mjs", .source = "navigator.nako3.addPluginObject('commands', { 外部甲: { type: 'func', fn: (x) => x } });\n" },
+    } };
+    var package_resolver = PackageTestResolver{};
+    var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{
+        .compat_js = true,
+        .package_resolver = package_resolver.resolver(),
+    });
+    defer graph.deinit();
+    try std.testing.expect(graph.succeeded());
+
+    var program = try graph.analyze(std.testing.allocator);
+    defer program.deinit();
+    // 依存先の登録集合は静的に確定できないため、catch-all を残し未定義命令として拒否しない。
+    try std.testing.expect(program.succeeded());
+    var found = false;
+    for (program.bindings) |binding| {
+        if (binding.kind != .builtin or !binding.dynamic_builtin) continue;
+        if (!std.mem.eql(u8, binding.name, "外部甲")) continue;
+        found = true;
+        try std.testing.expectEqualStrings("pkg:math-id:plugin.mjs__外部甲", binding.resolved_name);
+    }
+    try std.testing.expect(found);
+}
+
+test "package内で呼ばれない関数内のaddPluginObjectが静的抽出されても先発pluginをfallback候補に残す" {
+    var memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "!「pkg:math」を取り込む\n" },
+        .{ .suffix = "packages/math/index.nako3", .source = "!「./a.mjs」を取り込む\n!「./b.mjs」を取り込む\n外部甲(1)\n" },
+        .{ .suffix = "packages/math/a.mjs", .source = "export default { 外部甲: { type: 'func', fn: (x) => x } };" },
+        .{ .suffix = "packages/math/b.mjs", .source = "export default {};\nfunction 未使用() { navigator.nako3.addPluginObject('b', { 外部甲: { type: 'func', fn: (x) => x } }); }\n" },
+    } };
+    var package_resolver = PackageTestResolver{};
+    var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{
+        .compat_js = true,
+        .package_resolver = package_resolver.resolver(),
+    });
+    defer graph.deinit();
+    try std.testing.expect(graph.succeeded());
+
+    var program = try graph.analyze(std.testing.allocator);
+    defer program.deinit();
+    try std.testing.expect(program.succeeded());
+    var found = false;
+    for (program.bindings) |binding| {
+        if (binding.kind != .builtin or !binding.dynamic_builtin) continue;
+        if (!std.mem.eql(u8, binding.name, "外部甲")) continue;
+        found = true;
+        // 主候補は後発 b.mjs の exact（静的抽出）だが、実登録は保証されないため先発 a.mjs も残す。
+        try std.testing.expectEqualStrings("pkg:math-id:b.mjs__外部甲", binding.resolved_name);
+        try std.testing.expectEqual(@as(usize, 1), binding.fallback_names.len);
+        try std.testing.expectEqualStrings("pkg:math-id:a.mjs__外部甲", binding.fallback_names[0]);
+    }
+    try std.testing.expect(found);
+}
+
+test "package内で別ディレクトリの同名ESM pluginを取り込んでも各pluginの静的exportを抽出する" {
+    var memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "!「pkg:math」を取り込む\n" },
+        .{ .suffix = "packages/math/index.nako3", .source = "!「./one/plugin.mjs」を取り込む\n!「./two/plugin.mjs」を取り込む\n外部甲(1)\n外部乙(2)\n" },
+        .{ .suffix = "packages/math/one/plugin.mjs", .source = "export default { 外部甲: { type: 'func', fn: (x) => x } };" },
+        .{ .suffix = "packages/math/two/plugin.mjs", .source = "export default { 外部乙: { type: 'func', fn: (x) => x } };" },
+    } };
+    var package_resolver = PackageTestResolver{};
+    var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{
+        .compat_js = true,
+        .package_resolver = package_resolver.resolver(),
+    });
+    defer graph.deinit();
+    try std.testing.expect(graph.succeeded());
+
+    var program = try graph.analyze(std.testing.allocator);
+    defer program.deinit();
+    // 2つ目の plugin の `外部乙` も命令抽出され、未定義命令として拒否されない。
+    try std.testing.expect(program.succeeded());
+    var saw_first = false;
+    var saw_second = false;
+    for (program.bindings) |binding| {
+        if (binding.kind != .builtin or !binding.dynamic_builtin) continue;
+        if (std.mem.eql(u8, binding.name, "外部甲")) {
+            saw_first = true;
+            try std.testing.expectEqualStrings("pkg:math-id:plugin.mjs__外部甲", binding.resolved_name);
+        }
+        if (std.mem.eql(u8, binding.name, "外部乙")) {
+            saw_second = true;
+            try std.testing.expectEqualStrings("pkg:math-id:plugin.mjs__外部乙", binding.resolved_name);
+        }
+    }
+    try std.testing.expect(saw_first);
+    try std.testing.expect(saw_second);
+}

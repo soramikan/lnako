@@ -226,7 +226,7 @@ const FunctionBuilder = struct {
             .return_statement => self.lowerReturn(node),
             .break_statement => self.lowerBreak(node),
             .continue_statement => self.lowerContinue(node),
-            .closure => try self.emitValue(.make_closure, .function, &.{}, node),
+            .closure => try self.lowerClosure(node),
             .try_except => self.lowerTry(node),
             .throw_statement => self.lowerThrow(node),
             .switch_statement => self.lowerSwitch(node),
@@ -293,6 +293,15 @@ const FunctionBuilder = struct {
         const result = (try self.lowerVariadic(opcode, result_type, node)) orelse return null;
         try self.lowerExceptionCheck(node);
         return result;
+    }
+
+    /// `{関数}名` 参照。実行時フォールバック候補（`fallback_names`）を持つ参照は、
+    /// 全候補が未登録のとき UnknownFunction を保留例外として設定し得るため、
+    /// make_closure 直後に例外確認を置く（`試す` の catch 節・外側ハンドラへ届ける）。
+    fn lowerClosure(self: *FunctionBuilder, node: hir.Node) !?ir.ValueId {
+        const value = try self.emitValue(.make_closure, .function, &.{}, node);
+        if (node.dynamic_call and node.fallback_names.len > 0) try self.lowerExceptionCheck(node);
+        return value;
     }
 
     fn lowerFallibleVoid(self: *FunctionBuilder, opcode: ir.Opcode, node: hir.Node) !?ir.ValueId {

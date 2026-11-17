@@ -407,8 +407,16 @@ pub export fn lnako_aot_plugin_function_new_fallback(
 ) callconv(.c) void {
     out.* = .{};
     const runtime = if (state.active_runtime) |*active| active else return;
-    const candidate_slice = if (candidates) |pointer| pointer[0..candidate_count] else state.runtimeFailure(error.InvalidArgumentCount);
-    const resolved = state.resolvePluginFallback(runtime, candidate_slice, default_is_esm) catch |failure| state.runtimeFailure(failure);
+    const candidate_slice = if (candidates) |pointer| pointer[0..candidate_count] else {
+        runtime.setFailure(error.InvalidArgumentCount);
+        return;
+    };
+    // `lnako_aot_plugin_fallback_call` と同じく失敗は実行時エラーとして記録して戻る
+    // （遅延初期化の失敗でもプロセスを終了させない）。
+    const resolved = state.resolvePluginFallback(runtime, candidate_slice, default_is_esm) catch |failure| {
+        runtime.setFailure(failure);
+        return;
+    };
     // 全候補が未登録なら Interpreter（`resolveDynamicFunctionReference` が null）と
     // 同じく UnknownFunction とし、呼出し前に関数値を作らない。
     if (!resolved.found) {
