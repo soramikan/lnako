@@ -15,6 +15,13 @@ const state = @import("state.zig");
 const esm_manifest = @import("esm_manifest.zig");
 const functions = @import("functions.zig");
 const compat_js_result = @import("compat_js_result.zig");
+// `sys.__exec` のビルトイン命令ディスパッチは compat 専用 module に隔離する。
+// この import は `compat_js.zig` だけが持ち、通常 AOT へはリンクしない。
+const compat_js_exec = @import("compat_js_exec.zig");
+
+/// テスト・診断用の再公開。`compat_js_exec.zig` の import はこの module に
+/// 限定し、通常 AOT のモジュールグラフへ漏らさない。
+pub const ManagedGlobalSlot = compat_js_exec.ManagedGlobalSlot;
 
 const SyncState = compat_js_result.SyncState;
 
@@ -183,14 +190,26 @@ fn hostSet(_: *anyopaque, name_c: [*:0]const u8, raw: *const RawValue) callconv(
     return 0;
 }
 
-fn hostInvoke(_: *anyopaque, function_id: usize, generation: u64, raw_arguments: [*c]const *const RawValue, count: usize) callconv(.c) ?*RawValue {
-    const runtime = if (state.active_runtime) |*active| active else return null;
-    if (host_runtime != runtime) return null;
-    const callable = host_functions.lookup(function_id, generation) orelse return null;
+/// `hostInvoke`（既知の Nako 関数値）と `hostExec`（`sys.__exec` の名前
+/// dispatch）が共有する呼び出し本体。引数変換の `seen` 共有、GC ルート、
+/// 例外契約、`SyncState{ .full_values = true }` の書き戻しを完全に共通化する。
+const HostCallTarget = union(enum) {
+    callable: Value,
+    exec_name: []const u8,
+};
+
+fn hostCallCommon(runtime: *state.Runtime, target: HostCallTarget, raw_arguments: [*c]const *const RawValue, count: usize) ?*RawValue {
     const engine_value = engine orelse return null;
     if (count != 0 and raw_arguments == null) return null;
     const had_pending = runtime.has_pending_exception;
-    var result_roots = [_]Value{ callable, .{} };
+    const start_epoch = runtime.failure_epoch;
+    var result_roots = [_]Value{
+        switch (target) {
+            .callable => |value| value,
+            .exec_name => .{},
+        },
+        .{},
+    };
     var result_frame: state.RootFrame = .{};
     runtime.pushRoots(&result_frame, &result_roots, result_roots.len);
     defer runtime.popRoots(&result_frame);
@@ -218,13 +237,16 @@ fn hostInvoke(_: *anyopaque, function_id: usize, generation: u64, raw_arguments:
             return null;
         };
     }
-    functions.lnako_aot_function_call(&result_roots[1], &result_roots[0], if (arguments.len == 0) null else arguments.ptr, arguments.len);
-    if (!had_pending and runtime.has_pending_exception) {
-        // Nako callback が失敗した。null を返すと QuickJS が InternalError へ
-        // 変換するため、JS 側の try/catch で捕捉できる。Nako の未捕捉例外は
-        // ここで解消し、JS が捕捉しなかった場合だけ呼出し元の `fail` が報告する。
-        runtime.has_pending_exception = false;
-        runtime.pending_exception = .{};
+    switch (target) {
+        .callable => functions.lnako_aot_function_call(&result_roots[1], &result_roots[0], if (arguments.len == 0) null else arguments.ptr, arguments.len),
+        .exec_name => |cmd_name| dispatchCompatExec(runtime, cmd_name, arguments, &result_roots, had_pending),
+    }
+    if (!had_pending and (runtime.has_pending_exception or runtime.failure_epoch != start_epoch)) {
+        // Nako callback / ビルトイン命令が失敗した。null を返すと QuickJS が
+        // InternalError へ変換するため、JS 側の try/catch で捕捉できる。
+        // Nako の未捕捉例外はここで解消し、JS が捕捉しなかった場合だけ
+        // 呼出し元の `fail` が報告する。
+        clearNewPendingException(runtime, had_pending);
         return null;
     }
     // callback 内で変更された配列・辞書を JS へ書き戻す（interpreter の
@@ -243,6 +265,55 @@ fn hostInvoke(_: *anyopaque, function_id: usize, generation: u64, raw_arguments:
         clearNewPendingException(runtime, had_pending);
         return null;
     };
+}
+
+/// `sys.__exec(name, args)` の名前解決。インタプリタの `quickJsExec` と
+/// 同じ順序（`aotCompatResolve` → ビルトイン命令）で実行する。解決結果が
+/// 非関数値だった場合や解決自体が失敗した場合は、外側スコープを再探索せず
+/// ビルトイン命令ディスパッチへフォールスルーする。
+fn dispatchCompatExec(
+    runtime: *state.Runtime,
+    cmd_name: []const u8,
+    arguments: []const Value,
+    result_roots: *[2]Value,
+    had_pending: bool,
+) void {
+    const resolved_opt = runtime.aotCompatResolve(cmd_name) catch {
+        // インタプリタの `self.quickJsResolve(name) catch null` と同じく、
+        // 解決エラーは新規保留例外だけをクリアしてビルトイン探索へ進む。
+        clearNewPendingException(runtime, had_pending);
+        return compat_js_exec.execCompatBuiltin(runtime, cmd_name, arguments, &result_roots[1]);
+    };
+    if (resolved_opt) |resolved| {
+        if (resolved.tag == @backingInt(Tag.function)) {
+            result_roots[0] = resolved;
+            functions.lnako_aot_function_call(
+                &result_roots[1],
+                &result_roots[0],
+                if (arguments.len == 0) null else arguments.ptr,
+                arguments.len,
+            );
+            return;
+        }
+        // 非関数値（ローカル数値変数等）にヒットした場合は、外側スコープの
+        // 関数を探さずインタプリタの quickJsExec と同じくビルトインへ進む。
+    }
+    compat_js_exec.execCompatBuiltin(runtime, cmd_name, arguments, &result_roots[1]);
+}
+
+fn hostInvoke(_: *anyopaque, function_id: usize, generation: u64, raw_arguments: [*c]const *const RawValue, count: usize) callconv(.c) ?*RawValue {
+    const runtime = if (state.active_runtime) |*active| active else return null;
+    if (host_runtime != runtime) return null;
+    const callable = host_functions.lookup(function_id, generation) orelse return null;
+    return hostCallCommon(runtime, .{ .callable = callable }, raw_arguments, count);
+}
+
+/// `sys.__exec(name, args)` の C ブリッジ入口。`name` は QuickJS が保持する
+/// NUL 終端文字列で、呼出し中だけ有効。
+fn hostExec(_: *anyopaque, name_c: [*:0]const u8, raw_arguments: [*c]const *const RawValue, count: usize) callconv(.c) ?*RawValue {
+    const runtime = if (state.active_runtime) |*active| active else return null;
+    if (host_runtime != runtime) return null;
+    return hostCallCommon(runtime, .{ .exec_name = std.mem.span(name_c) }, raw_arguments, count);
 }
 
 // Nako→JS callback の host 関数テーブル。`hostFunction` が JS へ渡した Nako
@@ -378,11 +449,9 @@ pub fn activeEngine() ?*Engine {
 }
 
 fn bindHostBridge(engine_value: *Engine) void {
-    // `sys.__exec`（組み込み命令の文字列dispatch）は AOT では未対応のため、
-    // exec コールバックを渡さない。QuickJS 側が
-    // "lnako host command bridge is unavailable" を投げ、JS の try/catch で
-    // 捕捉できる明示エラーになる。
-    lnako_qjs_set_host(engine_value, @ptrCast(&host_context), hostGet, hostSet, hostInvoke, null);
+    // `sys.__exec`（組み込み命令の文字列dispatch）も interpreter と同じ
+    // 名前解決・例外契約で実行する。Unit 1 ではコア命令のみを接続する。
+    lnako_qjs_set_host(engine_value, @ptrCast(&host_context), hostGet, hostSet, hostInvoke, hostExec);
     // host 変数 bridge は `state.active_runtime` 経由で runtime を引くが、
     // host 関数テーブルと GC hook は runtime ごとに所有する。engine 再利用時・
     // 生成時のどちらでも、`compatDeinit` 後の再接続や runtime 切替えに備えて

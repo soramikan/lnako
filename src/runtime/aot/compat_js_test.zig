@@ -4377,3 +4377,210 @@ test "compat AOT runtimeはlnako_aot_compat_deinitでhost状態を解放し再�
     try expectQuickJsNumber(active, "sys.__findVar('F', null)(5)", 10);
     try std.testing.expect(!active.has_pending_exception);
 }
+
+fn addFunction(out: *Value, _: *anyopaque, arguments_slice: ?[*]const Value, count: usize) callconv(.c) void {
+    out.* = .{};
+    if (count < 2) return;
+    const arguments = arguments_slice orelse return;
+    const left: f64 = @bitCast(arguments[0].payload);
+    const right: f64 = @bitCast(arguments[1].payload);
+    out.* = state.numberValue(left + right);
+}
+
+test "compat AOT runtimeはsys.__execでユーザ関数とビルトインを解決する" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+    var roots = [_]Value{.{}};
+    var frame: state.RootFrame = .{};
+    pushTestRoots(active, &frame, &roots);
+    defer active.popRoots(&frame);
+
+    // グローバルなでしこ関数は `aotCompatResolve` で解決され、関数呼び出しへ
+    // ディスパッチされる。
+    roots[0] = try active.createNamedFunction(addFunction, 2, "たす", &.{});
+    try expectQuickJsNumber(active, "sys.__exec('たす', [20, 22])", 42);
+    try std.testing.expect(!active.has_pending_exception);
+
+    // ローカル非関数変数が同名グローバル関数をシャドーイングしても、外側を
+    // 再探索せずビルトイン命令へフォールスルーする（interpreter の
+    // `quickJsExec` と同じ）。
+    var shadow_storage = [_]Value{state.numberValue(999)};
+    var shadow_entries = [_]state.AotVarEntry{
+        .{ .name_ptr = "整数変換".ptr, .name_len = "整数変換".len },
+    };
+    var shadow_slots = [_]*const Value{&shadow_storage[0]};
+    var shadow_frame: state.AotVarFrame = .{};
+    active.pushVarFrame(&shadow_frame, &shadow_entries, shadow_entries.len, &shadow_slots);
+    defer active.popVarFrame(&shadow_frame);
+    try expectQuickJsNumber(active, "sys.__exec('整数変換', ['12.9'])", 12);
+    try std.testing.expect(!active.has_pending_exception);
+}
+
+test "compat AOT runtimeはsys.__execの曖昧名をクリアしてビルトインへフォールスルーする" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+    var roots = [_]Value{ .{}, .{} };
+    var frame: state.RootFrame = .{};
+    pushTestRoots(active, &frame, &roots);
+    defer active.popRoots(&frame);
+
+    // 複数モジュールの同名サフィックスは `error.AmbiguousGlobal` になる。
+    // 解決エラーは新規保留例外だけをクリアし、ビルトイン探索へ進む。
+    roots[0] = try active.createNamedFunction(addFunction, 2, "m1__F", &.{});
+    roots[1] = try active.createNamedFunction(addFunction, 2, "m2__F", &.{});
+    try expectQuickJsString(
+        active,
+        "(function(){try{sys.__exec('F', []);return 'no';}catch(e){return 'caught:'+e.name;}})()",
+        "caught:InternalError",
+    );
+    try std.testing.expect(!active.has_pending_exception);
+}
+
+test "compat AOT runtimeはsys.__execで主要ビルトイン命令を実行する" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+
+    try expectQuickJsNumber(active, "sys.__exec('足', [20, 22])", 42);
+    try expectQuickJsNumber(active, "sys.__exec('整数変換', ['12.9'])", 12);
+
+    // `表示` は `表示ログ` を更新し、`sys.__getSysVar` からも観測できる。
+    try expectQuickJsString(
+        active,
+        "sys.__exec('表示', ['hello']); sys.__getSysVar('表示ログ')",
+        "hello\n",
+    );
+
+    // `切取` は戻り値と `対象` の双方を更新する。
+    try expectQuickJsString(active, "sys.__exec('切取', ['A=B', '='])", "A");
+    try expectQuickJsString(active, "sys.__getSysVar('対象')", "B");
+
+    // `正規表現マッチ` は `抽出文字列` を更新する。区切り記号付きの
+    // パターンは既定の global を解除するため、戻り値は文字列になる。
+    try expectQuickJsString(active, "sys.__exec('正規表現マッチ', ['abc123', '/([0-9]+)/'])", "123");
+    try expectQuickJsNumber(active, "sys.__getSysVar('抽出文字列').length", 1);
+    try expectQuickJsString(active, "sys.__getSysVar('抽出文字列')[0]", "123");
+
+    // `範囲` は汎用 call site 経由で辞書を返す。
+    try expectQuickJsNumber(active, "sys.__exec('範囲', [1, 3]).先頭", 1);
+    try expectQuickJsNumber(active, "sys.__exec('範囲', [1, 3]).末尾", 3);
+
+    // `ASSERT` / `確認` はインタプリタと同じ truthiness 契約。
+    try expectQuickJsBoolean(active, "sys.__exec('ASSERT', [true])", true);
+    try expectQuickJsNumber(active, "sys.__exec('確認', [7])", 7);
+    try std.testing.expect(!active.has_pending_exception);
+}
+
+test "compat AOT runtimeはsys.__execで引数の参照同一性と書き戻しを保つ" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+    var roots = [_]Value{.{}};
+    var frame: state.RootFrame = .{};
+    pushTestRoots(active, &frame, &roots);
+    defer active.popRoots(&frame);
+
+    roots[0] = try active.createNamedFunction(sharedArgumentCallback, 2, "共有確認", &.{});
+    test_shared_argument_identity = false;
+    // 同じ JS オブジェクトを2引数で渡しても同一の Nako 辞書へ変換され、
+    // callback の変更が JS 側の `o.n` へ書き戻される。
+    try expectQuickJsNumber(
+        active,
+        "(function(){const o={n:1};sys.__exec('共有確認', [o, o]);return o.n;})()",
+        2,
+    );
+    try std.testing.expect(test_shared_argument_identity);
+    try std.testing.expect(!active.has_pending_exception);
+}
+
+test "compat AOT runtimeはManagedGlobalSlotが動的グローバル再確保後も安全に書き戻す" {
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+
+    // 未登録の名前はスタック上のルート保護スロットを使う。
+    var slot = try compat.ManagedGlobalSlot.init(active, "対象", .{});
+    const pointer = slot.bindAndPtr();
+    // 実行中に動的グローバルを大量追加して `dynamic_globals` の再確保を誘発する。
+    var index: usize = 0;
+    while (index < 512) : (index += 1) {
+        var name_buffer: [32]u8 = undefined;
+        const name = try std.fmt.bufPrint(&name_buffer, "再確保_{d}", .{index});
+        try state.upsertDynamicGlobal(active, name, state.numberValue(@floatFromInt(index)));
+    }
+    pointer.* = state.numberValue(42);
+    slot.finish();
+
+    const entry = state.dynamicGlobal(active, "対象") orelse return error.TestUnexpectedResult;
+    const value = if (entry.slot) |static_slot| static_slot.* else entry.value;
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.number)), value.tag);
+    try std.testing.expectEqual(@as(f64, 42), @as(f64, @bitCast(value.payload)));
+}
+
+test "compat AOT runtimeはsys.__execのエラーをJSのtry/catchで捕捉し保留例外を残さない" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+
+    // 未知命令と `エラー発生` は JS の InternalError になり、捕捉後は AOT 側に
+    // 保留例外を残さない。
+    try expectQuickJsString(
+        active,
+        "(function(){try{sys.__exec('存在しない命令', []);return 'no';}catch(e){return 'caught:'+e.name;}})()",
+        "caught:InternalError",
+    );
+    try std.testing.expect(!active.has_pending_exception);
+    try expectQuickJsString(
+        active,
+        "(function(){try{sys.__exec('エラー発生', ['失敗']);return 'no';}catch(e){return 'caught:'+e.name;}})()",
+        "caught:InternalError",
+    );
+    try std.testing.expect(!active.has_pending_exception);
+
+    // 捕捉しなければ外側の JS 実行が失敗し、AOT 側に例外が残る。
+    _ = try evalCompatJs(active, "sys.__exec('存在しない命令', [])");
+    try std.testing.expect(active.has_pending_exception);
+    _ = active.takeException();
+}
