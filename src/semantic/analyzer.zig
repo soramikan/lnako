@@ -172,6 +172,9 @@ pub const Binding = struct {
     /// language builtin catalog. Such calls remain dynamic and must not be
     /// assigned a static compiler dispatch site.
     dynamic_builtin: bool = false,
+    /// 後発の `unqualified` catch-all が先発の `exact` / `unqualified` を
+    /// 覆い隠す場合の実行時フォールバック候補（後勝ち順）。
+    fallback_names: []const []const u8 = &.{},
     /// 実効取り込み文から生成されたモジュールエントリ呼び出しの展開順序情報。
     import_entry: ?ImportEntry = null,
 };
@@ -831,10 +834,11 @@ pub const Analyzer = struct {
         }
         if (callable) {
             const module_input = self.inputs[module_index];
-            if (dynamic_commands.binds(module_input.allows_dynamic_commands, module_input.allows_dynamic_commands_from, module_input.dynamic_command_aliases, name, node.span.start)) |alias| {
-                const dispatch_name = try dynamic_commands.dispatchName(self.allocator, alias, name);
-                try self.bind(node, .builtin, name, dispatch_name, null);
-                self.bindings.items[self.bindings.items.len - 1].dynamic_builtin = true;
+            if (try dynamic_commands.bindsWithFallbacks(self.allocator, module_input.allows_dynamic_commands, module_input.allows_dynamic_commands_from, module_input.dynamic_command_aliases, name, node.span.start)) |resolution| {
+                try self.bind(node, .builtin, name, resolution.resolved_name, null);
+                const binding = &self.bindings.items[self.bindings.items.len - 1];
+                binding.dynamic_builtin = true;
+                binding.fallback_names = resolution.fallback_names;
                 return;
             }
         }
@@ -886,10 +890,11 @@ pub const Analyzer = struct {
             }
         }
         const function_input = self.inputs[module_index];
-        if (dynamic_commands.binds(function_input.allows_dynamic_commands, function_input.allows_dynamic_commands_from, function_input.dynamic_command_aliases, name, node.span.start)) |alias| {
-            const dispatch_name = try dynamic_commands.dispatchName(self.allocator, alias, name);
-            try self.bind(node, .builtin, name, dispatch_name, null);
-            self.bindings.items[self.bindings.items.len - 1].dynamic_builtin = true;
+        if (try dynamic_commands.bindsWithFallbacks(self.allocator, function_input.allows_dynamic_commands, function_input.allows_dynamic_commands_from, function_input.dynamic_command_aliases, name, node.span.start)) |resolution| {
+            try self.bind(node, .builtin, name, resolution.resolved_name, null);
+            const binding = &self.bindings.items[self.bindings.items.len - 1];
+            binding.dynamic_builtin = true;
+            binding.fallback_names = resolution.fallback_names;
             return;
         }
         const message = try std.fmt.allocPrint(self.allocator, "『{{関数}}』の参照先『{s}』は関数として見つかりません", .{name});

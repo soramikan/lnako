@@ -92,6 +92,93 @@ pub fn binds(allows_dynamic_commands: bool, allows_from: usize, aliases: []const
     return null;
 }
 
+pub const CandidateResolution = struct {
+    resolved_name: []const u8,
+    fallback_names: []const []const u8 = &.{},
+};
+
+/// `binds` と同じ優先規則で主配送先 `resolved_name` を決めつつ、後発の
+/// `unqualified` catch-all が先発の `exact` / `unqualified` を覆い隠す場合は
+/// 実行時フォールバック候補 `fallback_names` を後勝ち順（降順）で収集する。
+/// 動的 ESM / native plugin に同名命令が無い非競合ケースでも先発 plugin の
+/// 命令へ到達できるようにするために使う。返却スライスと各文字列は
+/// `allocator` 所有。
+pub fn bindsWithFallbacks(
+    allocator: std.mem.Allocator,
+    allows_dynamic_commands: bool,
+    allows_from: usize,
+    aliases: []const DynamicCommandAlias,
+    name: []const u8,
+    use_position: usize,
+) !?CandidateResolution {
+    const primary = binds(allows_dynamic_commands, allows_from, aliases, name, use_position) orelse return null;
+    const resolved_name = try allocDispatchName(allocator, primary, name);
+    errdefer allocator.free(resolved_name);
+    if (!primary.unqualified) return .{ .resolved_name = resolved_name };
+
+    const CandidateEntry = struct {
+        alias: DynamicCommandAlias,
+        index: usize,
+    };
+    var candidates: std.ArrayList(CandidateEntry) = .empty;
+    defer candidates.deinit(allocator);
+    for (aliases, 0..) |alias, index| {
+        if (alias.import_position > use_position or alias.import_position > primary.import_position) continue;
+        if ((alias.exact and std.mem.eql(u8, alias.source_namespace, name)) or
+            (alias.unqualified and !alias.exact))
+        {
+            try candidates.append(allocator, .{ .alias = alias, .index = index });
+        }
+    }
+    std.mem.sort(CandidateEntry, candidates.items, {}, struct {
+        fn lessThan(_: void, a: CandidateEntry, b: CandidateEntry) bool {
+            if (a.alias.import_position != b.alias.import_position)
+                return a.alias.import_position > b.alias.import_position;
+            if (a.alias.exact != b.alias.exact) return a.alias.exact;
+            return a.index > b.index;
+        }
+    }.lessThan);
+
+    var fallbacks: std.ArrayList([]const u8) = .empty;
+    errdefer {
+        for (fallbacks.items) |item| allocator.free(item);
+        fallbacks.deinit(allocator);
+    }
+    for (candidates.items) |entry| {
+        const candidate_name = try allocDispatchName(allocator, entry.alias, name);
+        if (std.mem.eql(u8, candidate_name, resolved_name)) {
+            allocator.free(candidate_name);
+            continue;
+        }
+        var duplicate = false;
+        for (fallbacks.items) |existing| {
+            if (std.mem.eql(u8, existing, candidate_name)) {
+                duplicate = true;
+                break;
+            }
+        }
+        if (duplicate) {
+            allocator.free(candidate_name);
+            continue;
+        }
+        fallbacks.append(allocator, candidate_name) catch |failure| {
+            // 配列へ所有権を移せなかった候補名は errdefer の対象外なのでここで解放する。
+            allocator.free(candidate_name);
+            return failure;
+        };
+    }
+    return .{
+        .resolved_name = resolved_name,
+        .fallback_names = try fallbacks.toOwnedSlice(allocator),
+    };
+}
+
+fn allocDispatchName(allocator: std.mem.Allocator, alias: DynamicCommandAlias, name: []const u8) ![]const u8 {
+    const raw = try dispatchName(allocator, alias, name);
+    if (raw.ptr == name.ptr and raw.len == name.len) return allocator.dupe(u8, raw);
+    return raw;
+}
+
 /// `binds` が受理したソース名を runtime 登録名へ変換する。
 /// package内scopeの推移importでは `dispatch_namespace` が所有者修飾を含む
 /// （例: `util__足す` → `pkg_a__util__足す`）。root scope は alias がそのまま
@@ -671,4 +758,66 @@ test "binds は先発 exact alias より後の動的 catch-all を後勝ちで�
     const after_later_static = binds(false, 0, &aliases, "外部乙", 60) orelse return error.TestUnexpectedResult;
     try std.testing.expect(after_later_static.exact);
     try std.testing.expectEqualStrings("pkg:a:later.mjs__外部乙", after_later_static.dispatch_namespace);
+}
+
+test "bindsWithFallbacks は後発 catch-all の背後に先発 exact/unqualified を降順で保持する" {
+    const allocator = std.testing.allocator;
+    const aliases = [_]DynamicCommandAlias{
+        .{ .source_namespace = "外部甲", .dispatch_namespace = "pkg:a:static.mjs__外部甲", .import_position = 10, .exact = true },
+        .{ .source_namespace = "", .dispatch_namespace = "pkg:a:dyn1.mjs", .import_position = 20, .unqualified = true },
+        .{ .source_namespace = "", .dispatch_namespace = "pkg:a:dyn2.mjs", .import_position = 30, .unqualified = true },
+        .{ .source_namespace = "dyn2.mjs", .dispatch_namespace = "pkg:a:dyn2.mjs", .import_position = 30 },
+    };
+
+    const resolved = (try bindsWithFallbacks(allocator, false, 0, &aliases, "外部甲", 40)) orelse return error.TestUnexpectedResult;
+    defer {
+        allocator.free(resolved.resolved_name);
+        for (resolved.fallback_names) |item| allocator.free(item);
+        allocator.free(resolved.fallback_names);
+    }
+    try std.testing.expectEqualStrings("pkg:a:dyn2.mjs__外部甲", resolved.resolved_name);
+    try std.testing.expectEqual(@as(usize, 2), resolved.fallback_names.len);
+    try std.testing.expectEqualStrings("pkg:a:dyn1.mjs__外部甲", resolved.fallback_names[0]);
+    try std.testing.expectEqualStrings("pkg:a:static.mjs__外部甲", resolved.fallback_names[1]);
+
+    // 他の命令名では static.mjs(外部甲) は候補に入らない。
+    const other = (try bindsWithFallbacks(allocator, false, 0, &aliases, "外部乙", 40)) orelse return error.TestUnexpectedResult;
+    defer {
+        allocator.free(other.resolved_name);
+        for (other.fallback_names) |item| allocator.free(item);
+        allocator.free(other.fallback_names);
+    }
+    try std.testing.expectEqualStrings("pkg:a:dyn2.mjs__外部乙", other.resolved_name);
+    try std.testing.expectEqual(@as(usize, 1), other.fallback_names.len);
+    try std.testing.expectEqualStrings("pkg:a:dyn1.mjs__外部乙", other.fallback_names[0]);
+
+    // 明示prefix呼出し (`dyn2.mjs__外部甲`) は catch-all へフォールバックしない。
+    const prefixed = (try bindsWithFallbacks(allocator, false, 0, &aliases, "dyn2.mjs__外部甲", 40)) orelse return error.TestUnexpectedResult;
+    defer {
+        allocator.free(prefixed.resolved_name);
+        for (prefixed.fallback_names) |item| allocator.free(item);
+        allocator.free(prefixed.fallback_names);
+    }
+    try std.testing.expectEqualStrings("pkg:a:dyn2.mjs__外部甲", prefixed.resolved_name);
+    try std.testing.expectEqual(@as(usize, 0), prefixed.fallback_names.len);
+}
+
+test "bindsWithFallbacks は全ての割当て失敗位置でリーク・二重解放しない" {
+    const aliases = [_]DynamicCommandAlias{
+        .{ .source_namespace = "外部甲", .dispatch_namespace = "pkg:a:static.mjs__外部甲", .import_position = 10, .exact = true },
+        .{ .source_namespace = "", .dispatch_namespace = "pkg:a:dyn1.mjs", .import_position = 20, .unqualified = true },
+        .{ .source_namespace = "", .dispatch_namespace = "pkg:a:dyn2.mjs", .import_position = 30, .unqualified = true },
+    };
+    const Check = struct {
+        fn run(allocator: std.mem.Allocator, candidates: []const DynamicCommandAlias) !void {
+            const resolved = (try bindsWithFallbacks(allocator, false, 0, candidates, "外部甲", 40)) orelse return error.TestUnexpectedResult;
+            defer {
+                allocator.free(resolved.resolved_name);
+                for (resolved.fallback_names) |item| allocator.free(item);
+                allocator.free(resolved.fallback_names);
+            }
+            try std.testing.expectEqual(@as(usize, 2), resolved.fallback_names.len);
+        }
+    };
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, Check.run, .{@as([]const DynamicCommandAlias, &aliases)});
 }

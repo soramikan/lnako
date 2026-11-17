@@ -1867,3 +1867,33 @@ test "package内のESM pluginが依存package名と同名のexact命令を持っ
     try std.testing.expect(saw_exact);
     try std.testing.expect(saw_prefixed);
 }
+
+test "package内で静的ESM pluginの後に動的ESM pluginを取り込むとfallback_namesを保持する" {
+    var memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "!「pkg:math」を取り込む\n" },
+        .{ .suffix = "packages/math/index.nako3", .source = "!「./a.mjs」を取り込む\n!「./b.mjs」を取り込む\n外部甲(1)\n" },
+        .{ .suffix = "packages/math/a.mjs", .source = "export default { 外部甲: { type: 'func', fn: (x) => x } };" },
+        .{ .suffix = "packages/math/b.mjs", .source = "const built = Object.assign({}, { 外部乙: { type: 'func', fn: (x) => x } }); export default built;" },
+    } };
+    var package_resolver = PackageTestResolver{};
+    var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{
+        .compat_js = true,
+        .package_resolver = package_resolver.resolver(),
+    });
+    defer graph.deinit();
+    try std.testing.expect(graph.succeeded());
+
+    var program = try graph.analyze(std.testing.allocator);
+    defer program.deinit();
+    try std.testing.expect(program.succeeded());
+    var found = false;
+    for (program.bindings) |binding| {
+        if (binding.kind != .builtin or !binding.dynamic_builtin) continue;
+        if (!std.mem.eql(u8, binding.name, "外部甲")) continue;
+        found = true;
+        try std.testing.expectEqualStrings("pkg:math-id:b.mjs__外部甲", binding.resolved_name);
+        try std.testing.expectEqual(@as(usize, 1), binding.fallback_names.len);
+        try std.testing.expectEqualStrings("pkg:math-id:a.mjs__外部甲", binding.fallback_names[0]);
+    }
+    try std.testing.expect(found);
+}

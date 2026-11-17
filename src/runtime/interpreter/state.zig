@@ -616,6 +616,10 @@ pub const Interpreter = struct {
         return plugins.callExternalCommand(self, name, arguments);
     }
 
+    pub fn resolvePluginTarget(self: *Interpreter, primary: []const u8, fallbacks: []const []const u8) !plugins.ResolvedPluginTarget {
+        return plugins.resolvePluginTarget(self, primary, fallbacks);
+    }
+
     pub fn ensurePrimitiveHook(self: *Interpreter) void {
         self.runtime.setPrimitiveHook(.{ .context = self, .callFn = interpreterPrimitiveHook });
     }

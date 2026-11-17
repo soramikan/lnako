@@ -5115,3 +5115,93 @@ test "compat AOT runtimeはsys.__execでそれと省略引数をインタプリ�
     compat.execCompatBuiltin(active, "エラー発生", &.{}, &throw_out);
     try expectPendingFailureContains(active, "エラー");
 }
+
+fn expectUtf16Text(value: Value, expected: []const u8) !void {
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.utf16_string)), value.tag);
+    const expected_units = try std.unicode.utf8ToUtf16LeAlloc(std.testing.allocator, expected);
+    defer std.testing.allocator.free(expected_units);
+    try std.testing.expectEqualSlices(u16, expected_units, value.object().?.payload.utf16_string);
+}
+
+fn fallbackCandidates(comptime names: []const []const u8) [names.len]state.PluginCandidate {
+    var candidates: [names.len]state.PluginCandidate = undefined;
+    inline for (names, 0..) |name, index| candidates[index] = .{ .name = name.ptr, .len = name.len };
+    return candidates;
+}
+
+fn registerFallbackPlugins(active: *state.Runtime) !void {
+    // a.mjs は 外部甲 と 外部競合、b.mjs は 外部乙 と 外部競合（後発）を持つ。
+    const manifest =
+        \\[{"path":"/lnako-compat-test/fb-a.mjs","source":"export default { 外部甲: { type: 'func', fn: (x) => `甲:${x}` }, 外部競合: { type: 'func', fn: (x) => `競合-a:${x}` } };","is_plugin":true,"namespaces":["pkg:t:a.mjs"],"package_root":null,"bare_aliases":[]},{"path":"/lnako-compat-test/fb-b.mjs","source":"export default { 外部乙: { type: 'func', fn: (x) => `乙:${x}` }, 外部競合: { type: 'func', fn: (x) => `競合-b:${x}` } };","is_plugin":true,"namespaces":["pkg:t:b.mjs"],"package_root":null,"bare_aliases":[]}]
+    ;
+    lnako_aot_compat_esm_register(manifest.ptr, manifest.len);
+    try std.testing.expect(!active.has_pending_exception);
+}
+
+fn callFallback(active: *state.Runtime, candidates: []const state.PluginCandidate, argument: f64) !Value {
+    var arguments = [_]Value{state.numberValue(argument)};
+    var out: Value = .{};
+    state.lnako_aot_plugin_fallback_call(&out, &arguments, arguments.len, candidates.ptr, candidates.len, 0, true);
+    try std.testing.expect(!active.has_pending_exception);
+    return out;
+}
+
+test "AOT plugin fallback呼出しは非競合時に先発pluginの命令へ、競合時は後勝ちで配送する" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+    try registerFallbackPlugins(active);
+
+    // 外部甲: 主配送先 b.mjs には無く、先発 a.mjs にある → a.mjs へフォールバック。
+    const jia = fallbackCandidates(&.{ "pkg:t:b.mjs__外部甲", "pkg:t:a.mjs__外部甲" });
+    try expectUtf16Text(try callFallback(active, &jia, 1), "甲:1");
+    // 外部乙: 主配送先 b.mjs にある → b.mjs（先発 a.mjs には無い）。
+    const yi = fallbackCandidates(&.{ "pkg:t:b.mjs__外部乙", "pkg:t:a.mjs__外部乙" });
+    try expectUtf16Text(try callFallback(active, &yi, 2), "乙:2");
+    // 外部競合: 両方にある → 後勝ち（主配送先 b.mjs）。
+    const conflict = fallbackCandidates(&.{ "pkg:t:b.mjs__外部競合", "pkg:t:a.mjs__外部競合" });
+    try expectUtf16Text(try callFallback(active, &conflict, 3), "競合-b:3");
+}
+
+test "AOT plugin fallback関数参照は登録済み候補を解決し全候補未登録ならUnknownFunctionで関数値を作らない" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+    try registerFallbackPlugins(active);
+
+    var slots = [_]Value{ .{}, .{} };
+    var frame = state.RootFrame{};
+    pushTestRoots(active, &frame, &slots);
+    defer active.popRoots(&frame);
+
+    // 先発 a.mjs の 外部甲 を `{関数}` 参照して呼び出せる。
+    const jia = fallbackCandidates(&.{ "pkg:t:b.mjs__外部甲", "pkg:t:a.mjs__外部甲" });
+    state.lnako_aot_plugin_function_new_fallback(&slots[0], &jia, jia.len, true);
+    try std.testing.expect(!active.has_pending_exception);
+    var arguments = [_]Value{state.numberValue(4)};
+    var out: Value = .{};
+    state.lnako_aot_function_call(&out, &slots[0], &arguments, arguments.len);
+    try std.testing.expect(!active.has_pending_exception);
+    try expectUtf16Text(out, "甲:4");
+
+    // 全候補が未登録なら関数値を作らず失敗する（Interpreter の UnknownFunction と一致）。
+    const missing = fallbackCandidates(&.{ "pkg:t:b.mjs__未登録", "pkg:t:a.mjs__未登録" });
+    state.lnako_aot_plugin_function_new_fallback(&slots[1], &missing, missing.len, true);
+    try std.testing.expect(active.has_pending_exception);
+    try std.testing.expect(slots[1].tag != @backingInt(Tag.function));
+    _ = active.takeException();
+}

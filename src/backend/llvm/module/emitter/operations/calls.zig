@@ -133,10 +133,12 @@ pub fn writeCall(emitter: *Emitter, function: ir.Function, locals: []const []con
             try emitter.findFunction(instruction.name);
     if (callee == null) {
         if (isNativePluginCall(emitter.program, function, instruction)) {
-            // ESM plugin の命令は compat 生成物の runtime が module 評価で
-            // 登録する。native plugin の ABI ではなく、名前解決を runtime へ
-            // 委ねる ESM 用 ABI へ流す（Issue #55）。
-            if (isEsmPluginCommand(emitter.program, instruction.name)) {
+            if (instruction.fallback_names.len > 0) {
+                try plugins_mod.writePluginFallbackCall(emitter, function, instruction, scope, aggregate_count);
+            } else if (isEsmPluginCommand(emitter.program, instruction.name)) {
+                // ESM plugin の命令は compat 生成物の runtime が module 評価で
+                // 登録する。native plugin の ABI ではなく、名前解決を runtime へ
+                // 委ねる ESM 用 ABI へ流す（Issue #55）。
                 try plugins_mod.writeEsmPluginCall(emitter, function, instruction, scope, aggregate_count);
             } else {
                 try plugins_mod.writeNativePluginCall(emitter, function, instruction, scope, aggregate_count);
@@ -387,18 +389,29 @@ pub fn writeMakeClosure(emitter: *Emitter, caller: ir.Function, locals: []const 
     const function = try emitter.findFunction(instruction.name) orelse {
         // `{関数}組み込み命令` — IR関数ではなく組み込み命令への関数値。
         // 関数名定数と専用コールバック経由で通常の組み込みディスパッチへ流す。
-        const name_index = emitter.builtinClosureNameIndex(instruction.name) orelse return error.UnknownClosureFunction;
-        if (shared.builtinClosureCommand(instruction.name)) |closure| {
-            // 固定arityは従来契約（不足引数を実行コンテキスト＋undefinedで
-            // パディング）を使い、可変長命令はgenerated ABIで実引数列をそのまま
-            // callbackへ渡す。
-            const constructor = if (closure.variable) "lnako_aot_function_new_generated" else "lnako_aot_function_new_named";
-            try emitter.output.writer.print("  call void @{s}(ptr %root.slot.{d}, ptr @lnako_aot_builtin_function_call, i64 {d}, ptr @lnako.builtin.name.{d}, i64 {d}, ptr null, i64 0)", .{ constructor, result, closure.arity, name_index, instruction.name.len });
-        } else if (shared.nativePluginClosure(emitter.program, instruction)) {
-            // `{関数}プラグイン命令` — ネイティブプラグイン名の関数値。
-            // 実引数列をそのままplugin ABIへ転送するgenerated ABIを使う。
-            try emitter.output.writer.print("  call void @lnako_aot_function_new_generated(ptr %root.slot.{d}, ptr @lnako_aot_plugin_function_call, i64 0, ptr @lnako.builtin.name.{d}, i64 {d}, ptr null, i64 0)", .{ result, name_index, instruction.name.len });
-        } else return error.UnknownClosureFunction;
+        if (shared.pluginFallbackClosure(emitter.program, instruction)) {
+            const list_index = emitter.pluginFallbackIndex(instruction.name, instruction.fallback_names) orelse return error.UnknownClosureFunction;
+            const default_is_esm: u1 = @intFromBool(isEsmPluginCommand(emitter.program, instruction.name));
+            try emitter.output.writer.print("  call void @lnako_aot_plugin_function_new_fallback(ptr %root.slot.{d}, ptr @lnako.plugin.fallback.{d}, i64 {d}, i1 {d})", .{
+                result,
+                list_index,
+                1 + instruction.fallback_names.len,
+                default_is_esm,
+            });
+        } else {
+            const name_index = emitter.builtinClosureNameIndex(instruction.name) orelse return error.UnknownClosureFunction;
+            if (shared.builtinClosureCommand(instruction.name)) |closure| {
+                // 固定arityは従来契約（不足引数を実行コンテキスト＋undefinedで
+                // パディング）を使い、可変長命令はgenerated ABIで実引数列をそのまま
+                // callbackへ渡す。
+                const constructor = if (closure.variable) "lnako_aot_function_new_generated" else "lnako_aot_function_new_named";
+                try emitter.output.writer.print("  call void @{s}(ptr %root.slot.{d}, ptr @lnako_aot_builtin_function_call, i64 {d}, ptr @lnako.builtin.name.{d}, i64 {d}, ptr null, i64 0)", .{ constructor, result, closure.arity, name_index, instruction.name.len });
+            } else if (shared.nativePluginClosure(emitter.program, instruction)) {
+                // `{関数}プラグイン命令` — ネイティブプラグイン名の関数値。
+                // 実引数列をそのままplugin ABIへ転送するgenerated ABIを使う。
+                try emitter.output.writer.print("  call void @lnako_aot_function_new_generated(ptr %root.slot.{d}, ptr @lnako_aot_plugin_function_call, i64 0, ptr @lnako.builtin.name.{d}, i64 {d}, ptr null, i64 0)", .{ result, name_index, instruction.name.len });
+            } else return error.UnknownClosureFunction;
+        }
         try emitter.debugSuffix(instruction.span, scope);
         try emitter.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
         try emitter.debugSuffix(instruction.span, scope);

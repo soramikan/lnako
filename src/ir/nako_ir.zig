@@ -100,6 +100,8 @@ pub const Instruction = struct {
     /// ある呼出しに限る — 取り込み辺を持たないモジュールが同名を書いても
     /// pluginへ届かない。
     dynamic_call: bool = false,
+    /// 動的plugin呼出しで主配送先が未登録だった場合に試すフォールバック候補名。
+    fallback_names: []const []const u8 = &.{},
     /// DNCL互換の配列要素代入で、未初期化変数へ30要素の0配列を自動初期化する。
     check_array_init: bool = false,
     /// 対象名がローカルシンボルへ解決された代入系命令で真。
@@ -324,6 +326,7 @@ pub const Program = struct {
                     const names = try allocator.alloc([]const u8, instruction.names.len);
                     for (instruction.names, names) |source_name, *target_name| target_name.* = try allocator.dupe(u8, source_name);
                     instruction.names = names;
+                    instruction.fallback_names = if (instruction.fallback_names.len > 0) try cloneStrings(allocator, instruction.fallback_names) else &.{};
                     instruction.names_local = try allocator.dupe(bool, instruction.names_local);
                 }
                 target_block.* = source_block;

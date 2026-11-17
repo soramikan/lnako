@@ -74,6 +74,8 @@ pub const Node = struct {
     /// package経由plugin）で真。取り込み辺を持たないモジュールの同名呼出し
     /// は false のまま残り、実行時にpackage修飾命令へ誤配送されない。
     dynamic_call: bool = false,
+    /// 動的plugin呼出しで主配送先が未登録だった場合に試すフォールバック候補名。
+    fallback_names: []const []const u8 = &.{},
     /// DNCL互換の配列要素代入で、未初期化変数へ30要素の0配列を自動初期化する。
     check_array_init: bool = false,
     /// 代入系ノードの対象名が意味解析でローカルシンボルへ解決された場合に真。
@@ -407,6 +409,10 @@ const Lowerer = struct {
             .function_call, .word, .function_pointer => self.bindingIsDynamicBuiltin(node),
             else => false,
         };
+        result.fallback_names = switch (node.kind) {
+            .function_call, .word, .function_pointer => try self.bindingFallbackNames(node),
+            else => &.{},
+        };
         result.check_array_init = node.check_array_init;
         result.local_target = self.bindingIsLocal(node);
         result.uses_implicit_arguments = self.bindsImplicitArguments(node);
@@ -460,6 +466,15 @@ const Lowerer = struct {
     fn bindingIsDynamicBuiltin(self: Lowerer, node: *ast.Node) bool {
         for (self.semantic_program.bindings) |binding| if (binding.node == node) return binding.kind == .builtin and binding.dynamic_builtin;
         return false;
+    }
+
+    fn bindingFallbackNames(self: *Lowerer, node: *ast.Node) ![]const []const u8 {
+        for (self.semantic_program.bindings) |binding| if (binding.node == node and binding.fallback_names.len > 0) {
+            const copies = try self.allocator.alloc([]const u8, binding.fallback_names.len);
+            for (binding.fallback_names, copies) |item, *slot| slot.* = try self.allocator.dupe(u8, item);
+            return copies;
+        };
+        return &.{};
     }
 
     /// 組み込み命令へ束縛された`.word`ノードを暗黙呼出しにするか判定する。

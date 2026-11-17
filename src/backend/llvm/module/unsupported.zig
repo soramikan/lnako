@@ -102,7 +102,7 @@ fn isCompatJsCommand(name: []const u8) bool {
 
 fn closureSupported(program: ir.Program, caller: ir.Function, instruction: ir.Instruction) bool {
     const function = shared.lookupFunction(program, instruction.name) orelse
-        return shared.builtinClosureCommand(instruction.name) != null or shared.nativePluginClosure(program, instruction);
+        return shared.builtinClosureCommand(instruction.name) != null or shared.nativePluginClosure(program, instruction) or shared.pluginFallbackClosure(program, instruction);
     for (function.captures) |capture| if (!shared.hasLocalName(caller, capture)) return false;
     return true;
 }

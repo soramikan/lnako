@@ -905,6 +905,7 @@ fn executeCallFallback(
     if (builtin_id == null and !instruction.dynamic_call and packageCommandNameIsBound(self, instruction.name)) return error.NotCallable;
     writes_result.* = !preservesResultVariable(instruction.name);
     const site_id = if (frame.owner_program == &self.root_program) instruction.site_id else null;
+    if (instruction.fallback_names.len > 0) return plugins.callBuiltinWithFallbacks(self, instruction.name, instruction.fallback_names, arguments, site_id);
     return self.callBuiltinResolved(builtin_id, instruction.name, arguments, site_id);
 }
 
@@ -1007,9 +1008,11 @@ fn makeClosureResolved(self: *Interpreter, frame: *Frame, instruction: ir.Instru
         // プラグインや `--compat-js` のESM plugin命令も、意味解析の
         // 動的束縛（dynamic_call印）があり実行時registryへ登録済みなら
         // 関数値化する（`ナデシコ`/`ナデシコ続` 内の参照も含む）。
-        if (isBuiltinReferenceName(instruction.name) or
-            (instruction.dynamic_call and try plugins.allowsDynamicFunctionReference(self, instruction.name)))
-            return makeBuiltinFunctionValue(self, instruction.name);
+        if (isBuiltinReferenceName(instruction.name)) return makeBuiltinFunctionValue(self, instruction.name);
+        if (instruction.dynamic_call) {
+            if (try plugins.resolveDynamicFunctionReference(self, instruction.name, instruction.fallback_names)) |resolved_name|
+                return makeBuiltinFunctionValue(self, resolved_name);
+        }
         return error.UnknownFunction;
     };
     const name = try self.runtime.stringUtf8(instruction.name);

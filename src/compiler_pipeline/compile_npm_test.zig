@@ -904,3 +904,163 @@ test "package内の複数ESM plugin取り込みは先発pluginの無修飾命令
     _ = try interpreter.run();
     try testing.expectEqualStrings("甲:1\n乙:2\n", host.written());
 }
+
+test "package内の先発静的ESMと後発動的ESMは非競合時にフォールバックし競合時は後勝ちで上書きする" {
+    if (!lnako.compat.quickjs.available()) return error.SkipZigTest;
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var temporary = test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+
+    try temporary.dir.createDirPath(io, "packages/dyn");
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "main.nako3",
+        .data = "!「pkg:dyn」を取り込む\n",
+    });
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "packages/dyn/index.nako3",
+        .data =
+        \\!「./a.mjs」を取り込む
+        \\!「./b.mjs」を取り込む
+        \\!「./c.mjs」を取り込む
+        \\外部甲(1)を表示
+        \\外部乙(2)を表示
+        \\F={関数}外部甲
+        \\F(3)を表示
+        \\外部競合(4)を表示
+        \\G={関数}外部競合
+        \\G(5)を表示
+        \\
+        ,
+    });
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "packages/dyn/a.mjs",
+        .data =
+        \\export default {
+        \\  meta: { type: 'const', value: {} },
+        \\  外部甲: { type: 'func', josi: [['の']], fn: (x) => `甲:${x}` },
+        \\  外部競合: { type: 'func', josi: [['の']], fn: (x) => `競合-old:${x}` }
+        \\};
+        \\
+        ,
+    });
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "packages/dyn/b.mjs",
+        .data =
+        \\const dynamicObj = Object.assign({}, {
+        \\  外部乙: { type: 'func', josi: [['の']], fn: (x) => `乙:${x}` }
+        \\});
+        \\export default dynamicObj;
+        \\
+        ,
+    });
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "packages/dyn/c.mjs",
+        .data =
+        \\const key = '外部競合';
+        \\export default {
+        \\  meta: { type: 'const', value: {} },
+        \\  [key]: { type: 'func', josi: [['の']], fn: (x) => `競合-new:${x}` }
+        \\};
+        \\
+        ,
+    });
+
+    // 同一 Program・同一 runtime 内で、`a.mjs` を取り込む module (index) と `b.mjs` だけを取り込む
+    // module (helper) を分け、helper が index 側の `a.mjs` の `外部甲` へフォールバックしない
+    // （モジュール境界隔離）ことを確認する。registry は共有されるため、境界を跨ぐ実装だと成功してしまう。
+    try temporary.dir.createDirPath(io, "packages/iso");
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "iso_main.nako3",
+        .data = "!「pkg:iso」を取り込む\n",
+    });
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "packages/iso/index.nako3",
+        .data = "!「./a.mjs」を取り込む\n!「./helper.nako3」を取り込む\n外部甲(1)を表示\n",
+    });
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "packages/iso/helper.nako3",
+        .data = "!「./b.mjs」を取り込む\n外部乙(2)を表示\n外部甲(3)を表示\n",
+    });
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "packages/iso/a.mjs",
+        .data = "export default { 外部甲: { type: 'func', josi: [['の']], fn: (x) => `甲:${x}` } };\n",
+    });
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "packages/iso/b.mjs",
+        .data = "const built = Object.assign({}, { 外部乙: { type: 'func', josi: [['の']], fn: (x) => `乙:${x}` } }); export default built;\n",
+    });
+
+    const app_root = try temporary.dir.realPathFileAlloc(io, ".", gpa);
+    defer gpa.free(app_root);
+    const Resolver = struct {
+        root: []const u8,
+        fn resolve(context: *anyopaque, allocator: std.mem.Allocator, _: []const u8, _: ?[]const u8, specifier: []const u8) !lnako.semantic.module_graph.ResolvedPackageImport {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            if (std.mem.eql(u8, specifier, "pkg:dyn")) {
+                return .{
+                    .path = try std.fs.path.join(allocator, &.{ self.root, "packages", "dyn", "index.nako3" }),
+                    .canonical_id = try allocator.dupe(u8, "pkg:dyn/main"),
+                    .namespace = "dyn",
+                    .package_owner = try allocator.dupe(u8, "pkg:dyn"),
+                    .package_root = try std.fs.path.join(allocator, &.{ self.root, "packages", "dyn" }),
+                };
+            }
+            if (std.mem.eql(u8, specifier, "pkg:iso")) {
+                return .{
+                    .path = try std.fs.path.join(allocator, &.{ self.root, "packages", "iso", "index.nako3" }),
+                    .canonical_id = try allocator.dupe(u8, "pkg:iso/main"),
+                    .namespace = "iso",
+                    .package_owner = try allocator.dupe(u8, "pkg:iso"),
+                    .package_root = try std.fs.path.join(allocator, &.{ self.root, "packages", "iso" }),
+                };
+            }
+            return error.PackageNotFound;
+        }
+    };
+    var resolver = Resolver{ .root = app_root };
+
+    {
+        const main_path = try std.fs.path.join(gpa, &.{ app_root, "main.nako3" });
+        defer gpa.free(main_path);
+        var stderr: std.Io.Writer.Allocating = .init(gpa);
+        defer stderr.deinit();
+        var program = (try compile_pipeline.compileInput(gpa, io, main_path, .{
+            .compat_js = true,
+            .package_resolver = .{ .context = &resolver, .resolveFn = Resolver.resolve },
+        }, &stderr.writer)) orelse return error.UnexpectedCompileFailure;
+        defer program.deinit();
+
+        var runtime = lnako.runtime.value.Runtime.init(gpa);
+        defer runtime.deinit();
+        var host = lnako.runtime.interpreter.BufferHost{ .allocator = gpa };
+        defer host.deinit();
+        var interpreter = lnako.runtime.interpreter.Interpreter.init(gpa, &runtime, program, host.host());
+        defer interpreter.deinit();
+        _ = try interpreter.run();
+        try testing.expectEqualStrings("甲:1\n乙:2\n甲:3\n競合-new:4\n競合-new:5\n", host.written());
+    }
+
+    {
+        const iso_path = try std.fs.path.join(gpa, &.{ app_root, "iso_main.nako3" });
+        defer gpa.free(iso_path);
+        var stderr: std.Io.Writer.Allocating = .init(gpa);
+        defer stderr.deinit();
+        var program = (try compile_pipeline.compileInput(gpa, io, iso_path, .{
+            .compat_js = true,
+            .package_resolver = .{ .context = &resolver, .resolveFn = Resolver.resolve },
+        }, &stderr.writer)) orelse return error.UnexpectedCompileFailure;
+        defer program.deinit();
+
+        var runtime = lnako.runtime.value.Runtime.init(gpa);
+        defer runtime.deinit();
+        var host = lnako.runtime.interpreter.BufferHost{ .allocator = gpa };
+        defer host.deinit();
+        var interpreter = lnako.runtime.interpreter.Interpreter.init(gpa, &runtime, program, host.host());
+        defer interpreter.deinit();
+        try testing.expectError(error.UnknownCommand, interpreter.run());
+        // helper 自身の `外部乙` は b.mjs へ届く一方、`外部甲` は index の a.mjs へ漏れず失敗する。
+        try testing.expect(std.mem.indexOf(u8, host.written(), "乙:2\n") != null);
+        try testing.expect(std.mem.indexOf(u8, host.written(), "甲:3") == null);
+    }
+}

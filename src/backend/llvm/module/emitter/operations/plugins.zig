@@ -649,3 +649,33 @@ pub fn writeNativePluginCall(emitter: *Emitter, function: ir.Function, instructi
     try emitter.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
     try emitter.debugSuffix(instruction.span, scope);
 }
+
+pub fn writePluginFallbackCall(emitter: *Emitter, function: ir.Function, instruction: ir.Instruction, scope: usize, aggregate_count: usize) !void {
+    const result = instruction.result orelse return error.MissingInstructionResult;
+    const list_index = emitter.pluginFallbackIndex(instruction.name, instruction.fallback_names) orelse return error.MissingNativePluginName;
+    const site_id = instruction.site_id orelse 0;
+    const default_is_esm: u1 = @intFromBool(shared.isEsmPluginCommandName(emitter.program, instruction.name));
+    if (instruction.operands.len > aggregate_count) return error.InvalidCallScratch;
+    for (instruction.operands, 0..) |argument, index| {
+        try emitter.output.writer.print("  %plugin-fallback.{d}.slot.{d} = getelementptr [{d} x %lnako.Value], ptr %aggregate.values, i64 0, i64 {d}", .{ result, index, aggregate_count, index });
+        try emitter.debugSuffix(instruction.span, scope);
+        try emitter.output.writer.writeAll("  store %lnako.Value ");
+        try constants_mod.writeValueRef(emitter, function, argument);
+        try emitter.output.writer.print(", ptr %plugin-fallback.{d}.slot.{d}", .{ result, index });
+        try emitter.debugSuffix(instruction.span, scope);
+    }
+    try emitter.output.writer.print("  call void @lnako_aot_plugin_fallback_call(ptr %root.slot.{d}, ptr ", .{result});
+    if (instruction.operands.len > 0) {
+        try emitter.output.writer.print("%plugin-fallback.{d}.slot.0", .{result});
+    } else try emitter.output.writer.writeAll("null");
+    try emitter.output.writer.print(", i64 {d}, ptr @lnako.plugin.fallback.{d}, i64 {d}, i64 {d}, i1 {d})", .{
+        instruction.operands.len,
+        list_index,
+        1 + instruction.fallback_names.len,
+        site_id,
+        default_is_esm,
+    });
+    try emitter.debugSuffix(instruction.span, scope);
+    try emitter.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
+    try emitter.debugSuffix(instruction.span, scope);
+}

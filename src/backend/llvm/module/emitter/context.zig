@@ -31,6 +31,8 @@ pub const Emitter = struct {
     native_plugin_names: std.ArrayList([]const u8) = .empty,
     /// ESM plugin 命令の名前（runtime の module 評価で登録される）。
     esm_plugin_names: std.ArrayList([]const u8) = .empty,
+    /// フォールバック候補列を持つ動的 plugin 呼出し／関数参照の名前列（[0]=主配送先）。
+    plugin_fallback_lists: std.ArrayList([]const []const u8) = .empty,
     system_arrays: std.ArrayList(usize) = .empty,
     system_dictionaries: std.ArrayList(usize) = .empty,
     system_era_data: std.ArrayList(usize) = .empty,
@@ -62,6 +64,8 @@ pub const Emitter = struct {
         self.system_strings.deinit(self.allocator);
         self.native_plugin_names.deinit(self.allocator);
         self.esm_plugin_names.deinit(self.allocator);
+        for (self.plugin_fallback_lists.items) |candidates| self.allocator.free(candidates);
+        self.plugin_fallback_lists.deinit(self.allocator);
         self.system_arrays.deinit(self.allocator);
         self.system_dictionaries.deinit(self.allocator);
         self.system_era_data.deinit(self.allocator);
@@ -158,6 +162,31 @@ pub const Emitter = struct {
     pub fn esmPluginNameIndex(self: Emitter, name: []const u8) ?usize {
         for (self.esm_plugin_names.items, 0..) |candidate, index| if (std.mem.eql(u8, candidate, name)) return index;
         return null;
+    }
+
+    pub fn pluginFallbackIndex(self: Emitter, primary: []const u8, fallbacks: []const []const u8) ?usize {
+        for (self.plugin_fallback_lists.items, 0..) |candidates, index| {
+            if (candidates.len != 1 + fallbacks.len) continue;
+            if (!std.mem.eql(u8, candidates[0], primary)) continue;
+            var matches = true;
+            for (candidates[1..], fallbacks) |lhs, rhs| {
+                if (!std.mem.eql(u8, lhs, rhs)) {
+                    matches = false;
+                    break;
+                }
+            }
+            if (matches) return index;
+        }
+        return null;
+    }
+
+    pub fn ensurePluginFallbackList(self: *Emitter, primary: []const u8, fallbacks: []const []const u8) !void {
+        if (self.pluginFallbackIndex(primary, fallbacks) != null) return;
+        const list = try self.allocator.alloc([]const u8, 1 + fallbacks.len);
+        errdefer self.allocator.free(list);
+        list[0] = primary;
+        @memcpy(list[1..], fallbacks);
+        try self.plugin_fallback_lists.append(self.allocator, list);
     }
 
     pub fn hasBuiltinCall(self: *Emitter, command: aot_builtin.Command) !bool {
