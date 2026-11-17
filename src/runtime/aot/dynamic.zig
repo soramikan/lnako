@@ -1652,3 +1652,39 @@ pub fn esmPluginBuiltin(runtime: *Runtime, name: []const u8, arguments: []const 
     try finalizePluginCall(dynamic_state, &aot_to_dyn, &before_globals, &before_containers, &dyn_cache);
     return dynamicToAotValueCached(&dyn_cache, result, 0);
 }
+
+pub const PluginCandidate = extern struct {
+    name: ?[*]const u8,
+    len: usize,
+};
+
+pub const ResolvedPluginCandidate = struct {
+    name: []const u8,
+    is_esm: bool,
+    found: bool,
+};
+
+pub fn resolvePluginFallback(
+    runtime: *Runtime,
+    candidates: []const PluginCandidate,
+    default_is_esm: bool,
+) !ResolvedPluginCandidate {
+    if (candidates.len == 0) return error.InvalidArgumentCount;
+    const state = try dynamicInterpreterState(runtime);
+    const primary = if (candidates[0].name) |ptr| ptr[0..candidates[0].len] else return error.InvalidArgumentCount;
+    const fallbacks = try runtime.allocator.alloc([]const u8, candidates.len - 1);
+    defer runtime.allocator.free(fallbacks);
+    for (candidates[1..], fallbacks) |candidate, *slot| {
+        slot.* = if (candidate.name) |ptr| ptr[0..candidate.len] else return error.InvalidArgumentCount;
+    }
+    const resolved = try state.interpreter.resolvePluginTarget(primary, fallbacks);
+    return .{
+        .name = resolved.name,
+        .is_esm = switch (resolved.kind) {
+            .esm => true,
+            .native => false,
+            .none => default_is_esm,
+        },
+        .found = resolved.kind != .none,
+    };
+}

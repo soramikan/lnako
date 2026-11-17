@@ -169,6 +169,13 @@ pub fn emitPreamble(emitter: *Emitter) !void {
                 "declare void @lnako_aot_compat_deinit()\n\n",
         );
     }
+    if (emitter.plugin_fallback_lists.items.len > 0) {
+        try writer.writeAll(
+            "%lnako.AotPluginCandidate = type { ptr, i64 }\n" ++
+                "declare void @lnako_aot_plugin_fallback_call(ptr, ptr, i64, ptr, i64, i64, i1)\n" ++
+                "declare void @lnako_aot_plugin_function_new_fallback(ptr, ptr, i64, i1)\n\n",
+        );
+    }
 }
 
 pub fn collectModuleData(emitter: *Emitter) !void {
@@ -203,9 +210,11 @@ pub fn collectModuleData(emitter: *Emitter) !void {
             }
             if (instruction.opcode == .call and instruction.direct_callee == null) {
                 if (isNativePluginCall(emitter.program, function, instruction)) {
-                    // ESM plugin の命令は runtime が module 評価で登録するため、
-                    // 名前を ABI 引数として渡す別の表へ入れる。
-                    if (isEsmPluginCommandName(emitter.program, instruction.name)) {
+                    if (instruction.fallback_names.len > 0) {
+                        try emitter.ensurePluginFallbackList(instruction.name, instruction.fallback_names);
+                    } else if (isEsmPluginCommandName(emitter.program, instruction.name)) {
+                        // ESM plugin の命令は runtime が module 評価で登録するため、
+                        // 名前を ABI 引数として渡す別の表へ入れる。
                         if (emitter.esmPluginNameIndex(instruction.name) == null) {
                             try emitter.esm_plugin_names.append(emitter.allocator, instruction.name);
                         }
@@ -295,10 +304,14 @@ pub fn collectModuleData(emitter: *Emitter) !void {
             if (instruction.opcode == .make_closure and
                 lookupFunction(emitter.program, instruction.name) == null and
                 (shared.builtinClosureCommand(instruction.name) != null or
-                    shared.nativePluginClosure(emitter.program, instruction)) and
-                emitter.builtinClosureNameIndex(instruction.name) == null)
+                    shared.nativePluginClosure(emitter.program, instruction) or
+                    shared.pluginFallbackClosure(emitter.program, instruction)))
             {
-                try emitter.builtin_closure_names.append(emitter.allocator, instruction.name);
+                if (shared.pluginFallbackClosure(emitter.program, instruction)) {
+                    try emitter.ensurePluginFallbackList(instruction.name, instruction.fallback_names);
+                } else if (emitter.builtinClosureNameIndex(instruction.name) == null) {
+                    try emitter.builtin_closure_names.append(emitter.allocator, instruction.name);
+                }
             }
         };
     }
@@ -480,6 +493,27 @@ pub fn emitDeclarations(emitter: *Emitter) !void {
             }
             try writer.writeAll("]\n");
         }
+    }
+    for (emitter.plugin_fallback_lists.items, 0..) |candidates, list_index| {
+        for (candidates, 0..) |name, cand_index| {
+            try writer.print("@lnako.plugin.fallback.{d}.name.{d} = private unnamed_addr constant [{d} x i8] ", .{ list_index, cand_index, name.len });
+            if (name.len == 0) {
+                try writer.writeAll("zeroinitializer\n");
+            } else {
+                try writer.writeByte('[');
+                for (name, 0..) |byte, byte_index| {
+                    if (byte_index > 0) try writer.writeAll(", ");
+                    try writer.print("i8 {d}", .{byte});
+                }
+                try writer.writeAll("]\n");
+            }
+        }
+        try writer.print("@lnako.plugin.fallback.{d} = private unnamed_addr constant [{d} x %lnako.AotPluginCandidate] [", .{ list_index, candidates.len });
+        for (candidates, 0..) |name, cand_index| {
+            if (cand_index > 0) try writer.writeAll(", ");
+            try writer.print("%lnako.AotPluginCandidate {{ ptr @lnako.plugin.fallback.{d}.name.{d}, i64 {d} }}", .{ list_index, cand_index, name.len });
+        }
+        try writer.writeAll("]\n");
     }
     for (emitter.program.native_plugin_paths, 0..) |path, index| {
         try writer.print("@lnako.native.plugin.path.{d} = private unnamed_addr constant [{d} x i8] ", .{ index, path.len });

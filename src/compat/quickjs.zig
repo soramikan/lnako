@@ -679,18 +679,13 @@ pub fn registeredFunctionKeys(state: *State, allocator: std.mem.Allocator) !?[][
     return registeredKeysOfType(state, allocator, "func");
 }
 
-/// `__lnako_commands` に `name` が `type === "func"` として登録済みか判定する。
-/// 動的評価内の `{関数}名` 解決で QuickJS registry を照会するために使う。
-/// 非 package 修飾の `plugin__cmd` については `callPlugin` と同じく末尾
-/// `__` を除去した名前でも確認する。
-pub fn hasRegisteredFunctionKey(state: *State, allocator: std.mem.Allocator, name: []const u8) !bool {
-    const engine = state.engine orelse return false;
+fn lookupCommandDefinition(state: *State, engine: *Engine, allocator: std.mem.Allocator, name: []const u8) !?*RawValue {
     const commands = try globalProperty(engine, "__lnako_commands");
     defer lnako_qjs_value_free(commands);
     const name_z = try allocator.dupeSentinel(u8, name, 0);
     defer allocator.free(name_z);
     var definition_value: ?*RawValue = lnako_qjs_get_property(commands, name_z.ptr) orelse return quickJsError(engine);
-    defer if (definition_value) |value| lnako_qjs_value_free(value);
+    errdefer if (definition_value) |value| lnako_qjs_value_free(value);
     if (lnako_qjs_kind(definition_value.?) == .undefined and !isPackageNamespacedName(state, name)) {
         if (std.mem.lastIndexOf(u8, name, "__")) |separator| {
             const fallback_name_z = try allocator.dupeSentinel(u8, name[separator + 2 ..], 0);
@@ -701,12 +696,37 @@ pub fn hasRegisteredFunctionKey(state: *State, allocator: std.mem.Allocator, nam
         }
     }
     const resolved = definition_value.?;
-    if (lnako_qjs_kind(resolved) == .undefined) return false;
+    if (lnako_qjs_kind(resolved) == .undefined) {
+        lnako_qjs_value_free(resolved);
+        return null;
+    }
+    return resolved;
+}
+
+/// `__lnako_commands` に `name` が `type === "func"` として登録済みか判定する。
+/// 動的評価内の `{関数}名` 解決で QuickJS registry を照会するために使う。
+/// 非 package 修飾の `plugin__cmd` については `callPlugin` と同じく末尾
+/// `__` を除去した名前でも確認する。
+pub fn hasRegisteredFunctionKey(state: *State, allocator: std.mem.Allocator, name: []const u8) !bool {
+    const engine = state.engine orelse return false;
+    const resolved = (try lookupCommandDefinition(state, engine, allocator, name)) orelse return false;
+    defer lnako_qjs_value_free(resolved);
     const type_value = lnako_qjs_get_property(resolved, "type") orelse return false;
     defer lnako_qjs_value_free(type_value);
     const type_text = rawText(type_value) catch return false;
     defer lnako_qjs_free_string(type_text.pointer);
     return std.mem.eql(u8, type_text.slice(), "func");
+}
+
+/// `__lnako_commands` に `name` が `fn` 関数付きで呼び出し可能に登録済みか判定する。
+/// 複数 plugin フォールバック候補の先頭一致判定に使う。
+pub fn hasCallableCommand(state: *State, allocator: std.mem.Allocator, name: []const u8) !bool {
+    const engine = state.engine orelse return false;
+    const resolved = (try lookupCommandDefinition(state, engine, allocator, name)) orelse return false;
+    defer lnako_qjs_value_free(resolved);
+    const function = lnako_qjs_get_property(resolved, "fn") orelse return false;
+    defer lnako_qjs_value_free(function);
+    return lnako_qjs_kind(function) == .function;
 }
 
 /// `only_type` が非nullなら `__lnako_commands` entry の `type` 一致のみ返す。

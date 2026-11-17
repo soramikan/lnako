@@ -53,6 +53,22 @@ pub fn nativePluginClosure(program: ir.Program, instruction: ir.Instruction) boo
     return true;
 }
 
+/// 実行時フォールバック候補（`fallback_names`）を持つ`{関数}名`参照か。
+/// 候補は native / ESM どちらの plugin にも解決され得るため、
+/// `native_plugin_paths` が空の ESM 専用構成（`--compat-js`）でも対象にする。
+/// それ以外の条件は `nativePluginClosure` と同じ（動的束縛印・IR関数でない・
+/// 専用ABIカタログ名でない）。
+pub fn pluginFallbackClosure(program: ir.Program, instruction: ir.Instruction) bool {
+    if (!instruction.dynamic_call or instruction.fallback_names.len == 0) return false;
+    if (program.native_plugin_paths.len == 0 and !hasEsmPluginNamespace(program)) return false;
+    const name = instruction.name;
+    if (lookupFunction(program, name) != null) return false;
+    for (builtin_catalog.assign_to_function_names) |candidate| {
+        if (std.mem.eql(u8, candidate, name)) return false;
+    }
+    return true;
+}
+
 pub fn isDynamicNamedCall(function: ir.Function, name: []const u8) bool {
     return isQualifiedGlobal(name) or hasLocalName(function, name);
 }

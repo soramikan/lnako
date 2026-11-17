@@ -471,6 +471,62 @@ pub fn allowsDynamicFunctionReference(self: *Interpreter, name: []const u8) !boo
     return quickjs.hasRegisteredFunctionKey(&self.quickjs_state, self.allocator, name);
 }
 
+pub const RegisteredPluginKind = enum {
+    none,
+    native,
+    esm,
+};
+
+pub const ResolvedPluginTarget = struct {
+    name: []const u8,
+    kind: RegisteredPluginKind,
+};
+
+pub fn registeredPluginKind(self: *Interpreter, name: []const u8) !RegisteredPluginKind {
+    if (self.native_plugin_state.hasRegisteredCommand(name)) return .native;
+    if (try quickjs.hasCallableCommand(&self.quickjs_state, self.allocator, name)) return .esm;
+    return .none;
+}
+
+pub fn hasRegisteredDynamicCommand(self: *Interpreter, name: []const u8) !bool {
+    return (try registeredPluginKind(self, name)) != .none;
+}
+
+pub fn resolvePluginTarget(self: *Interpreter, primary: []const u8, fallbacks: []const []const u8) !ResolvedPluginTarget {
+    try self.activateExternalRuntime();
+    const primary_kind = try registeredPluginKind(self, primary);
+    if (primary_kind != .none) return .{ .name = primary, .kind = primary_kind };
+    for (fallbacks) |candidate| {
+        const kind = try registeredPluginKind(self, candidate);
+        if (kind != .none) return .{ .name = candidate, .kind = kind };
+    }
+    return .{ .name = primary, .kind = .none };
+}
+
+pub fn resolveRegisteredFallbackCommand(self: *Interpreter, primary: []const u8, fallbacks: []const []const u8) ![]const u8 {
+    return (try resolvePluginTarget(self, primary, fallbacks)).name;
+}
+
+pub fn callBuiltinWithFallbacks(
+    self: *Interpreter,
+    name: []const u8,
+    fallbacks: []const []const u8,
+    arguments: []const Value,
+    site_id: ?u64,
+) !Value {
+    const target = try resolveRegisteredFallbackCommand(self, name, fallbacks);
+    return self.callBuiltinResolved(null, target, arguments, site_id);
+}
+
+pub fn resolveDynamicFunctionReference(self: *Interpreter, name: []const u8, fallbacks: []const []const u8) !?[]const u8 {
+    try self.activateExternalRuntime();
+    if (try allowsDynamicFunctionReference(self, name)) return name;
+    for (fallbacks) |candidate| {
+        if (try allowsDynamicFunctionReference(self, candidate)) return candidate;
+    }
+    return null;
+}
+
 pub fn stringArgument(self: *Interpreter, arguments: []const Value) !Value {
     const value = if (arguments.len > 0) arguments[arguments.len - 1] else Value.undefined;
     return self.runtime.valueToString(value);

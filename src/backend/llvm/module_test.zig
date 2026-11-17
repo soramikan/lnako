@@ -606,3 +606,200 @@ test "compat-js AOTはESM登録前に変数・実行環境定数を登録し名�
     const optimized_text = try compatJsModuleText(std.testing.allocator, "X=1\nJS実行(\"1\")を表示\n", true);
     defer std.testing.allocator.free(optimized_text);
 }
+
+test "plugin fallback候補があるときだけAOT候補表とfallback呼出しをemitする" {
+    const allocator = std.testing.allocator;
+    // 1) ESM exact + unqualified fallback -> @lnako_aot_plugin_fallback_call (default_is_esm=1)
+    {
+        const source = "A=1\n外部甲(1)を表示\n";
+        var parsed = try parser.parse(allocator, source, "main.nako3");
+        defer parsed.deinit();
+        try std.testing.expect(parsed.succeeded());
+        const aliases = [_]semantic.DynamicCommandAlias{
+            .{
+                .source_namespace = "外部甲",
+                .dispatch_namespace = "pkg:multi:a.mjs__外部甲",
+                .import_position = 0,
+                .exact = true,
+            },
+            .{
+                .source_namespace = "",
+                .dispatch_namespace = "pkg:multi:b.mjs",
+                .import_position = 1,
+                .unqualified = true,
+            },
+        };
+        var analyzed = try semantic.analyzeModules(allocator, &.{.{
+            .name = "main",
+            .path = "main.nako3",
+            .root = parsed.root.?,
+            .is_package = true,
+            .dynamic_command_aliases = &aliases,
+        }});
+        defer analyzed.deinit();
+        try std.testing.expect(analyzed.succeeded());
+        var hir_program = try hir.lower(allocator, &.{parsed.root.?}, &.{"main"}, &.{"main.nako3"}, &.{&.{}}, analyzed);
+        defer hir_program.deinit();
+        var program = try lower.lower(allocator, hir_program);
+        defer program.deinit();
+        program.compat_js = true;
+        const js_modules = try program.arena.allocator().alloc(ir.JavaScriptModule, 2);
+        js_modules[0] = .{
+            .path = "a.mjs",
+            .source = "export default {};",
+            .is_plugin = true,
+            .namespaces = &.{"pkg:multi:a.mjs"},
+            .package_root = null,
+            .bare_aliases = &.{},
+        };
+        js_modules[1] = .{
+            .path = "b.mjs",
+            .source = "export default {};",
+            .is_plugin = true,
+            .namespaces = &.{"pkg:multi:b.mjs"},
+            .package_root = null,
+            .bare_aliases = &.{},
+        };
+        program.javascript_modules = js_modules;
+        try std.testing.expect(findUnsupported(program) == null);
+
+        var module = try generate(allocator, program, "main.nako3", false);
+        defer module.deinit(allocator);
+        try std.testing.expect(std.mem.indexOf(u8, module.text, "%lnako.AotPluginCandidate = type { ptr, i64 }\n") != null);
+        try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_plugin_fallback_call(ptr, ptr, i64, ptr, i64, i64, i1)\n") != null);
+        try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako.plugin.fallback.0 = private unnamed_addr constant [2 x %lnako.AotPluginCandidate]") != null);
+        try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_plugin_fallback_call(ptr %root.slot.") != null);
+    }
+
+    // 2) native plugin + fallback -> lnako_aot_plugin_fallback_call と lnako_aot_plugin_function_new_fallback を emit
+    {
+        const source = "A=1\nF={関数}外部甲\n外部甲(1)を表示\n";
+        var parsed = try parser.parse(allocator, source, "main.nako3");
+        defer parsed.deinit();
+        try std.testing.expect(parsed.succeeded());
+        const aliases = [_]semantic.DynamicCommandAlias{
+            .{
+                .source_namespace = "外部甲",
+                .dispatch_namespace = "pkg:multi:a.mjs__外部甲",
+                .import_position = 0,
+                .exact = true,
+            },
+            .{
+                .source_namespace = "",
+                .dispatch_namespace = "pkg:multi:b",
+                .import_position = 1,
+                .unqualified = true,
+            },
+        };
+        var analyzed = try semantic.analyzeModules(allocator, &.{.{
+            .name = "main",
+            .path = "main.nako3",
+            .root = parsed.root.?,
+            .is_package = true,
+            .dynamic_command_aliases = &aliases,
+        }});
+        defer analyzed.deinit();
+        try std.testing.expect(analyzed.succeeded());
+        var hir_program = try hir.lower(allocator, &.{parsed.root.?}, &.{"main"}, &.{"main.nako3"}, &.{&.{}}, analyzed);
+        defer hir_program.deinit();
+        var program = try lower.lower(allocator, hir_program);
+        defer program.deinit();
+        const arena = program.arena.allocator();
+        const paths = try arena.alloc([]const u8, 1);
+        paths[0] = try arena.dupe(u8, "/tmp/liblnako_pkg_plugin.dylib");
+        program.native_plugin_paths = paths;
+        const packages = try arena.alloc(ir.NativePluginPackage, 1);
+        packages[0] = .{ .path = try arena.dupe(u8, "/tmp/liblnako_pkg_plugin.dylib"), .namespace = "pkg:multi:b" };
+        program.native_plugin_packages = packages;
+        try std.testing.expect(findUnsupported(program) == null);
+
+        var module = try generate(allocator, program, "main.nako3", false);
+        defer module.deinit(allocator);
+        try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_plugin_function_new_fallback(ptr, ptr, i64, i1)\n") != null);
+        try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_plugin_function_new_fallback(ptr %root.slot.") != null);
+        try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_plugin_fallback_call(ptr %root.slot.") != null);
+    }
+
+    // 3) fallback無しの通常plugin呼出しにはfallback ABIを混入させない
+    {
+        var parsed = try parser.parse(allocator, "math__外部追加(1, 2)を表示\n", "main.nako3");
+        defer parsed.deinit();
+        try std.testing.expect(parsed.succeeded());
+        const aliases = [_]semantic.DynamicCommandAlias{.{ .source_namespace = "math", .dispatch_namespace = "math" }};
+        var analyzed = try semantic.analyzeModules(allocator, &.{.{
+            .name = "main",
+            .path = "main.nako3",
+            .root = parsed.root.?,
+            .dynamic_command_aliases = &aliases,
+        }});
+        defer analyzed.deinit();
+        try std.testing.expect(analyzed.succeeded());
+        var hir_program = try hir.lower(allocator, &.{parsed.root.?}, &.{"main"}, &.{"main.nako3"}, &.{&.{}}, analyzed);
+        defer hir_program.deinit();
+        var program = try lower.lower(allocator, hir_program);
+        defer program.deinit();
+        const arena = program.arena.allocator();
+        const paths = try arena.alloc([]const u8, 1);
+        paths[0] = try arena.dupe(u8, "/tmp/liblnako_pkg_plugin.dylib");
+        program.native_plugin_paths = paths;
+        const packages = try arena.alloc(ir.NativePluginPackage, 1);
+        packages[0] = .{ .path = try arena.dupe(u8, "/tmp/liblnako_pkg_plugin.dylib"), .namespace = "math" };
+        program.native_plugin_packages = packages;
+
+        var module = try generate(allocator, program, "main.nako3", false);
+        defer module.deinit(allocator);
+        try std.testing.expect(std.mem.indexOf(u8, module.text, "%lnako.AotPluginCandidate") == null);
+        try std.testing.expect(std.mem.indexOf(u8, module.text, "lnako_aot_plugin_fallback_call") == null);
+        try std.testing.expect(std.mem.indexOf(u8, module.text, "lnako_aot_plugin_function_new_fallback") == null);
+    }
+}
+
+test "ESM plugin のみの構成でもfallback候補付き関数参照をAOTで受理しfallback関数生成をemitする" {
+    const allocator = std.testing.allocator;
+    // native plugin を持たない（native_plugin_paths が空）`--compat-js` 専用構成。
+    const source = "A=1\nF={関数}外部甲\nF(1)を表示\n";
+    var parsed = try parser.parse(allocator, source, "main.nako3");
+    defer parsed.deinit();
+    try std.testing.expect(parsed.succeeded());
+    const aliases = [_]semantic.DynamicCommandAlias{
+        .{
+            .source_namespace = "外部甲",
+            .dispatch_namespace = "pkg:multi:a.mjs__外部甲",
+            .import_position = 0,
+            .exact = true,
+        },
+        .{
+            .source_namespace = "",
+            .dispatch_namespace = "pkg:multi:b.mjs",
+            .import_position = 1,
+            .unqualified = true,
+        },
+    };
+    var analyzed = try semantic.analyzeModules(allocator, &.{.{
+        .name = "main",
+        .path = "main.nako3",
+        .root = parsed.root.?,
+        .is_package = true,
+        .dynamic_command_aliases = &aliases,
+    }});
+    defer analyzed.deinit();
+    try std.testing.expect(analyzed.succeeded());
+    var hir_program = try hir.lower(allocator, &.{parsed.root.?}, &.{"main"}, &.{"main.nako3"}, &.{&.{}}, analyzed);
+    defer hir_program.deinit();
+    var program = try lower.lower(allocator, hir_program);
+    defer program.deinit();
+    program.compat_js = true;
+    const js_modules = try program.arena.allocator().alloc(ir.JavaScriptModule, 2);
+    js_modules[0] = .{ .path = "a.mjs", .source = "export default {};", .is_plugin = true, .namespaces = &.{"pkg:multi:a.mjs"}, .package_root = null, .bare_aliases = &.{} };
+    js_modules[1] = .{ .path = "b.mjs", .source = "export default {};", .is_plugin = true, .namespaces = &.{"pkg:multi:b.mjs"}, .package_root = null, .bare_aliases = &.{} };
+    program.javascript_modules = js_modules;
+    try std.testing.expectEqual(@as(usize, 0), program.native_plugin_paths.len);
+    // 関数参照がAOT未対応として拒否されない。
+    try std.testing.expect(findUnsupported(program) == null);
+
+    var module = try generate(allocator, program, "main.nako3", false);
+    defer module.deinit(allocator);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_plugin_function_new_fallback(ptr %root.slot.") != null);
+    // ESM が主配送先なので default_is_esm=1 で候補表を渡す。
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako.plugin.fallback.0 = private unnamed_addr constant [2 x %lnako.AotPluginCandidate]") != null);
+}

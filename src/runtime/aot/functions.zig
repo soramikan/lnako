@@ -244,6 +244,56 @@ pub export fn lnako_aot_esm_plugin_call(
     success = runtime.failure_epoch == start_epoch;
 }
 
+/// 後発の動的 plugin（ESM / native）の背後に先発 plugin の同名候補がある
+/// 場合、実行時に登録済み先頭候補を解決して native / ESM いずれかの経路へ
+/// 配送する。
+pub export fn lnako_aot_plugin_fallback_call(
+    out: *state.Value,
+    arguments: ?[*]const state.Value,
+    len: usize,
+    candidates: ?[*]const state.PluginCandidate,
+    candidate_count: usize,
+    site_id: u64,
+    default_is_esm: bool,
+) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (state.active_runtime) |*active| active else return;
+    const candidate_slice = if (candidates) |pointer| pointer[0..candidate_count] else {
+        runtime.setFailure(error.InvalidArgumentCount);
+        return;
+    };
+    if (candidate_slice.len == 0) {
+        runtime.setFailure(error.InvalidArgumentCount);
+        return;
+    }
+    const resolved = state.resolvePluginFallback(runtime, candidate_slice, default_is_esm) catch |failure| {
+        const primary_name = if (candidate_slice[0].name) |ptr| ptr[0..candidate_slice[0].len] else "";
+        const route = if (default_is_esm) "esm-plugin" else "native-plugin";
+        const call_id = runtime.dispatch_trace.begin(primary_name, 0, route, site_id);
+        runtime.setFailure(failure);
+        runtime.dispatch_trace.result(call_id, primary_name, 0, route, site_id, false);
+        return;
+    };
+    const route = if (resolved.is_esm) "esm-plugin" else "native-plugin";
+    const call_id = runtime.dispatch_trace.begin(resolved.name, 0, route, site_id);
+    const start_epoch = runtime.failure_epoch;
+    var success = false;
+    defer runtime.dispatch_trace.result(call_id, resolved.name, 0, route, site_id, success);
+    if (arguments == null and len != 0) {
+        runtime.setFailure(error.InvalidArgumentCount);
+        return;
+    }
+    const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+    out.* = (if (resolved.is_esm)
+        state.esmPluginBuiltin(runtime, resolved.name, actual)
+    else
+        state.nativePluginBuiltin(runtime, resolved.name, actual)) catch |failure| {
+        runtime.setFailure(failure);
+        return;
+    };
+    success = runtime.failure_epoch == start_epoch;
+}
+
 pub export fn lnako_aot_function_new(out: *state.Value, callback: state.FunctionCallback, arity: usize, captures: ?[*]const state.Value, capture_count: usize) callconv(.c) void {
     out.* = .{};
     const runtime = if (state.active_runtime) |*value| value else return;
@@ -320,6 +370,53 @@ pub export fn lnako_aot_plugin_function_call(out: *state.Value, context: *anyopa
         return;
     };
     success = runtime.failure_epoch == start_epoch;
+}
+
+fn aotEsmPluginFunctionCall(out: *state.Value, context: *anyopaque, arguments: ?[*]const state.Value, len: usize) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (state.active_runtime) |*active| active else return;
+    const object: *state.Object = @ptrCast(@alignCast(context));
+    if (object.payload != .function) {
+        runtime.setFailure(error.NotCallable);
+        return;
+    }
+    const command_name = object.payload.function.name;
+    const call_id = runtime.dispatch_trace.begin(command_name, 0, "esm-plugin", 0);
+    const start_epoch = runtime.failure_epoch;
+    var success = false;
+    defer runtime.dispatch_trace.result(call_id, command_name, 0, "esm-plugin", 0, success);
+    if (arguments == null and len != 0) {
+        runtime.setFailure(error.InvalidArgumentCount);
+        return;
+    }
+    const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+    out.* = state.esmPluginBuiltin(runtime, command_name, actual) catch |failure| {
+        runtime.setFailure(failure);
+        return;
+    };
+    success = runtime.failure_epoch == start_epoch;
+}
+
+/// `{関数}名` でプラグイン命令を関数値化する際、フォールバック候補列から
+/// 実行時登録済みの命令名と種別（native / ESM）を解決して関数値を作る。
+pub export fn lnako_aot_plugin_function_new_fallback(
+    out: *state.Value,
+    candidates: ?[*]const state.PluginCandidate,
+    candidate_count: usize,
+    default_is_esm: bool,
+) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (state.active_runtime) |*active| active else return;
+    const candidate_slice = if (candidates) |pointer| pointer[0..candidate_count] else state.runtimeFailure(error.InvalidArgumentCount);
+    const resolved = state.resolvePluginFallback(runtime, candidate_slice, default_is_esm) catch |failure| state.runtimeFailure(failure);
+    // 全候補が未登録なら Interpreter（`resolveDynamicFunctionReference` が null）と
+    // 同じく UnknownFunction とし、呼出し前に関数値を作らない。
+    if (!resolved.found) {
+        runtime.setFailure(error.UnknownFunction);
+        return;
+    }
+    const callback: state.FunctionCallback = if (resolved.is_esm) aotEsmPluginFunctionCall else lnako_aot_plugin_function_call;
+    out.* = runtime.createGeneratedFunction(callback, 0, resolved.name, &.{}) catch |failure| state.runtimeFailure(failure);
 }
 
 pub export fn lnako_aot_function_capture(out: *state.Value, context: *anyopaque, index: usize) callconv(.c) void {

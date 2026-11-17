@@ -12,6 +12,8 @@ export fn lnako_aot_runtime_keepalive() void {
     _ = aot.lnako_aot_function_call;
     _ = aot.lnako_aot_dynamic_call;
     _ = aot.lnako_aot_native_plugin_call;
+    _ = aot.lnako_aot_plugin_fallback_call;
+    _ = aot.lnako_aot_plugin_function_new_fallback;
     _ = aot.lnako_aot_native_plugin_register;
     _ = aot.lnako_aot_dynamic_global_register;
     _ = aot.lnako_aot_regexp_call;
