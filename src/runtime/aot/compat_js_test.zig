@@ -5085,6 +5085,32 @@ test "compat AOT runtimeはsys.__execでそれと省略引数をインタプリ�
     const console_empty = try evalCompatJs(active, "sys.__exec('コンソール表示', [])");
     try std.testing.expectEqual(@as(u8, @backingInt(Tag.undefined)), console_empty.tag);
 
+    // タイマー命令は第2引数（秒数）不足時に補完せずエラーとして拒否する。
+    try expectQuickJsString(
+        active,
+        "(function(){try{sys.__exec('秒後', ['完了']);return 'no';}catch(e){return e.name;}})()",
+        "InternalError",
+    );
+    try expectQuickJsString(
+        active,
+        "(function(){try{sys.__exec('秒毎', ['完了']);return 'no';}catch(e){return e.name;}})()",
+        "InternalError",
+    );
+    try std.testing.expectEqual(@as(usize, 0), active.timers.items.len);
+
+    // `ハテナ関数設定` の `JS:` 形式は compat 経路では関数化して実行できる。
+    try expectQuickJsNumber(
+        active,
+        "globalThis.__hatenaSeen = 0; sys.__exec('ハテナ関数設定', [['JS:(x)=>{ globalThis.__hatenaSeen = x + 10; return globalThis.__hatenaSeen; }', '表示']]); sys.__exec('ハテナ関数実行', [5]); globalThis.__hatenaSeen",
+        15,
+    );
+    try expectQuickJsString(active, "sys.__getSysVar('表示ログ')", "log\n15\n");
+    try expectQuickJsString(
+        active,
+        "(function(){try{sys.__exec('ハテナ関数設定', [['JS:123']]);return 'no';}catch(e){return e.name;}})()",
+        "InternalError",
+    );
+
     var throw_out: Value = .{};
     compat.execCompatBuiltin(active, "エラー発生", &.{}, &throw_out);
     try expectPendingFailureContains(active, "エラー");
