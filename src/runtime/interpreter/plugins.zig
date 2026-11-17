@@ -463,6 +463,14 @@ pub fn dynamicCommandAliases(self: *Interpreter, allocator: std.mem.Allocator) !
     return aliases;
 }
 
+/// `{関数}名` の動的関数参照を実行時 registry に基づいて許可する。
+/// `ナデシコ`/`ナデシコ続` で生成される動的 Program 自身は取り込み情報を
+/// 持たないため、`owner_program` ではなく実行時登録済み命令のみで判定する。
+pub fn allowsDynamicFunctionReference(self: *Interpreter, name: []const u8) !bool {
+    if (self.native_plugin_state.hasRegisteredCommand(name)) return true;
+    return quickjs.hasRegisteredFunctionKey(&self.quickjs_state, self.allocator, name);
+}
+
 pub fn stringArgument(self: *Interpreter, arguments: []const Value) !Value {
     const value = if (arguments.len > 0) arguments[arguments.len - 1] else Value.undefined;
     return self.runtime.valueToString(value);

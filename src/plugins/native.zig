@@ -16,7 +16,7 @@ const flag_sync: u32 = 1 << 0;
 const flag_async: u32 = 1 << 1;
 const flag_pure: u32 = 1 << 2;
 
-const OpaqueValue = opaque {};
+pub const OpaqueValue = opaque {};
 
 const CommandV1 = extern struct {
     struct_size: u32,
@@ -31,7 +31,7 @@ const CommandV1 = extern struct {
     destroy: ?*const fn (?*anyopaque) callconv(.c) void,
 };
 
-const HostV1 = extern struct {
+pub const HostV1 = extern struct {
     struct_size: u32,
     abi_version: u32,
     context: ?*anyopaque,
@@ -726,6 +726,47 @@ pub const State = struct {
             errdefer allocator.free(dispatch_name);
             try list.append(allocator, dispatch_name);
         }
+    }
+
+    /// 動的評価内の `{関数}名` 解決用に、実行時 native plugin registry へ
+    /// `requested`（無修飾または `{namespace}__{命令}`）が登録済みか判定する。
+    pub fn hasRegisteredCommand(self: *State, requested: []const u8) bool {
+        return self.findCommand(requested) != null;
+    }
+
+    pub const TestInvokeFn = *const fn (?*anyopaque, *const HostV1, [*c]const *const OpaqueValue, usize, u64, [*c]?*OpaqueValue) callconv(.c) c_int;
+
+    /// 単体テスト用: dlopen を介さずネイティブ命令を実行時 registry へ登録する。
+    pub fn registerCommandForTest(
+        self: *State,
+        runtime: *Runtime,
+        effects: Effects,
+        namespace: ?[]const u8,
+        name: []const u8,
+        minimum_arguments: usize,
+        maximum_arguments: usize,
+        invoke: TestInvokeFn,
+    ) !void {
+        if (!builtin.is_test) @compileError("test-only helper");
+        const allocator = runtime.allocator();
+        self.configure(runtime, effects);
+        const name_copy = try allocator.dupe(u8, name);
+        errdefer allocator.free(name_copy);
+        const ns_copy = if (namespace) |ns| try allocator.dupe(u8, ns) else null;
+        errdefer if (ns_copy) |ns| allocator.free(ns);
+        const particles_copy = try allocator.dupe(u8, "");
+        errdefer allocator.free(particles_copy);
+        try self.commands.append(allocator, .{
+            .name = name_copy,
+            .namespace = ns_copy,
+            .particles = particles_copy,
+            .flags = flag_sync,
+            .minimum_arguments = minimum_arguments,
+            .maximum_arguments = maximum_arguments,
+            .context = null,
+            .invoke = invoke,
+            .destroy = null,
+        });
     }
 
     /// 同一plugin識別子の重複登録判定。namespace所有の命令同士は

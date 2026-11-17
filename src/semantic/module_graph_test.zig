@@ -1777,3 +1777,60 @@ test "読み込み済みモジュールを再利用する深い辺も診断で�
     }
     try std.testing.expect(found_depth_diagnostic);
 }
+
+test "package内の複数ESM plugin取り込みは先発pluginの無修飾命令を後発pluginへ誤配送しない" {
+    // 同じpackageで a.mjs (`外部甲`) と b.mjs (`外部乙`) を順に取り込むと、
+    // 従来のcatch-allでは `外部甲()` も後勝ちの `{owner}:b.mjs__外部甲` へ
+    // 誤配送されていた。命令単位の所有抽出により先発pluginの命令も正しい
+    // dispatch (`{owner}:a.mjs__外部甲`) へ解決されることを検証する。
+    var memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "!「pkg:math」を取り込む\n" },
+        .{ .suffix = "packages/math/index.nako3", .source = "!「./a.mjs」を取り込む\n!「./b.mjs」を取り込む\n外部甲(1)\n外部乙(2)\n" },
+        .{ .suffix = "packages/math/a.mjs", .source = "export default { meta: { type: 'const', value: {} }, 外部甲: { type: 'func', fn: (x) => `a:${x}` } };" },
+        .{ .suffix = "packages/math/b.mjs", .source = "export default { meta: { type: 'const', value: {} }, 外部乙: { type: 'func', fn: (x) => `b:${x}` } };" },
+    } };
+    var package_resolver = PackageTestResolver{};
+    var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{
+        .compat_js = true,
+        .package_resolver = package_resolver.resolver(),
+    });
+    defer graph.deinit();
+    try std.testing.expect(graph.succeeded());
+
+    var program = try graph.analyze(std.testing.allocator);
+    defer program.deinit();
+    try std.testing.expect(program.succeeded());
+    var first_plugin_ok = false;
+    var second_plugin_ok = false;
+    var misrouted_first_to_second = false;
+    for (program.bindings) |binding| {
+        if (binding.kind != .builtin or !binding.dynamic_builtin) continue;
+        if (std.mem.eql(u8, binding.name, "外部甲")) {
+            if (std.mem.eql(u8, binding.resolved_name, "pkg:math-id:a.mjs__外部甲")) first_plugin_ok = true;
+            if (std.mem.eql(u8, binding.resolved_name, "pkg:math-id:b.mjs__外部甲")) misrouted_first_to_second = true;
+        }
+        if (std.mem.eql(u8, binding.name, "外部乙") and
+            std.mem.eql(u8, binding.resolved_name, "pkg:math-id:b.mjs__外部乙"))
+            second_plugin_ok = true;
+    }
+    try std.testing.expect(first_plugin_ok);
+    try std.testing.expect(second_plugin_ok);
+    try std.testing.expect(!misrouted_first_to_second);
+
+    // 未定義命令や取り込み前呼出しは catch-all へ流さず拒否されることも確認する。
+    var undefined_memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "!「pkg:math」を取り込む\n" },
+        .{ .suffix = "packages/math/index.nako3", .source = "!「./a.mjs」を取り込む\n!「./b.mjs」を取り込む\n外部丙(3)\n" },
+        .{ .suffix = "packages/math/a.mjs", .source = "export default { 外部甲: { type: 'func', fn: (x) => x } };" },
+        .{ .suffix = "packages/math/b.mjs", .source = "export default { 外部乙: { type: 'func', fn: (x) => x } };" },
+    } };
+    var undefined_graph = try load(std.testing.allocator, "main.nako3", undefined_memory.sourceProvider(), .{
+        .compat_js = true,
+        .package_resolver = package_resolver.resolver(),
+    });
+    defer undefined_graph.deinit();
+    try std.testing.expect(undefined_graph.succeeded());
+    var undefined_program = try undefined_graph.analyze(std.testing.allocator);
+    defer undefined_program.deinit();
+    try std.testing.expect(!undefined_program.succeeded());
+}

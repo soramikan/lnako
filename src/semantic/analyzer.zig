@@ -1377,4 +1377,5 @@ test {
     _ = @import("analyzer_arguments_test.zig");
     _ = @import("analyzer_test.zig");
     _ = @import("declared_commands_test.zig");
+    _ = @import("dynamic_commands.zig");
 }

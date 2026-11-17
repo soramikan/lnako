@@ -12,6 +12,7 @@ const verifier = @import("../../ir/verifier.zig");
 const ir = @import("../../ir/nako_ir.zig");
 const plugin_node = @import("../../plugins/node.zig");
 const plugin_lowlevel = @import("../../plugins/lowlevel.zig");
+const plugin_native = @import("../../plugins/native.zig");
 const low_level_foundation = @import("../low_level_foundation.zig");
 const low_level_io = @import("../low_level_io.zig");
 const low_level_hash = @import("../low_level_hash.zig");
@@ -4333,17 +4334,17 @@ test "『{関数}名』のプラグイン未取り込み名は関数値化を拒
 
 test "『{関数}名』のESM package命令はjavascript_modulesのみで関数値化できる" {
     // `--compat-js` のESM package命令はnative pluginを伴わないため
-    // `native_plugin_paths`は空になり、関数値化ゲートが
-    // `javascript_modules` だけを見る必要がある。ゲートがnative path
-    // のみを見ると `{関数}名前` 参照がUnknownFunctionで失敗する。
-    var parsed = try parser.parse(std.testing.allocator, "F={関数}外部追加\n「ok」を表示\n", "esm-plugin.nako3");
+    // `native_plugin_paths`は空になり、関数値化ゲートはQuickJSの実行時
+    // registryに登録された命令だけを見て関数値化と実行を行う必要がある。
+    if (!build_options.quickjs_enabled) return error.SkipZigTest;
+    var parsed = try parser.parse(std.testing.allocator, "F={関数}esm__外部追加\nF(2,3)を表示\n", "esm-plugin.nako3");
     defer parsed.deinit();
     try std.testing.expect(parsed.succeeded());
     var analyzed = try semantic.analyzeModules(std.testing.allocator, &.{.{
         .name = "esm-plugin",
         .path = "esm-plugin.nako3",
         .root = parsed.root.?,
-        .allows_dynamic_commands = true,
+        .dynamic_command_aliases = &.{.{ .source_namespace = "esm", .dispatch_namespace = "esm" }},
     }});
     defer analyzed.deinit();
     try std.testing.expect(analyzed.succeeded());
@@ -4351,9 +4352,13 @@ test "『{関数}名』のESM package命令はjavascript_modulesのみで関数�
     defer hir_program.deinit();
     var ir_program = try lower_ssa.lower(std.testing.allocator, hir_program);
     defer ir_program.deinit();
-    // ESM package取り込み済みプログラムを再現（module登録は呼出し側が
-    // 行うため、関数値化のゲート条件として空でないことだけが要件）。
-    var modules = [_]ir.JavaScriptModule{.{ .path = "pkg-esm.mjs", .source = "", .is_plugin = true, .namespaces = &.{"esm"} }};
+    var modules = [_]ir.JavaScriptModule{.{
+        .path = "pkg-esm.mjs",
+        .source = "export default { 外部追加: { type: 'func', josi: [['と'], ['を']], fn: (a, b) => Number(a) + Number(b) } };",
+        .is_plugin = true,
+        .namespaces = &.{"esm"},
+    }};
+    ir_program.compat_js = true;
     ir_program.javascript_modules = &modules;
     var runtime = Runtime.init(std.testing.allocator);
     defer runtime.deinit();
@@ -4362,7 +4367,7 @@ test "『{関数}名』のESM package命令はjavascript_modulesのみで関数�
     var interpreter = Interpreter.init(std.testing.allocator, &runtime, ir_program, host.host());
     defer interpreter.deinit();
     _ = try interpreter.run();
-    try std.testing.expectEqualStrings("ok\n", host.written());
+    try std.testing.expectEqualStrings("5\n", host.written());
 }
 
 test "値位置・連鎖位置の組み込み命令語を暗黙呼出しとして実行する" {
@@ -4483,14 +4488,16 @@ test "Interpreter低レイヤーのstatfs/reflink/領域検索/領域確保は�
     }
 }
 
-test "ナデシコとナデシコ続は実行時登録済みESM plugin命令を実行できる" {
-    // Issue #228レビュー指摘: 動的評価の意味解析は取り込み辺を持たないため、
-    // 実行時registry（ここでは --compat-js のESM plugin）に登録済みの命令名を
-    // 引き継がなければ `DynamicSemanticFailed` で拒否してしまう。
+test "ナデシコとナデシコ続は実行時登録済みESM plugin命令の直接呼出しと{関数}参照を実行できる" {
+    // Issue #228レビュー指摘: 動的評価のProgram自身はjavascript_modulesを
+    // 持たないため、意味解析・makeClosureResolvedの双方でQuickJSの実行時
+    // registryに基づいて直接呼出しと`{関数}`関数参照を許可する。
     if (!build_options.quickjs_enabled) return error.SkipZigTest;
     const source =
         "「ESM動的加算(2,3)を表示」をナデシコ\n" ++
-        "「ESM動的加算(4,5)を表示」をナデシコ続\n";
+        "「ESM動的加算(4,5)を表示」をナデシコ続\n" ++
+        "『F={関数}ESM動的加算\nF(6,7)を表示』をナデシコ\n" ++
+        "『F2={関数}ESM動的加算\nF2(8,9)を表示』をナデシコ続\n";
     var fixture = try compileForTest(std.testing.allocator, source);
     defer fixture.ir_program.deinit();
     defer fixture.hir_program.deinit();
@@ -4512,5 +4519,59 @@ test "ナデシコとナデシコ続は実行時登録済みESM plugin命令を�
     var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
     defer interpreter.deinit();
     _ = try interpreter.run();
-    try std.testing.expectEqualStrings("5\n9\n", host.written());
+    try std.testing.expectEqualStrings("5\n9\n13\n17\n", host.written());
+
+    // 未登録命令の `{関数}` 参照は動的評価内でも拒否される（静的fallbackで通らない）。
+    const missing = try runtime.stringUtf8("G={関数}ESM未定義\n");
+    try std.testing.expectError(error.DynamicSemanticFailed, interpreter.executeDynamicValue(missing));
+}
+
+test "ナデシコとナデシコ続は実行時登録済みnative plugin命令の直接呼出しと{関数}参照を実行できる" {
+    // 動的評価で生成されるProgramのnative_plugin_pathsは空でも、実行時
+    // native plugin registryへ登録済みの命令は直接呼出しと`{関数}`参照の
+    // 双方を解決・実行できる必要がある。
+    const NativeTest = struct {
+        fn add(
+            _: ?*anyopaque,
+            host_ptr: *const plugin_native.HostV1,
+            args: [*c]const *const plugin_native.OpaqueValue,
+            argc: usize,
+            _: u64,
+            out: [*c]?*plugin_native.OpaqueValue,
+        ) callconv(.c) c_int {
+            if (argc < 2) return -1;
+            var a: f64 = 0;
+            var b: f64 = 0;
+            if (host_ptr.get_number(host_ptr.context, args[0], &a) != 0) return -1;
+            if (host_ptr.get_number(host_ptr.context, args[1], &b) != 0) return -1;
+            out[0] = host_ptr.make_number(host_ptr.context, a + b);
+            return if (out[0] != null) 0 else -1;
+        }
+    };
+    const source =
+        "「テストネイティブ加算(2,3)を表示」をナデシコ\n" ++
+        "「テストネイティブ加算(4,5)を表示」をナデシコ続\n" ++
+        "『F={関数}テストネイティブ加算\nF(11,12)を表示』をナデシコ\n" ++
+        "『F2={関数}テストネイティブ加算\nF2(13,14)を表示』をナデシコ続\n" ++
+        "「npkg__テスト名前空間加算(20,21)を表示」をナデシコ\n" ++
+        "『F3={関数}npkg__テスト名前空間加算\nF3(30,31)を表示』をナデシコ続\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    const plugins_mod = @import("plugins.zig");
+    try interpreter.native_plugin_state.registerCommandForTest(&runtime, plugins_mod.nativePluginEffects(&interpreter), null, "テストネイティブ加算", 2, 2, NativeTest.add);
+    try interpreter.native_plugin_state.registerCommandForTest(&runtime, plugins_mod.nativePluginEffects(&interpreter), "npkg", "テスト名前空間加算", 2, 2, NativeTest.add);
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("5\n9\n23\n27\n41\n61\n", host.written());
+
+    const missing = try runtime.stringUtf8("G={関数}未登録ネイティブ\n");
+    try std.testing.expectError(error.DynamicSemanticFailed, interpreter.executeDynamicValue(missing));
 }
