@@ -82,13 +82,6 @@ fn lastArgument(arguments: []const Value) ?*const Value {
     return if (arguments.len == 0) null else &arguments[arguments.len - 1];
 }
 
-/// 命令実行が新しい失敗を残さなかった場合だけ `それ` を戻り値へ同期する。
-/// インタプリタの呼び出し文が結果を `それ` に書き戻す挙動に合わせる。
-fn syncSore(runtime: *Runtime, out: *Value, start_epoch: u64) void {
-    if (runtime.failure_epoch != start_epoch) return;
-    state.upsertDynamicGlobal(runtime, "それ", out.*) catch |err| runtime.setFailure(err);
-}
-
 fn initSlot(runtime: *Runtime, name: []const u8, default_val: Value) ?ManagedGlobalSlot {
     return ManagedGlobalSlot.init(runtime, name, default_val) catch |err| {
         runtime.setFailure(err);
@@ -110,6 +103,217 @@ fn initDisplayLogSlot(runtime: *Runtime) ?ManagedGlobalSlot {
     return initSlot(runtime, "表示ログ", empty);
 }
 
+fn minCommandArgs(command: aot_builtin.Command) usize {
+    return switch (command) {
+        // 0引数でそのまま動作する、またはインタプリタでも引数不足エラーになる命令は補わない。
+        .assert_strict_equal,
+        .system_measure_time,
+        .system_path_basename,
+        .system_path_dirname,
+        .node_random_uuid,
+        .maximum,
+        .minimum,
+        .empty_array,
+        .empty_dictionary,
+        .sum_parsed,
+        .sequential_add,
+        .concat_join,
+        .json_decode,
+        .math_random,
+        .datetime_now,
+        .datetime_system_time,
+        .datetime_system_time_milliseconds,
+        .datetime_today,
+        .datetime_tomorrow,
+        .datetime_yesterday,
+        .datetime_current_year,
+        .datetime_next_year,
+        .datetime_last_year,
+        .datetime_current_month,
+        .datetime_next_month,
+        .datetime_previous_month,
+        .datetime_monotonic_milliseconds,
+        .caniuse_browsers,
+        .node_os,
+        .node_architecture,
+        .node_environment_list,
+        .node_current_directory,
+        .node_home_directory,
+        .node_desktop,
+        .node_documents,
+        .node_temporary_directory,
+        .node_mother_path,
+        .courtesy_increment,
+        .courtesy_begin,
+        .courtesy_end,
+        .courtesy_level,
+        .stdio_continue_display,
+        .stdio_continue_display_many,
+        .stdio_clear_log,
+        .namespace_pop,
+        .timer_wait,
+        .timer_stop_all,
+        .promise_all,
+        .async_noop,
+        .node_console_clear,
+        .node_file_process_stop,
+        .system_debug_breakpoint_wait,
+        .system_debug_display,
+        .system_debug_enable,
+        .system_global_function_names,
+        .system_function_names,
+        .system_function_exists,
+        .plugin_names,
+        .josi_names,
+        .reserved_words,
+        .line_notify_discontinued,
+        .line_image_notify_discontinued,
+        .node_exit,
+        .system_end,
+        .node_hash_names,
+        .node_stdin_all,
+        .node_stdin_line,
+        .node_stdin_character,
+        .node_network_ipv4,
+        .node_network_ipv6,
+        .system_hatena_configure,
+        .system_nadesiko,
+        .system_nadesiko_continue,
+        => 0,
+
+        .table_search,
+        .table_regexp_search,
+        => 4,
+
+        .regexp_replace,
+        .cut_range,
+        .node_archive_extract_callback,
+        .node_archive_create_callback,
+        .node_file_copy_callback,
+        .node_file_move_callback,
+        .node_post_send_callback,
+        .node_post_form_send_callback,
+        .node_discord_file_send,
+        .datetime_difference,
+        .table_pickup,
+        .table_exact_pickup,
+        .table_regexp_pickup,
+        .table_insert_column,
+        .rgb,
+        .in_range,
+        .clamp,
+        .string_insert,
+        .string_search,
+        .string_remove,
+        .substring_mid,
+        .replace_all,
+        .replace_first,
+        => 3,
+
+        .regexp_match,
+        .regexp_extract,
+        .regexp_split,
+        .cut,
+        .timer_after,
+        .timer_every,
+        .http_server_start,
+        .http_server_static,
+        .http_server_receive,
+        .http_server_headers,
+        .node_archive_extract,
+        .node_archive_create,
+        .node_process_start_callback,
+        .node_file_delete_callback,
+        .node_path_resolve,
+        .node_file_save,
+        .node_file_sjis_save,
+        .node_file_euc_save,
+        .node_file_copy,
+        .node_file_copy_overwrite,
+        .node_file_move,
+        .node_file_move_overwrite,
+        .node_encoding_encode,
+        .node_encoding_decode,
+        .node_hash_value,
+        .node_ajax_content_get,
+        .node_ajax_send_callback,
+        .node_ajax_receive_callback,
+        .node_get_send_callback,
+        .node_post_response_promise,
+        .node_post_form_response_promise,
+        .node_post_send,
+        .node_post_form_send,
+        .node_discord_send,
+        .path_change_extension,
+        .datetime_format,
+        .datetime_year_difference,
+        .datetime_month_difference,
+        .datetime_day_difference,
+        .datetime_hour_difference,
+        .datetime_minute_difference,
+        .datetime_second_difference,
+        .datetime_add_time,
+        .datetime_add_date,
+        .datetime_add_datetime,
+        .table_sort,
+        .table_numeric_sort,
+        .table_column,
+        .table_unique,
+        .table_delete_column,
+        .table_column_sum,
+        .array_custom_sort,
+        .array_function_apply,
+        .array_map,
+        .array_filter,
+        .radix,
+        .bit_or,
+        .bit_and,
+        .bit_xor,
+        .shift_left,
+        .shift_right,
+        .shift_right_unsigned,
+        .subtract,
+        .multiply,
+        .divide,
+        .remainder,
+        .power_number,
+        .greater_equal,
+        .less_equal,
+        .less,
+        .greater,
+        .strict_equal,
+        .strict_not_equal,
+        .deep_equal,
+        .deep_not_equal,
+        .logical_or,
+        .logical_and,
+        .range,
+        .dictionary_remove,
+        .hash_remove,
+        .dictionary_has,
+        .hash_has,
+        .repeat_multiply,
+        .codepoint_find,
+        .string_starts,
+        .string_ends,
+        .add_parsed,
+        .append,
+        .append_line,
+        .refrain,
+        .occurrence_count,
+        .occurrence,
+        .substring_left,
+        .substring_right,
+        .split_all,
+        .split_first,
+        .zero_pad,
+        .space_pad,
+        => 2,
+
+        else => if (aot_builtin.isLowLevelCommand(command)) 0 else 1,
+    };
+}
+
 /// カテゴリ 6: ESM / native plugin 命令へのフォールバック。
 ///
 /// ESM module が登録されている場合は `esmPluginBuiltin` を先に試し、
@@ -121,23 +325,21 @@ fn execCompatPluginBuiltin(
     cmd_name: []const u8,
     arguments: []const Value,
     out: *Value,
-    start_epoch: u64,
 ) void {
     if (runtime.esm_modules.items.len > 0) {
         const result = state.esmPluginBuiltin(runtime, cmd_name, arguments) catch |failure| {
             if (failure == error.UnknownCommand and runtime.native_plugin_paths.items.len > 0) {
-                execCompatNativePluginBuiltin(runtime, cmd_name, arguments, out, start_epoch);
+                execCompatNativePluginBuiltin(runtime, cmd_name, arguments, out);
                 return;
             }
             if (!runtime.has_pending_exception) runtime.setFailure(failure);
             return;
         };
         out.* = result;
-        syncSore(runtime, out, start_epoch);
         return;
     }
     if (runtime.native_plugin_paths.items.len > 0) {
-        execCompatNativePluginBuiltin(runtime, cmd_name, arguments, out, start_epoch);
+        execCompatNativePluginBuiltin(runtime, cmd_name, arguments, out);
         return;
     }
     runtime.setFailure(error.UnknownCommand);
@@ -148,14 +350,12 @@ fn execCompatNativePluginBuiltin(
     cmd_name: []const u8,
     arguments: []const Value,
     out: *Value,
-    start_epoch: u64,
 ) void {
     const result = state.nativePluginBuiltin(runtime, cmd_name, arguments) catch |failure| {
         if (!runtime.has_pending_exception) runtime.setFailure(failure);
         return;
     };
     out.* = result;
-    syncSore(runtime, out, start_epoch);
 }
 
 /// `sys.__exec(name, args)` のビルトイン命令ディスパッチ。Unit 1 の範囲
@@ -163,7 +363,6 @@ fn execCompatNativePluginBuiltin(
 /// 汎用命令・補助命令）を AOT ランタイムの専用 ABI へ振り分ける。
 pub fn execCompatBuiltin(runtime: *Runtime, cmd_name: []const u8, arguments: []const Value, out: *Value) void {
     out.* = .{};
-    const start_epoch = runtime.failure_epoch;
 
     // カテゴリ 1: `aot_builtin.lookup` の前段で特別に lowering される命令。
     if (std.mem.eql(u8, cmd_name, "表示") or std.mem.eql(u8, cmd_name, "表示する")) {
@@ -171,7 +370,6 @@ pub fn execCompatBuiltin(runtime: *Runtime, cmd_name: []const u8, arguments: []c
         defer log_slot.finish();
         const log_ptr = log_slot.bindAndPtr();
         values.lnako_aot_display_value(lastArgument(arguments) orelse &undefined_value, true, log_ptr);
-        syncSore(runtime, out, start_epoch);
         return;
     }
     if (std.mem.eql(u8, cmd_name, "連続表示")) {
@@ -179,32 +377,28 @@ pub fn execCompatBuiltin(runtime: *Runtime, cmd_name: []const u8, arguments: []c
         defer log_slot.finish();
         const log_ptr = log_slot.bindAndPtr();
         debug.lnako_aot_display_many(argumentsPointer(arguments), arguments.len, log_ptr);
-        syncSore(runtime, out, start_epoch);
         return;
     }
     if (std.mem.eql(u8, cmd_name, "エラー発生")) {
-        debug.lnako_aot_exception_set_error_message(lastArgument(arguments) orelse &undefined_value);
+        const default_error = state.staticStringValue("エラー");
+        debug.lnako_aot_exception_set_error_message(lastArgument(arguments) orelse &default_error);
         debug.lnako_aot_throw_site(0);
         return;
     }
     if (std.mem.eql(u8, cmd_name, "JS実行")) {
         compat_js.lnako_aot_compat_js_eval(out, argumentsPointer(arguments), arguments.len);
-        syncSore(runtime, out, start_epoch);
         return;
     }
     if (std.mem.eql(u8, cmd_name, "JS関数実行")) {
         compat_js.lnako_aot_compat_js_call(out, argumentsPointer(arguments), arguments.len);
-        syncSore(runtime, out, start_epoch);
         return;
     }
     if (std.mem.eql(u8, cmd_name, "JSオブジェクト取得")) {
         compat_js.lnako_aot_compat_js_object_get(out, argumentsPointer(arguments), arguments.len);
-        syncSore(runtime, out, start_epoch);
         return;
     }
     if (std.mem.eql(u8, cmd_name, "JSメソッド実行")) {
         compat_js.lnako_aot_compat_js_method_call(out, argumentsPointer(arguments), arguments.len);
-        syncSore(runtime, out, start_epoch);
         return;
     }
 
@@ -216,7 +410,6 @@ pub fn execCompatBuiltin(runtime: *Runtime, cmd_name: []const u8, arguments: []c
             return;
         }
         out.* = arguments[arguments.len - 1];
-        syncSore(runtime, out, start_epoch);
         return;
     }
 
@@ -224,9 +417,23 @@ pub fn execCompatBuiltin(runtime: *Runtime, cmd_name: []const u8, arguments: []c
     // 実行時に解決する。`dynamic.zig` 側は QuickJS を一切 import しないため、
     // この経路を compat 専用 module に閉じ込めても通常 AOT の分離は崩れない。
     const command = aot_builtin.lookup(cmd_name) orelse {
-        execCompatPluginBuiltin(runtime, cmd_name, arguments, out, start_epoch);
+        execCompatPluginBuiltin(runtime, cmd_name, arguments, out);
         return;
     };
+    if ((command == .maximum or command == .minimum) and arguments.len == 0) {
+        out.* = state.numberValue(if (command == .maximum) -std.math.inf(f64) else std.math.inf(f64));
+        return;
+    }
+    // インタプリタの plugin 群は不足実引数を `.undefined` として扱うが、AOT 汎用
+    // call site 等は呼び出し元 arity 検査を前提に `InvalidArgumentCount` を返す。
+    // `sys.__exec` 経由では最小必要数まで `.undefined` を補って一致させる。
+    var padded_storage: [4]Value = .{ undefined_value, undefined_value, undefined_value, undefined_value };
+    const min_args = minCommandArgs(command);
+    const call_args: []const Value = if (arguments.len < min_args) blk: {
+        @memcpy(padded_storage[0..arguments.len], arguments);
+        break :blk padded_storage[0..min_args];
+    } else arguments;
+
     switch (command) {
         // カテゴリ 2: 専用 ABI を持つ正規表現命令。
         .regexp_match, .regexp_extract, .regexp_replace, .regexp_split => {
@@ -239,12 +446,11 @@ pub fn execCompatBuiltin(runtime: *Runtime, cmd_name: []const u8, arguments: []c
             debug.lnako_aot_regexp_call_site(
                 out,
                 capture_ptr,
-                argumentsPointer(arguments),
-                arguments.len,
+                argumentsPointer(call_args),
+                call_args.len,
                 @backingInt(command),
                 0,
             );
-            syncSore(runtime, out, start_epoch);
             return;
         },
         // カテゴリ 2: はてな実行。
@@ -254,14 +460,13 @@ pub fn execCompatBuiltin(runtime: *Runtime, cmd_name: []const u8, arguments: []c
             const log_ptr = log_slot.bindAndPtr();
             debug.lnako_aot_hatena_execute(
                 out,
-                lastArgument(arguments),
+                lastArgument(call_args),
                 0,
                 null,
                 0,
                 log_ptr,
                 0,
             );
-            syncSore(runtime, out, start_epoch);
             return;
         },
         // カテゴリ 3: `対象` を更新する切取命令。
@@ -273,12 +478,11 @@ pub fn execCompatBuiltin(runtime: *Runtime, cmd_name: []const u8, arguments: []c
             state.lnako_aot_cut_site(
                 out,
                 target_ptr,
-                argumentsPointer(arguments),
-                arguments.len,
+                argumentsPointer(call_args),
+                call_args.len,
                 mode,
                 0,
             );
-            syncSore(runtime, out, start_epoch);
             return;
         },
         // カテゴリ 3: プラグイン名・名前空間の管理命令。
@@ -291,14 +495,13 @@ pub fn execCompatBuiltin(runtime: *Runtime, cmd_name: []const u8, arguments: []c
             const namespace_ptr = namespace_slot.bindAndPtr();
             debug.lnako_aot_plugin_management_call(
                 out,
-                argumentsPointer(arguments),
-                arguments.len,
+                argumentsPointer(call_args),
+                call_args.len,
                 @backingInt(command),
                 plugin_ptr,
                 namespace_ptr,
                 0,
             );
-            syncSore(runtime, out, start_epoch);
             return;
         },
         // カテゴリ 3: `表示ログ` を更新する stdio 命令。
@@ -309,12 +512,11 @@ pub fn execCompatBuiltin(runtime: *Runtime, cmd_name: []const u8, arguments: []c
             debug.lnako_aot_stdio_call(
                 out,
                 log_ptr,
-                argumentsPointer(arguments),
-                arguments.len,
+                argumentsPointer(call_args),
+                call_args.len,
                 @backingInt(command),
                 0,
             );
-            syncSore(runtime, out, start_epoch);
             return;
         },
         // カテゴリ 3: `表示ログ` を更新するデバッグ表示。
@@ -324,14 +526,13 @@ pub fn execCompatBuiltin(runtime: *Runtime, cmd_name: []const u8, arguments: []c
             const log_ptr = log_slot.bindAndPtr();
             debug.lnako_aot_debug_display(
                 out,
-                lastArgument(arguments),
+                lastArgument(call_args),
                 0,
                 null,
                 0,
                 log_ptr,
                 0,
             );
-            syncSore(runtime, out, start_epoch);
             return;
         },
         // カテゴリ 2: 圧縮解凍ツールパスの設定。
@@ -340,12 +541,11 @@ pub fn execCompatBuiltin(runtime: *Runtime, cmd_name: []const u8, arguments: []c
             defer tool_slot.finish();
             control_flow.lnako_aot_archive_tool_path_set(
                 out,
-                argumentsPointer(arguments),
-                arguments.len,
+                argumentsPointer(call_args),
+                call_args.len,
                 tool_slot.bindAndPtr(),
                 0,
             );
-            syncSore(runtime, out, start_epoch);
             return;
         },
         // カテゴリ 2: AJAX の既定オプション設定。
@@ -354,12 +554,11 @@ pub fn execCompatBuiltin(runtime: *Runtime, cmd_name: []const u8, arguments: []c
             defer options_slot.finish();
             control_flow.lnako_aot_ajax_options_set(
                 out,
-                argumentsPointer(arguments),
-                arguments.len,
+                argumentsPointer(call_args),
+                call_args.len,
                 options_slot.bindAndPtr(),
                 0,
             );
-            syncSore(runtime, out, start_epoch);
             return;
         },
         // カテゴリ 2: AJAX の失敗ハンドラ設定。
@@ -372,12 +571,11 @@ pub fn execCompatBuiltin(runtime: *Runtime, cmd_name: []const u8, arguments: []c
             defer onerror_slot.finish();
             control_flow.lnako_aot_ajax_onerror_set(
                 out,
-                argumentsPointer(arguments),
-                arguments.len,
+                argumentsPointer(call_args),
+                call_args.len,
                 onerror_slot.bindAndPtr(),
                 0,
             );
-            syncSore(runtime, out, start_epoch);
             return;
         },
         // カテゴリ 2: 標準入力取得時のコールバック（同一ターンで同期実行）。
@@ -387,12 +585,11 @@ pub fn execCompatBuiltin(runtime: *Runtime, cmd_name: []const u8, arguments: []c
             control_flow.lnako_aot_node_stdin_callback_call(
                 out,
                 target_slot.bindAndPtr(),
-                argumentsPointer(arguments),
-                arguments.len,
+                argumentsPointer(call_args),
+                call_args.len,
                 @backingInt(command),
                 0,
             );
-            syncSore(runtime, out, start_epoch);
             return;
         },
         // カテゴリ 3: デバッグのブレイクポイント待機。
@@ -411,12 +608,11 @@ pub fn execCompatBuiltin(runtime: *Runtime, cmd_name: []const u8, arguments: []c
                 force_wait_slot.bindAndPtr(),
                 wait_flag_slot.bindAndPtr(),
                 plugin_slot.bindAndPtr(),
-                argumentsPointer(arguments),
-                arguments.len,
+                argumentsPointer(call_args),
+                call_args.len,
                 @backingInt(command),
                 0,
             );
-            syncSore(runtime, out, start_epoch);
             return;
         },
         // カテゴリ 3: タイマー。`対象` は `秒後` / `秒毎` の非同期
@@ -430,18 +626,17 @@ pub fn execCompatBuiltin(runtime: *Runtime, cmd_name: []const u8, arguments: []c
                 control_flow.lnako_aot_timer_call_site(
                     out,
                     target_ptr,
-                    argumentsPointer(arguments),
-                    arguments.len,
+                    argumentsPointer(call_args),
+                    call_args.len,
                     @backingInt(command),
                     0,
                 );
             } else {
-                out.* = state.timerBuiltin(runtime, command, arguments, null) catch |failure| {
+                out.* = state.timerBuiltin(runtime, command, call_args, null) catch |failure| {
                     runtime.setFailure(failure);
                     return;
                 };
             }
-            syncSore(runtime, out, start_epoch);
             return;
         },
         // カテゴリ 3: Promise。`そ` は呼出し中だけ読み書きされるが、
@@ -457,18 +652,17 @@ pub fn execCompatBuiltin(runtime: *Runtime, cmd_name: []const u8, arguments: []c
                     out,
                     so_ptr,
                     target_ptr,
-                    argumentsPointer(arguments),
-                    arguments.len,
+                    argumentsPointer(call_args),
+                    call_args.len,
                     @backingInt(command),
                     0,
                 );
             } else {
-                out.* = state.promiseAotBuiltin(runtime, command, arguments, so_ptr, null) catch |failure| {
+                out.* = state.promiseAotBuiltin(runtime, command, call_args, so_ptr, null) catch |failure| {
                     if (!runtime.has_pending_exception) runtime.setFailure(failure);
                     return;
                 };
             }
-            syncSore(runtime, out, start_epoch);
             return;
         },
         else => {
@@ -490,12 +684,11 @@ pub fn execCompatBuiltin(runtime: *Runtime, cmd_name: []const u8, arguments: []c
                     options_slot.bindAndPtr(),
                     onerror_slot.static_slot,
                     target_slot.static_slot,
-                    argumentsPointer(arguments),
-                    arguments.len,
+                    argumentsPointer(call_args),
+                    call_args.len,
                     @backingInt(command),
                     0,
                 );
-                syncSore(runtime, out, start_epoch);
                 return;
             }
             // カテゴリ 2: 圧縮解凍の実行命令。
@@ -505,12 +698,11 @@ pub fn execCompatBuiltin(runtime: *Runtime, cmd_name: []const u8, arguments: []c
                 control_flow.lnako_aot_archive_call(
                     out,
                     tool_slot.bindAndPtr(),
-                    argumentsPointer(arguments),
-                    arguments.len,
+                    argumentsPointer(call_args),
+                    call_args.len,
                     @backingInt(command),
                     0,
                 );
-                syncSore(runtime, out, start_epoch);
                 return;
             }
             // カテゴリ 3: 同期ファイル操作。コピー既定動作は可変グローバル。
@@ -520,12 +712,11 @@ pub fn execCompatBuiltin(runtime: *Runtime, cmd_name: []const u8, arguments: []c
                 control_flow.lnako_aot_file_operation_call(
                     out,
                     mode_slot.bindAndPtr(),
-                    argumentsPointer(arguments),
-                    arguments.len,
+                    argumentsPointer(call_args),
+                    call_args.len,
                     @backingInt(command),
                     0,
                 );
-                syncSore(runtime, out, start_epoch);
                 return;
             }
             // カテゴリ 3: ファイル操作の進捗コールバック。`対象` は非同期の
@@ -537,18 +728,17 @@ pub fn execCompatBuiltin(runtime: *Runtime, cmd_name: []const u8, arguments: []c
                     control_flow.lnako_aot_node_file_callback_call(
                         out,
                         target_ptr,
-                        argumentsPointer(arguments),
-                        arguments.len,
+                        argumentsPointer(call_args),
+                        call_args.len,
                         @backingInt(command),
                         0,
                     );
                 } else {
-                    out.* = state.nodeFileCallbackBuiltin(runtime, null, command, arguments) catch |failure| {
+                    out.* = state.nodeFileCallbackBuiltin(runtime, null, command, call_args) catch |failure| {
                         runtime.setFailure(failure);
                         return;
                     };
                 }
-                syncSore(runtime, out, start_epoch);
                 return;
             }
             // カテゴリ 3: 簡易 HTTP サーバ。受信コールバックが
@@ -570,8 +760,8 @@ pub fn execCompatBuiltin(runtime: *Runtime, cmd_name: []const u8, arguments: []c
                     get_slot.bindAndPtr(),
                     post_slot.bindAndPtr(),
                     files_slot.bindAndPtr(),
-                    argumentsPointer(arguments),
-                    arguments.len,
+                    argumentsPointer(call_args),
+                    call_args.len,
                     @backingInt(command),
                     0,
                 );
@@ -580,7 +770,6 @@ pub fn execCompatBuiltin(runtime: *Runtime, cmd_name: []const u8, arguments: []c
                 {
                     runtime.http_globals = prev_http_globals;
                 }
-                syncSore(runtime, out, start_epoch);
                 return;
             }
             // カテゴリ 4: 汎用 call site が処理できる命令。
@@ -590,12 +779,11 @@ pub fn execCompatBuiltin(runtime: *Runtime, cmd_name: []const u8, arguments: []c
             }
             builtins.lnako_aot_builtin_call_site(
                 out,
-                argumentsPointer(arguments),
-                arguments.len,
+                argumentsPointer(call_args),
+                call_args.len,
                 @backingInt(command),
                 0,
             );
-            syncSore(runtime, out, start_epoch);
             return;
         },
     }

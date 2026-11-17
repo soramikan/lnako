@@ -129,6 +129,26 @@ test "非同期命令のないモジュールは軽量event drainを出力する
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_runtime_drain_events()\n") == null);
 }
 
+test "compat-js有効時は静的非同期命令が無くても完全なevent drainを出力する" {
+    const parser = @import("../../frontend/parser.zig");
+    const semantic = @import("../../semantic/analyzer.zig");
+    const hir = @import("../../ir/hir.zig");
+    const lower = @import("../../ir/lower_ssa.zig");
+    var parsed = try parser.parse(std.testing.allocator, "A=1\nAを表示\n", "main.nako3");
+    defer parsed.deinit();
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "main.nako3");
+    defer analyzed.deinit();
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "main", "main.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower.lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+    program.compat_js = true;
+    var module = try generate(std.testing.allocator, program, "main.nako3", false);
+    defer module.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_runtime_drain_events()\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_runtime_drain_events_light()\n") == null);
+}
+
 test "文字数は専用Value ABIへ接続しgeneric builtin switchを呼ばない" {
     const parser = @import("../../frontend/parser.zig");
     const semantic = @import("../../semantic/analyzer.zig");

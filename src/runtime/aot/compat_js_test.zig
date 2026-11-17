@@ -4969,3 +4969,118 @@ test "compat AOT runtimeはsys.__execでESM plugin命令とplugin内sys.__exec�
     );
     try std.testing.expect(!active.has_pending_exception);
 }
+
+fn nakoCatchAndReturn42(out: *Value, _: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {
+    const runtime = if (state.active_runtime) |*active| active else return;
+    runtime.setFailure(error.InvalidArgumentCount);
+    _ = runtime.takeException();
+    out.* = state.numberValue(42);
+}
+
+fn nakoNestedJsCatchAndReturn7(out: *Value, _: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {
+    const runtime = if (state.active_runtime) |*active| active else return;
+    const source_units = std.unicode.utf8ToUtf16LeAlloc(
+        std.testing.allocator,
+        "(function(){try{sys.__exec('存在しない命令', []);return -1;}catch(e){return 7;}})()",
+    ) catch return;
+    defer std.testing.allocator.free(source_units);
+    var argument = runtime.createString(source_units) catch return;
+    var eval_out: Value = .{};
+    lnako_aot_compat_js_eval(&eval_out, @ptrCast(&argument), 1);
+    out.* = eval_out;
+}
+
+test "compat AOT runtimeは捕捉済み例外をsys.__exec・callback境界で再送出しない" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+
+    var roots = [_]Value{ .{}, .{} };
+    var frame: state.RootFrame = .{};
+    pushTestRoots(active, &frame, &roots);
+    defer active.popRoots(&frame);
+    roots[0] = try active.createFunction(nakoCatchAndReturn42, 0, &.{});
+    roots[1] = try active.createFunction(nakoNestedJsCatchAndReturn7, 0, &.{});
+    registerTestGlobalSlot(active, "捕捉確認", &roots[0]);
+    registerTestGlobalSlot(active, "内側捕捉", &roots[1]);
+
+    // Nako 側でエラー監視相当の捕捉を行った後も failure_epoch の増加だけで
+    // InternalError を再送出しない。
+    try expectQuickJsNumber(active, "sys.__exec('捕捉確認', [])", 42);
+    try std.testing.expect(!active.has_pending_exception);
+
+    // JS関数実行経由のコールバックでも同様。
+    var call_args = [_]Value{ roots[0], .{} };
+    var call_frame: state.RootFrame = .{};
+    pushTestRoots(active, &call_frame, &call_args);
+    defer active.popRoots(&call_frame);
+    const cb_source = try testString(active, "(cb) => cb()");
+    var inner_args = [_]Value{roots[0]};
+    var packed_args: Value = .{};
+    state.lnako_aot_array_new(&packed_args, &inner_args, inner_args.len);
+    call_args[0] = cb_source;
+    call_args[1] = packed_args;
+    var call_out: Value = .{};
+    lnako_aot_compat_js_call(&call_out, &call_args, call_args.len);
+    try std.testing.expect(!active.has_pending_exception);
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.number)), call_out.tag);
+    try std.testing.expectEqual(@as(f64, 42), @as(f64, @bitCast(call_out.payload)));
+
+    // 内側の JS実行 が JS try/catch で例外を処理した場合も 7 をそのまま返す。
+    try expectQuickJsNumber(active, "sys.__exec('内側捕捉', [])", 7);
+    try std.testing.expect(!active.has_pending_exception);
+}
+
+test "compat AOT runtimeはsys.__execでそれと省略引数をインタプリタと一致させる" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer lnako_aot_compat_deinit();
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+
+    var slots = [_]Value{ .{}, .{}, .{} };
+    var frame: state.RootFrame = .{};
+    pushTestRoots(active, &frame, &slots);
+    defer active.popRoots(&frame);
+    slots[2] = try testString(active, "");
+    registerTestGlobalSlot(active, "それ", &slots[0]);
+    registerTestGlobalSlot(active, "対象", &slots[1]);
+    registerTestGlobalSlot(active, "表示ログ", &slots[2]);
+
+    // `sys.__exec` 単体は `それ` を書き換えないが、`表示ログ` や `対象` は同期する。
+    try expectQuickJsNumber(active, "sys.__setSore(99); sys.__exec('足', [1, 2]); sys.__getSore()", 99);
+    try expectQuickJsNumber(active, "sys.__setSore(99); sys.__exec('表示', ['log']); sys.__getSore()", 99);
+    try expectQuickJsString(active, "sys.__getSysVar('表示ログ')", "log\n");
+    try expectQuickJsNumber(active, "sys.__setSore(99); sys.__exec('切取', ['A=B', '=']); sys.__getSore()", 99);
+    try expectQuickJsString(active, "sys.__getSysVar('対象')", "B");
+
+    // 省略引数はインタプリタと同様に既定値 / undefined として扱う。
+    const add_empty = try evalCompatJs(active, "sys.__exec('足', [])");
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.number)), add_empty.tag);
+    try std.testing.expect(std.math.isNan(@as(f64, @bitCast(add_empty.payload))));
+    const max_val = try evalCompatJs(active, "sys.__exec('最大値', [])");
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.number)), max_val.tag);
+    try std.testing.expectEqual(-std.math.inf(f64), @as(f64, @bitCast(max_val.payload)));
+    const min_val = try evalCompatJs(active, "sys.__exec('最小値', [])");
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.number)), min_val.tag);
+    try std.testing.expectEqual(std.math.inf(f64), @as(f64, @bitCast(min_val.payload)));
+    try expectQuickJsString(active, "sys.__exec('切取', ['abc'])", "abc");
+    try expectQuickJsString(active, "sys.__exec('置換', ['aba', 'a'])", ",b,");
+    try expectQuickJsString(active, "sys.__exec('正規表現置換', ['aba', 'a'])", "undefinedbundefined");
+
+    var throw_out: Value = .{};
+    compat.execCompatBuiltin(active, "エラー発生", &.{}, &throw_out);
+    try expectPendingFailureContains(active, "エラー");
+}

@@ -180,6 +180,7 @@ pub const Emitter = struct {
     /// 無ければ生成コードは軽量drainを呼び、timer/process/archive/http等の
     /// 実装への参照が消えてdead-stripできる。
     pub fn usesAsyncEvents(self: *Emitter) !bool {
+        if (self.hasCompatJsVariableBridge()) return true;
         const commands = try self.usedCommands();
         var iterator = commands.iterator();
         while (iterator.next()) |command| if (isAsyncEventCommand(command)) return true;

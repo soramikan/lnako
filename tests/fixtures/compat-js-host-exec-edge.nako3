@@ -1,0 +1,41 @@
+# `sys.__exec` の例外捕捉伝播、`それ` 非破壊、省略引数パリティを固定する。
+# AOT とインタプリタの完全一致を tools/check_aot_quickjs_separation.mjs が検証する。
+
+# 1. Nako 側の `エラー監視` で捕捉した後に正常値を返しても外側が再送出しない。
+●捕捉関数()
+  エラー監視
+    エラー発生("内部エラー")
+  エラーならば
+    それは42
+  ここまで
+ここまで
+捕捉クロージャ=関数()
+  エラー監視
+    エラー発生("内部エラー")
+  エラーならば
+    それは42
+  ここまで
+ここまで
+JS実行(『sys.__exec("捕捉関数",[])』)を表示
+JS関数実行("(cb)=>cb()", [捕捉クロージャ])を表示
+
+# 2. 内側の `JS実行` で JS の try/catch により処理した場合も外側が再送出しない。
+●内側JS捕捉()
+  それはJS実行(『(function(){ try { sys.__exec("存在しない命令",[]); } catch (e) { return 7; } })()』)
+ここまで
+JS実行(『sys.__exec("内側JS捕捉",[])』)を表示
+
+# 3. `sys.__exec` は `それ` を書き換えないが、`表示ログ` や `対象` は同期する。
+JS実行(『sys.__setSore(99); sys.__exec("足",[1,2]); sys.__getSore()』)を表示
+JS実行(『sys.__setSore(99); sys.__exec("表示",["log"]); [sys.__getSore(), sys.__getSysVar("表示ログ").endsWith("log\n")].join(":")』)を表示
+JS実行(『sys.__setSore(99); sys.__exec("切取",["A=B","="]); sys.__getSore()』)を表示
+JS実行(『[sys.__getSore(), sys.__getSysVar("対象")].join(":")』)を表示
+
+# 4. 省略引数はインタプリタと同じ既定値 / undefined 振る舞いになる。
+JS実行(『(function(){try{sys.__exec("エラー発生",[]);return "no";}catch(e){return e.name;}})()』)を表示
+JS実行(『String(sys.__exec("最大値",[]))』)を表示
+JS実行(『String(sys.__exec("最小値",[]))』)を表示
+JS実行(『sys.__exec("足",[])』)を表示
+JS実行(『sys.__exec("切取",["abc"])』)を表示
+JS実行(『sys.__exec("置換",["aba","a"])』)を表示
+JS実行(『sys.__exec("正規表現置換",["aba","a"])』)を表示
