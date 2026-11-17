@@ -1,0 +1,8 @@
+# ESM plugin 命令を AOT codegen ではなく実行時の `sys.__exec` から呼ぶ。
+# plugin 内の `sys.__exec` がビルトイン（足）と別 plugin 命令（加算）を
+# 呼ぶ経路を、AOT とインタプリタの stdout 一致で固定する。
+!「compat_js_exec_plugin.mjs」を取り込む
+JS実行(『sys.__exec("表示ログクリア")』)
+JS実行(『sys.__exec("加算",[])』)を表示
+JS実行(『sys.__exec("委譲",[])』)を表示
+JS実行(『sys.__exec("表示委譲",[])』)を表示

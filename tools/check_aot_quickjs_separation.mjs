@@ -319,6 +319,56 @@ try {
   }
   expectEqual((hostExecAot.stdout ?? "").trim(), "12", "sys.__execのAOT結果");
 
+  // Issue #282 Unit 2: `sys.__exec` の Node / 非同期 / HTTP / プラグイン命令を
+  // AOTとインタプリタの2者一致で固定する。`tests/fixtures/compat-js-host.nako3`
+  // は evidence hash 保護のため変更せず、専用 fixture を新設している。
+  // Promise 値そのものは QuickJS bridge を越えられないため、`動時` / `束` /
+  // `成功時` の成功経路は compat_js_test.zig の単体テストが担当し、ここでは
+  // 両経路が同じ InternalError になることを固定する。
+  const hostExecParityFixtures = [
+    [
+      "sys.__execコア命令（ユーザ関数・ローカルシャドーイング・暗黙変数）",
+      "compat-js-host-exec-core.nako3",
+      "42\n12\n42\nhello\n42\n12\n42\nhello\n\nA\nB\n123\n123\n1\n3\n5\n9\n9",
+    ],
+    [
+      "sys.__exec Node命令（ファイル・タイマー・Promise）",
+      "compat-js-host-exec-node.nako3",
+      "0\n0\ncopied.nako3\nInternalError\n上書き\ntrue\nstopped\nInternalError\nInternalError\nInternalError\ndeleted",
+    ],
+    [
+      "sys.__exec再入（なでしこ関数→JS実行→sys.__exec・例外捕捉後の継続）",
+      "compat-js-host-exec-reentrant.nako3",
+      "7\n8\n11\ncaught:InternalError\nok",
+    ],
+    [
+      "ESM plugin命令のsys.__exec（plugin内sys.__execからのビルトイン・別命令呼出し）",
+      "compat-js-host-exec-plugin.nako3",
+      "42\n42\nplugin\nplugin",
+    ],
+  ];
+  for (const [index, [label, fixture, expected]] of hostExecParityFixtures.entries()) {
+    const fixturePath = join(root, "tests", "fixtures", fixture);
+    const interpreter = spawnSync(compiler, ["run", fixturePath, "--compat-js"], { encoding: "utf8" });
+    if (interpreter.status !== 0) {
+      fail(`${label}fixtureのインタプリタ実行が失敗しました: ${interpreter.stdout}${interpreter.stderr}`);
+      continue;
+    }
+    const binary = join(work, `compat-js-host-exec-parity-${index}`);
+    runCompiler(fixturePath, binary, ["--compat-js", "--backend", "aot"]);
+    const output = runBinary(binary);
+    expectEqual(output, interpreter.stdout.trim(), `${label}のAOT/インタプリタ一致`);
+    expectEqual(output, expected, `${label}の期待出力`);
+  }
+  // plugin 命令は AOT codegen ではなく実行時 dispatch で解決されるため、
+  // ESM plugin fixture の成果物にも compat ABI が含まれることを確認する。
+  const pluginExecSymbols = listSymbols(join(work, "compat-js-host-exec-parity-3"));
+  for (const required of ["lnako_qjs_", "lnako_aot_compat_js_eval"]) {
+    if (!pluginExecSymbols.some((symbol) => symbol.includes(required))) {
+      fail(`ESM pluginのsys.__exec成果物に ${required} がありません`);
+    }
+  }
+
   // `JS関数実行` の full 変換（ネスト配列・辞書、関数値、BigInt、bytes、循環、
   // 疎配列、Promise解決値）と、`JSオブジェクト取得` / `JSメソッド実行` の
   // 制限付き結果変換（ネスト配列・辞書、関数値、bytes、循環）を
