@@ -724,7 +724,10 @@ pub fn hasCallableCommand(state: *State, allocator: std.mem.Allocator, name: []c
     const engine = state.engine orelse return false;
     const resolved = (try lookupCommandDefinition(state, engine, allocator, name)) orelse return false;
     defer lnako_qjs_value_free(resolved);
-    const function = lnako_qjs_get_property(resolved, "fn") orelse return false;
+    // `fn` getter の例外は未登録ではなく失敗として返す（登録済み fallback へ
+    // 黙って流れず、`callPlugin` と同じく取得失敗を報告する）。`fn` が undefined
+    // の場合は kind 判定で false のまま。
+    const function = lnako_qjs_get_property(resolved, "fn") orelse return quickJsError(engine);
     defer lnako_qjs_value_free(function);
     return lnako_qjs_kind(function) == .function;
 }

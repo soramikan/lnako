@@ -1064,3 +1064,98 @@ test "package内の先発静的ESMと後発動的ESMは非競合時にフォー�
         try testing.expect(std.mem.indexOf(u8, host.written(), "甲:3") == null);
     }
 }
+
+test "package内の静的抽出が実登録を保証しない場合と依存ESMの自己登録でも先発pluginと依存登録の命令へ届く" {
+    if (!lnako.compat.quickjs.available()) return error.SkipZigTest;
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var temporary = test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+
+    // ghost: 後発 b.mjs は呼ばれない関数内の addPluginObject からも `外部甲` を静的抽出されるが、
+    // 実行時には登録されない。先発 a.mjs の `外部甲` へ届かなければならない。
+    try temporary.dir.createDirPath(io, "packages/ghost");
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "ghost_main.nako3",
+        .data = "!「pkg:ghost」を取り込む\n",
+    });
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "packages/ghost/index.nako3",
+        .data = "!「./a.mjs」を取り込む\n!「./b.mjs」を取り込む\n外部甲(1)を表示\n",
+    });
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "packages/ghost/a.mjs",
+        .data = "export default { 外部甲: { type: 'func', josi: [['の']], fn: (x) => `甲:${x}` } };\n",
+    });
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "packages/ghost/b.mjs",
+        .data = "export default {};\nfunction 未使用() { navigator.nako3.addPluginObject('b', { 外部甲: { type: 'func', josi: [['の']], fn: (x) => `偽:${x}` } }); }\n",
+    });
+
+    // dep: plugin.mjs の default export は空だが、依存 commands.mjs が評価時に自己登録する。
+    try temporary.dir.createDirPath(io, "packages/dep");
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "dep_main.nako3",
+        .data = "!「pkg:dep」を取り込む\n",
+    });
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "packages/dep/index.nako3",
+        .data = "!「./plugin.mjs」を取り込む\n外部甲(2)を表示\n",
+    });
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "packages/dep/plugin.mjs",
+        .data = "import './commands.mjs';\nexport default {};\n",
+    });
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "packages/dep/commands.mjs",
+        .data = "navigator.nako3.addPluginObject('commands', { 外部甲: { type: 'func', josi: [['の']], fn: (x) => `依存:${x}` } });\n",
+    });
+
+    const app_root = try temporary.dir.realPathFileAlloc(io, ".", gpa);
+    defer gpa.free(app_root);
+    const Resolver = struct {
+        root: []const u8,
+        fn resolve(context: *anyopaque, allocator: std.mem.Allocator, _: []const u8, _: ?[]const u8, specifier: []const u8) !lnako.semantic.module_graph.ResolvedPackageImport {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            const names = [_][]const u8{ "ghost", "dep" };
+            inline for (names) |name| {
+                if (std.mem.eql(u8, specifier, "pkg:" ++ name)) {
+                    return .{
+                        .path = try std.fs.path.join(allocator, &.{ self.root, "packages", name, "index.nako3" }),
+                        .canonical_id = try allocator.dupe(u8, "pkg:" ++ name ++ "/main"),
+                        .namespace = name,
+                        .package_owner = try allocator.dupe(u8, "pkg:" ++ name),
+                        .package_root = try std.fs.path.join(allocator, &.{ self.root, "packages", name }),
+                    };
+                }
+            }
+            return error.PackageNotFound;
+        }
+    };
+    var resolver = Resolver{ .root = app_root };
+
+    const cases = [_]struct { entry: []const u8, expected: []const u8 }{
+        .{ .entry = "ghost_main.nako3", .expected = "甲:1\n" },
+        .{ .entry = "dep_main.nako3", .expected = "依存:2\n" },
+    };
+    for (cases) |case| {
+        const entry_path = try std.fs.path.join(gpa, &.{ app_root, case.entry });
+        defer gpa.free(entry_path);
+        var stderr: std.Io.Writer.Allocating = .init(gpa);
+        defer stderr.deinit();
+        var program = (try compile_pipeline.compileInput(gpa, io, entry_path, .{
+            .compat_js = true,
+            .package_resolver = .{ .context = &resolver, .resolveFn = Resolver.resolve },
+        }, &stderr.writer)) orelse return error.UnexpectedCompileFailure;
+        defer program.deinit();
+
+        var runtime = lnako.runtime.value.Runtime.init(gpa);
+        defer runtime.deinit();
+        var host = lnako.runtime.interpreter.BufferHost{ .allocator = gpa };
+        defer host.deinit();
+        var interpreter = lnako.runtime.interpreter.Interpreter.init(gpa, &runtime, program, host.host());
+        defer interpreter.deinit();
+        _ = try interpreter.run();
+        try testing.expectEqualStrings(case.expected, host.written());
+    }
+}

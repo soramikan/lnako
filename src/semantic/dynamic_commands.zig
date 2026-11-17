@@ -97,9 +97,10 @@ pub const CandidateResolution = struct {
     fallback_names: []const []const u8 = &.{},
 };
 
-/// `binds` と同じ優先規則で主配送先 `resolved_name` を決めつつ、後発の
-/// `unqualified` catch-all が先発の `exact` / `unqualified` を覆い隠す場合は
-/// 実行時フォールバック候補 `fallback_names` を後勝ち順（降順）で収集する。
+/// `binds` と同じ優先規則で主配送先 `resolved_name` を決めつつ、主配送先が
+/// `unqualified` catch-all または静的抽出由来の `exact` のとき、先発の
+/// `exact` / `unqualified` を実行時フォールバック候補 `fallback_names` として
+/// 後勝ち順（降順）で収集する。
 /// 動的 ESM / native plugin に同名命令が無い非競合ケースでも先発 plugin の
 /// 命令へ到達できるようにするために使う。返却スライスと各文字列は
 /// `allocator` 所有。
@@ -114,7 +115,11 @@ pub fn bindsWithFallbacks(
     const primary = binds(allows_dynamic_commands, allows_from, aliases, name, use_position) orelse return null;
     const resolved_name = try allocDispatchName(allocator, primary, name);
     errdefer allocator.free(resolved_name);
-    if (!primary.unqualified) return .{ .resolved_name = resolved_name };
+    // 明示 prefix 呼出し・直接 plugin の恒等写像は登録名を確定できるため候補を持たない。
+    // exact 主候補は静的抽出由来で実登録の保証ではない（呼ばれない関数内の
+    // `addPluginObject` 等からも抽出される）ため、unqualified と同じく先発候補を
+    // 実行時の登録照合へ渡す。
+    if (!primary.unqualified and !primary.exact) return .{ .resolved_name = resolved_name };
 
     const CandidateEntry = struct {
         alias: DynamicCommandAlias,
@@ -220,6 +225,10 @@ pub fn appendJavaScriptPluginAliases(
     const items = tokens.items;
     var found_plugin_site = false;
     var all_static_complete = true;
+    // 依存 ESM（static/dynamic import・再export・require）は評価時に同じ active
+    // namespace へ `addPluginObject` で自己登録し得る。依存先の登録集合までは
+    // 抽出しないため、依存辺があれば完全抽出とは判定しない。
+    var has_dependency_edge = false;
     var depth: usize = 0;
     var index: usize = 0;
     while (index < items.len) : (index += 1) {
@@ -254,13 +263,30 @@ pub fn appendJavaScriptPluginAliases(
             const ok = try extractAddPluginObjectSecondArg(allocator, aliases, source, items, index + 1, dispatch_namespace, import_position);
             if (!ok) all_static_complete = false;
         }
+        if (!prev_is_dot and isModuleDependencyToken(items, index)) has_dependency_edge = true;
         if (isOpenDelim(token)) {
             depth += 1;
         } else if (isCloseDelim(token) and depth > 0) {
             depth -= 1;
         }
     }
-    return found_plugin_site and all_static_complete;
+    return found_plugin_site and all_static_complete and !has_dependency_edge;
+}
+
+/// 他モジュールの評価を引き起こす記述か。`import x from '..'` / `import '..'` /
+/// `import(..)`（`import.meta` は除く）、`export .. from '..'`、`require(..)`。
+fn isModuleDependencyToken(items: []const js_scanner.JavaScriptToken, index: usize) bool {
+    const token = items[index];
+    if (isIdent(token, "import")) {
+        return !(index + 1 < items.len and isPunct(items[index + 1], "."));
+    }
+    if (isIdent(token, "require")) {
+        return index + 1 < items.len and isPunct(items[index + 1], "(");
+    }
+    if (isIdent(token, "from")) {
+        return index + 1 < items.len and items[index + 1].kind == .string;
+    }
+    return false;
 }
 
 const ObjectExtractResult = struct {
@@ -651,7 +677,6 @@ test "appendJavaScriptPluginAliases は export default と addPluginObject か�
     const allocator = arena.allocator();
     var aliases: std.ArrayList(DynamicCommandAlias) = .empty;
     const ok = try appendJavaScriptPluginAliases(allocator, &aliases,
-        \\import { x } from "./helper.mjs";
         \\// export default { ダミー: {} }
         \\const re = /}/g;
         \\export default {
@@ -820,4 +845,73 @@ test "bindsWithFallbacks は全ての割当て失敗位置でリーク・二重�
         }
     };
     try std.testing.checkAllAllocationFailures(std.testing.allocator, Check.run, .{@as([]const DynamicCommandAlias, &aliases)});
+}
+
+test "bindsWithFallbacks は exact 主候補でも先発の exact/unqualified を実行時照合用に保持する" {
+    const allocator = std.testing.allocator;
+    const aliases = [_]DynamicCommandAlias{
+        .{ .source_namespace = "外部甲", .dispatch_namespace = "pkg:a:a.mjs__外部甲", .import_position = 10, .exact = true },
+        .{ .source_namespace = "", .dispatch_namespace = "pkg:a:dyn.mjs", .import_position = 20, .unqualified = true },
+        .{ .source_namespace = "外部甲", .dispatch_namespace = "pkg:a:b.mjs__外部甲", .import_position = 30, .exact = true },
+        .{ .source_namespace = "b.mjs", .dispatch_namespace = "pkg:a:b.mjs", .import_position = 30 },
+    };
+
+    const resolved = (try bindsWithFallbacks(allocator, false, 0, &aliases, "外部甲", 40)) orelse return error.TestUnexpectedResult;
+    defer {
+        allocator.free(resolved.resolved_name);
+        for (resolved.fallback_names) |item| allocator.free(item);
+        allocator.free(resolved.fallback_names);
+    }
+    try std.testing.expectEqualStrings("pkg:a:b.mjs__外部甲", resolved.resolved_name);
+    try std.testing.expectEqual(@as(usize, 2), resolved.fallback_names.len);
+    try std.testing.expectEqualStrings("pkg:a:dyn.mjs__外部甲", resolved.fallback_names[0]);
+    try std.testing.expectEqualStrings("pkg:a:a.mjs__外部甲", resolved.fallback_names[1]);
+
+    // 先発しか持たない命令は先発 exact が主候補になり、他 plugin の候補は付かない。
+    const only_first = (try bindsWithFallbacks(allocator, false, 0, aliases[0..1], "外部甲", 40)) orelse return error.TestUnexpectedResult;
+    defer {
+        allocator.free(only_first.resolved_name);
+        for (only_first.fallback_names) |item| allocator.free(item);
+        allocator.free(only_first.fallback_names);
+    }
+    try std.testing.expectEqualStrings("pkg:a:a.mjs__外部甲", only_first.resolved_name);
+    try std.testing.expectEqual(@as(usize, 0), only_first.fallback_names.len);
+
+    // 明示 prefix 呼出しは exact 候補を持たず、先発へフォールバックしない（隔離の維持）。
+    const prefixed = (try bindsWithFallbacks(allocator, false, 0, &aliases, "b.mjs__外部甲", 40)) orelse return error.TestUnexpectedResult;
+    defer {
+        allocator.free(prefixed.resolved_name);
+        for (prefixed.fallback_names) |item| allocator.free(item);
+        allocator.free(prefixed.fallback_names);
+    }
+    try std.testing.expectEqualStrings("pkg:a:b.mjs__外部甲", prefixed.resolved_name);
+    try std.testing.expectEqual(@as(usize, 0), prefixed.fallback_names.len);
+}
+
+test "appendJavaScriptPluginAliases は依存ESMの評価を引き起こす記述があれば完全抽出と判定しない" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const dependent_sources = [_][]const u8{
+        "import './commands.mjs';\nexport default {};",
+        "import helper from './helper.mjs';\nexport default { 外部甲: { type: 'func', fn: () => helper } };",
+        "export * from './commands.mjs';\nexport default { 外部甲: { type: 'func', fn: () => 1 } };",
+        "export { x } from './commands.mjs';\nexport default {};",
+        "export default {};\nimport('./commands.mjs');",
+        "const m = require('./commands.mjs');\nexport default {};",
+    };
+    for (dependent_sources) |source| {
+        var aliases: std.ArrayList(DynamicCommandAlias) = .empty;
+        try std.testing.expect(!try appendJavaScriptPluginAliases(allocator, &aliases, source, "pkg:test:dep.mjs", 10));
+    }
+
+    // 依存辺が無ければ従来どおり完全抽出できる。`import.meta` や `.import` メンバは依存ではない。
+    const independent_sources = [_][]const u8{
+        "export default {};",
+        "const here = import.meta.url;\nexport default { 外部甲: { type: 'func', fn: () => here } };",
+    };
+    for (independent_sources) |source| {
+        var aliases: std.ArrayList(DynamicCommandAlias) = .empty;
+        try std.testing.expect(try appendJavaScriptPluginAliases(allocator, &aliases, source, "pkg:test:ok.mjs", 10));
+    }
 }

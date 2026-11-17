@@ -104,6 +104,9 @@ fn instructionMayThrow(program: ir.Program, instruction: ir.Instruction, summari
         .iterator_next,
         .iterator_has_next,
         => true,
+        // plugin フォールバック参照は全候補未登録で UnknownFunction を保留例外にし得る
+        // ため、直後の例外確認の handler 辺を到達不能と見なさない。
+        .make_closure => instruction.dynamic_call and instruction.fallback_names.len > 0,
         else => false,
     };
 }
