@@ -1834,3 +1834,36 @@ test "package内の複数ESM plugin取り込みは先発pluginの無修飾命令
     defer undefined_program.deinit();
     try std.testing.expect(!undefined_program.succeeded());
 }
+
+test "package内のESM pluginが依存package名と同名のexact命令を持ってもpkg取り込みのprefix aliasを阻害しない" {
+    var memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "!「pkg:math」を取り込む\n" },
+        .{ .suffix = "packages/math/index.nako3", .source = "!「./a.mjs」を取り込む\n!「pkg:esm」を取り込む\nesm()\nesm__外部追加(1)\n" },
+        .{ .suffix = "packages/math/a.mjs", .source = "export default { esm: { type: 'func', fn: () => 1 } };" },
+        .{ .suffix = "packages/esm/plugin.mjs", .source = "export default { 外部追加: { type: 'func', fn: (x) => x } };" },
+    } };
+    var package_resolver = PackageTestResolver{};
+    var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{
+        .compat_js = true,
+        .package_resolver = package_resolver.resolver(),
+    });
+    defer graph.deinit();
+    try std.testing.expect(graph.succeeded());
+
+    var program = try graph.analyze(std.testing.allocator);
+    defer program.deinit();
+    try std.testing.expect(program.succeeded());
+    var saw_exact = false;
+    var saw_prefixed = false;
+    for (program.bindings) |binding| {
+        if (binding.kind != .builtin or !binding.dynamic_builtin) continue;
+        if (std.mem.eql(u8, binding.name, "esm") and
+            std.mem.eql(u8, binding.resolved_name, "pkg:math-id:a.mjs__esm"))
+            saw_exact = true;
+        if (std.mem.eql(u8, binding.name, "esm__外部追加") and
+            std.mem.eql(u8, binding.resolved_name, "esm__外部追加"))
+            saw_prefixed = true;
+    }
+    try std.testing.expect(saw_exact);
+    try std.testing.expect(saw_prefixed);
+}
