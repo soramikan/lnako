@@ -1111,13 +1111,43 @@ test "package内の静的抽出が実登録を保証しない場合と依存ESM�
         .data = "navigator.nako3.addPluginObject('commands', { 外部甲: { type: 'func', josi: [['の']], fn: (x) => `依存:${x}` } });\n",
     });
 
+    // indirect: addPluginObject を別名経由で呼出し + 空 default export。
+    try temporary.dir.createDirPath(io, "packages/indirect");
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "indirect_main.nako3",
+        .data = "!「pkg:indirect」を取り込む\n",
+    });
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "packages/indirect/index.nako3",
+        .data = "!「./plugin.mjs」を取り込む\n外部甲(3)を表示\n",
+    });
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "packages/indirect/plugin.mjs",
+        .data = "const register = navigator.nako3.addPluginObject;\nregister('p', { 外部甲: { type: 'func', josi: [['の']], fn: (x) => `別名:${x}` } });\nexport default {};\n",
+    });
+
+    // getter: `get [key]() { ... }` 算出プロパティ名 getter による定義。
+    try temporary.dir.createDirPath(io, "packages/getter");
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "getter_main.nako3",
+        .data = "!「pkg:getter」を取り込む\n",
+    });
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "packages/getter/index.nako3",
+        .data = "!「./plugin.mjs」を取り込む\n外部甲(4)を表示\n",
+    });
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "packages/getter/plugin.mjs",
+        .data = "const key = '外部甲';\nexport default { get [key]() { return { type: 'func', josi: [['の']], fn: (x) => `算出:${x}` }; } };\n",
+    });
+
     const app_root = try temporary.dir.realPathFileAlloc(io, ".", gpa);
     defer gpa.free(app_root);
     const Resolver = struct {
         root: []const u8,
         fn resolve(context: *anyopaque, allocator: std.mem.Allocator, _: []const u8, _: ?[]const u8, specifier: []const u8) !lnako.semantic.module_graph.ResolvedPackageImport {
             const self: *@This() = @ptrCast(@alignCast(context));
-            const names = [_][]const u8{ "ghost", "dep" };
+            const names = [_][]const u8{ "ghost", "dep", "indirect", "getter" };
             inline for (names) |name| {
                 if (std.mem.eql(u8, specifier, "pkg:" ++ name)) {
                     return .{
@@ -1137,6 +1167,8 @@ test "package内の静的抽出が実登録を保証しない場合と依存ESM�
     const cases = [_]struct { entry: []const u8, expected: []const u8 }{
         .{ .entry = "ghost_main.nako3", .expected = "甲:1\n" },
         .{ .entry = "dep_main.nako3", .expected = "依存:2\n" },
+        .{ .entry = "indirect_main.nako3", .expected = "別名:3\n" },
+        .{ .entry = "getter_main.nako3", .expected = "算出:4\n" },
     };
     for (cases) |case| {
         const entry_path = try std.fs.path.join(gpa, &.{ app_root, case.entry });

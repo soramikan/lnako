@@ -258,10 +258,23 @@ pub fn appendJavaScriptPluginAliases(
             } else {
                 all_static_complete = false;
             }
-        } else if (isIdent(token, "addPluginObject") and !(index > 0 and isIdent(items[index - 1], "function")) and index + 1 < items.len and isPunct(items[index + 1], "(")) {
-            found_plugin_site = true;
-            const ok = try extractAddPluginObjectSecondArg(allocator, aliases, source, items, index + 1, dispatch_namespace, import_position);
-            if (!ok) all_static_complete = false;
+        } else if (isIdent(token, "addPluginObject") and !(index > 0 and isIdent(items[index - 1], "function"))) {
+            if (index + 1 < items.len and isPunct(items[index + 1], "(")) {
+                found_plugin_site = true;
+                const ok = try extractAddPluginObjectSecondArg(allocator, aliases, source, items, index + 1, dispatch_namespace, import_position);
+                if (!ok) all_static_complete = false;
+            } else {
+                // `const reg = navigator.nako3.addPluginObject`・分割代入・`?.()`・`.call()` などの
+                // 間接参照経由の自己登録は静的抽出できないため catch-all を残す。
+                all_static_complete = false;
+            }
+        } else if ((token.kind == .string and std.mem.eql(u8, token.text, "addPluginObject")) or
+            (isIdent(token, "nako3") and ((index + 1 < items.len and isPunct(items[index + 1], "[")) or
+                (index + 3 < items.len and isPunct(items[index + 1], "?") and isPunct(items[index + 2], ".") and isPunct(items[index + 3], "[")))))
+        {
+            // `navigator.nako3['addPluginObject'](...)` や `navigator.nako3[key](...)` の
+            // ブラケット経由アクセスも間接登録の可能性があるため catch-all を残す。
+            all_static_complete = false;
         }
         if (!prev_is_dot and isModuleDependencyToken(items, index)) has_dependency_edge = true;
         if (isOpenDelim(token)) {
@@ -425,7 +438,9 @@ fn isAddPluginObjectSecondArgRef(items: []const js_scanner.JavaScriptToken, comm
                     !(pos >= 2 and isIdent(items[pos - 2], "function"));
             }
             nested -= 1;
-        } else if (nested == 0 and isPunct(token, ",")) {
+        } else if (nested == 0 and (isPunct(token, ",") or
+            (pos >= 2 and isPunct(token, ".") and isPunct(items[pos - 1], ".") and isPunct(items[pos - 2], "."))))
+        {
             return false;
         }
     }
@@ -515,6 +530,9 @@ fn extractAddPluginObjectSecondArg(
     var arg2_start: ?usize = null;
     while (pos < items.len) : (pos += 1) {
         const token = items[pos];
+        if (nested == 0 and pos + 2 < items.len and isPunct(token, ".") and isPunct(items[pos + 1], ".") and isPunct(items[pos + 2], ".")) {
+            return false;
+        }
         if (nested == 0 and isPunct(token, ",")) {
             arg2_start = pos + 1;
             break;
@@ -546,6 +564,10 @@ fn extractAddPluginObjectSecondArg(
     return false;
 }
 
+fn isPropertyNameTerminator(token: js_scanner.JavaScriptToken) bool {
+    return isPunct(token, ":") or isPunct(token, "(") or isPunct(token, ",") or isPunct(token, "}");
+}
+
 fn extractObjectLiteralKeys(
     allocator: std.mem.Allocator,
     aliases: *std.ArrayList(DynamicCommandAlias),
@@ -571,30 +593,51 @@ fn extractObjectLiteralKeys(
             pos = skipPropertyRemainder(items, pos);
             continue;
         }
-        // Skip optional generator star `*`
-        if (isPunct(items[pos], "*")) pos += 1;
-        if (pos >= items.len) return .{ .complete = false, .close_brace_index = null };
-        // Skip `get`/`set`/`async` method modifier when followed by a property name (not `:`, `(`, `,`, `}`)
-        if (items[pos].kind == .identifier and
+        // `*` または `get`/`set`/`async` 修飾子をスキップする。
+        // これらが修飾子ではなく自身のプロパティ名になるのは直後が `:`/`(`/`,`/`}` のときのみ。
+        // そのため `get [key]() {}` や `get 0() {}` でも `get` をコマンド名として誤抽出しない。
+        var has_modifier = false;
+        if (isPunct(items[pos], "*")) {
+            has_modifier = true;
+            pos += 1;
+            if (pos >= items.len) return .{ .complete = false, .close_brace_index = null };
+        } else if (items[pos].kind == .identifier and
             (std.mem.eql(u8, items[pos].text, "get") or std.mem.eql(u8, items[pos].text, "set") or std.mem.eql(u8, items[pos].text, "async")) and
             pos + 1 < items.len and
-            (items[pos + 1].kind == .identifier or items[pos + 1].kind == .string or isPunct(items[pos + 1], "*")))
+            !isPropertyNameTerminator(items[pos + 1]))
         {
+            has_modifier = true;
+            const is_async = std.mem.eql(u8, items[pos].text, "async");
             pos += 1;
-            if (isPunct(items[pos], "*")) pos += 1;
+            if (is_async and pos < items.len and isPunct(items[pos], "*")) pos += 1;
             if (pos >= items.len) return .{ .complete = false, .close_brace_index = null };
         }
+        if (isPunct(items[pos], "[")) {
+            complete = false;
+            pos = skipPropertyRemainder(items, pos);
+            continue;
+        }
         var raw_key: ?[]const u8 = null;
-        if (items[pos].kind == .identifier) {
-            raw_key = items[pos].text;
+        if (items[pos].kind == .identifier or items[pos].kind == .string) {
+            const key_token = items[pos];
             pos += 1;
-        } else if (items[pos].kind == .string) {
-            if (try unescapeSimpleString(allocator, items[pos].text)) |decoded| {
+            const valid_header = if (pos >= items.len)
+                false
+            else if (has_modifier)
+                isPunct(items[pos], "(")
+            else if (key_token.kind == .string)
+                isPunct(items[pos], ":") or isPunct(items[pos], "(")
+            else
+                isPropertyNameTerminator(items[pos]);
+            if (!valid_header) {
+                complete = false;
+            } else if (key_token.kind == .identifier) {
+                raw_key = key_token.text;
+            } else if (try unescapeSimpleString(allocator, key_token.text)) |decoded| {
                 raw_key = decoded;
             } else {
                 complete = false;
             }
-            pos += 1;
         } else {
             complete = false;
         }
@@ -914,4 +957,95 @@ test "appendJavaScriptPluginAliases は依存ESMの評価を引き起こす記�
         var aliases: std.ArrayList(DynamicCommandAlias) = .empty;
         try std.testing.expect(try appendJavaScriptPluginAliases(allocator, &aliases, source, "pkg:test:ok.mjs", 10));
     }
+}
+
+test "appendJavaScriptPluginAliases は addPluginObject の間接参照・ブラケットアクセス・可変長先頭引数を完全抽出にしない" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const indirect_sources = [_][]const u8{
+        "const register = navigator.nako3.addPluginObject; register('p', { 外部甲: { type: 'func', fn: () => 1 } }); export default {};",
+        "const { addPluginObject } = navigator.nako3; addPluginObject('p', { 外部甲: { type: 'func', fn: () => 1 } }); export default {};",
+        "const { addPluginObject: register } = navigator.nako3; register('p', { 外部甲: { type: 'func', fn: () => 1 } }); export default {};",
+        "navigator.nako3.addPluginObject?.('p', { 外部甲: { type: 'func', fn: () => 1 } }); export default {};",
+        "navigator.nako3.addPluginObject.call(navigator.nako3, 'p', { 外部甲: { type: 'func', fn: () => 1 } }); export default {};",
+        "navigator.nako3['addPluginObject']('p', { 外部甲: { type: 'func', fn: () => 1 } }); export default {};",
+        "const key = 'add' + 'PluginObject'; navigator.nako3[key]('p', { 外部甲: { type: 'func', fn: () => 1 } }); export default {};",
+        "const args = ['p', { 外部甲: { type: 'func', fn: () => 1 } }]; navigator.nako3.addPluginObject(...args, {}); export default {};",
+        "const plugin = { 外部甲: { type: 'func', fn: () => 1 } }; const args = ['p', plugin]; navigator.nako3.addPluginObject(...args, plugin);",
+    };
+    for (indirect_sources) |source| {
+        var aliases: std.ArrayList(DynamicCommandAlias) = .empty;
+        try std.testing.expect(!try appendJavaScriptPluginAliases(allocator, &aliases, source, "pkg:test:indirect.mjs", 10));
+    }
+
+    // `if (navigator.nako3)` のような存在確認 + 直接呼出しは引き続き完全抽出できる。
+    var direct_aliases: std.ArrayList(DynamicCommandAlias) = .empty;
+    const direct_ok = try appendJavaScriptPluginAliases(
+        allocator,
+        &direct_aliases,
+        "if (typeof navigator === 'object' && navigator.nako3) { navigator.nako3.addPluginObject('p', { 外部甲: { type: 'func', fn: () => 1 } }); }",
+        "pkg:test:direct.mjs",
+        10,
+    );
+    try std.testing.expect(direct_ok);
+    try std.testing.expectEqual(@as(usize, 1), direct_aliases.items.len);
+    try std.testing.expectEqualStrings("外部甲", direct_aliases.items[0].source_namespace);
+}
+
+test "appendJavaScriptPluginAliases は算出プロパティ名付き修飾子や不正ヘッダから誤った exact alias を生成しない" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const invalid_or_computed = [_][]const u8{
+        "const key = '外部甲'; export default { get [key]() { return { type: 'func', fn: () => 1 }; } };",
+        "const key = '外部甲'; export default { set [key](v) {} };",
+        "const key = '外部甲'; export default { async [key]() { return 1; } };",
+        "const key = '外部甲'; export default { async *[key]() { yield 1; } };",
+        "const key = '外部甲'; export default { *[key]() { yield 1; } };",
+        "export default { get 0() { return { type: 'func', fn: () => 1 }; } };",
+        "export default { get foo: 1 };",
+        "export default { foo\\u0041: 1 };",
+        "export default { 'foo' };",
+    };
+    for (invalid_or_computed) |source| {
+        var aliases: std.ArrayList(DynamicCommandAlias) = .empty;
+        const ok = try appendJavaScriptPluginAliases(allocator, &aliases, source, "pkg:test:hdr.mjs", 10);
+        try std.testing.expect(!ok);
+        try std.testing.expectEqual(@as(usize, 0), aliases.items.len);
+    }
+
+    // 修飾子名が自身のプロパティ名である場合と正当な修飾子付きメソッドは完全抽出できる。
+    var valid_aliases: std.ArrayList(DynamicCommandAlias) = .empty;
+    const valid_ok = try appendJavaScriptPluginAliases(allocator, &valid_aliases,
+        \\export default {
+        \\  get: { type: 'func', fn: () => 1 },
+        \\  set() { return 2; },
+        \\  async,
+        \\  get 外部甲() { return { type: 'func', fn: () => 3 }; },
+        \\  async *外部乙() { yield 4; },
+        \\};
+    , "pkg:test:valid_hdr.mjs", 10);
+    try std.testing.expect(valid_ok);
+    try std.testing.expectEqual(@as(usize, 5), valid_aliases.items.len);
+    try std.testing.expectEqualStrings("get", valid_aliases.items[0].source_namespace);
+    try std.testing.expectEqualStrings("set", valid_aliases.items[1].source_namespace);
+    try std.testing.expectEqualStrings("async", valid_aliases.items[2].source_namespace);
+    try std.testing.expectEqualStrings("外部甲", valid_aliases.items[3].source_namespace);
+    try std.testing.expectEqualStrings("外部乙", valid_aliases.items[4].source_namespace);
+
+    // `get async()` や `async get()` の組合せも正しく key 側を抽出する。
+    var combo_aliases: std.ArrayList(DynamicCommandAlias) = .empty;
+    const combo_ok = try appendJavaScriptPluginAliases(allocator, &combo_aliases,
+        \\export default {
+        \\  get async() { return { type: 'func', fn: () => 1 }; },
+        \\  async get() { return { type: 'func', fn: () => 2 }; },
+        \\};
+    , "pkg:test:combo_hdr.mjs", 10);
+    try std.testing.expect(combo_ok);
+    try std.testing.expectEqual(@as(usize, 2), combo_aliases.items.len);
+    try std.testing.expectEqualStrings("async", combo_aliases.items[0].source_namespace);
+    try std.testing.expectEqualStrings("get", combo_aliases.items[1].source_namespace);
 }
