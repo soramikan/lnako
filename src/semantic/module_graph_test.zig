@@ -1993,3 +1993,62 @@ test "package内で別ディレクトリの同名ESM pluginを取り込んでも
     try std.testing.expect(saw_first);
     try std.testing.expect(saw_second);
 }
+
+test "package内でaddPluginObjectの間接参照と算出プロパティgetterでもcatch-allを残しgetを誤抽出しない" {
+    // (1) `const register = navigator.nako3.addPluginObject` + `export default {};` でも catch-all が残る。
+    {
+        var memory = MemoryProvider{ .files = &.{
+            .{ .suffix = "main.nako3", .source = "!「pkg:math」を取り込む\n" },
+            .{ .suffix = "packages/math/index.nako3", .source = "!「./plugin.mjs」を取り込む\n外部甲(1)\n" },
+            .{ .suffix = "packages/math/plugin.mjs", .source = "const register = navigator.nako3.addPluginObject;\nregister('p', { 外部甲: { type: 'func', fn: (x) => x } });\nexport default {};\n" },
+        } };
+        var package_resolver = PackageTestResolver{};
+        var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{
+            .compat_js = true,
+            .package_resolver = package_resolver.resolver(),
+        });
+        defer graph.deinit();
+        try std.testing.expect(graph.succeeded());
+
+        var program = try graph.analyze(std.testing.allocator);
+        defer program.deinit();
+        try std.testing.expect(program.succeeded());
+        var found = false;
+        for (program.bindings) |binding| {
+            if (binding.kind != .builtin or !binding.dynamic_builtin) continue;
+            if (!std.mem.eql(u8, binding.name, "外部甲")) continue;
+            found = true;
+            try std.testing.expectEqualStrings("pkg:math-id:plugin.mjs__外部甲", binding.resolved_name);
+        }
+        try std.testing.expect(found);
+    }
+
+    // (2) `get [key]() {}` では誤った完全抽出で catch-all を落とさず、catch-all で `外部甲` を受理する。
+    {
+        var memory = MemoryProvider{ .files = &.{
+            .{ .suffix = "main.nako3", .source = "!「pkg:math」を取り込む\n" },
+            .{ .suffix = "packages/math/index.nako3", .source = "!「./plugin.mjs」を取り込む\n外部甲(1)\n" },
+            .{ .suffix = "packages/math/plugin.mjs", .source = "const key = '外部甲';\nexport default { get [key]() { return { type: 'func', fn: (x) => x }; } };\n" },
+        } };
+        var package_resolver = PackageTestResolver{};
+        var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{
+            .compat_js = true,
+            .package_resolver = package_resolver.resolver(),
+        });
+        defer graph.deinit();
+        try std.testing.expect(graph.succeeded());
+
+        var program = try graph.analyze(std.testing.allocator);
+        defer program.deinit();
+        try std.testing.expect(program.succeeded());
+        var found_cmd = false;
+        for (program.bindings) |binding| {
+            if (binding.kind != .builtin or !binding.dynamic_builtin) continue;
+            if (std.mem.eql(u8, binding.name, "外部甲")) {
+                found_cmd = true;
+                try std.testing.expectEqualStrings("pkg:math-id:plugin.mjs__外部甲", binding.resolved_name);
+            }
+        }
+        try std.testing.expect(found_cmd);
+    }
+}
