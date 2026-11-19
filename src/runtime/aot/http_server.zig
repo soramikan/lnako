@@ -115,11 +115,7 @@ pub fn httpServerBuiltin(runtime: *Runtime, command: aot_builtin.Command, argume
         .http_server_static => {
             if (arguments.len < 2) return error.InvalidArgumentCount;
             try requireAotHttpStarted(runtime);
-            const prefix = try aotHttpNormalizedPrefix(runtime, arguments[0]);
-            errdefer runtime.allocator.free(prefix);
-            const path = try valueUtf8LossyAlloc(runtime, arguments[1]);
-            errdefer runtime.allocator.free(path);
-            try runtime.http_server_state.routes.append(runtime.allocator, .{ .kind = .static, .prefix = prefix, .path = path });
+            try aotHttpRegisterStaticRoute(runtime, arguments[0], arguments[1]);
         },
         .http_server_receive => {
             if (arguments.len < 2) return error.InvalidArgumentCount;
@@ -181,6 +177,17 @@ pub fn requireAotHttpStarted(runtime: *Runtime) !void {
 pub fn requireAotHttpActive(runtime: *Runtime) !void {
     try requireAotHttpStarted(runtime);
     if (!runtime.http_server_state.request_active or runtime.http_connection == null) return error.HttpServerResponseOutsideRequest;
+}
+
+/// 静的配信ルートを登録する。docrootにNULを含む場合は、要求時の
+/// `toPosixPath`のassertでプロセスを停止させないよう登録時点で拒否する。
+pub fn aotHttpRegisterStaticRoute(runtime: *Runtime, prefix_value: Value, path_value: Value) !void {
+    const prefix = try aotHttpNormalizedPrefix(runtime, prefix_value);
+    errdefer runtime.allocator.free(prefix);
+    const path = try valueUtf8LossyAlloc(runtime, path_value);
+    errdefer runtime.allocator.free(path);
+    if (std.mem.indexOfScalar(u8, path, 0) != null) return error.BadPathName;
+    try runtime.http_server_state.routes.append(runtime.allocator, .{ .kind = .static, .prefix = prefix, .path = path });
 }
 
 pub fn aotHttpNormalizedPrefix(runtime: *Runtime, value: Value) ![]u8 {
@@ -721,6 +728,8 @@ pub fn aotHttpOpenStaticFile(io: std.Io, docroot: []const u8, relative: []const 
 /// `realPathFileAlloc`と同じ）。POSIXでは読み取り権限を要求しない
 /// `O_PATH`（Linux）/`O_SEARCH`（Darwin）で開く。
 fn aotHttpOpenDocRoot(io: std.Io, docroot: []const u8) !?std.Io.Dir {
+    // NULを含むパスは`toPosixPath`のassertでプロセスを停止させるため拒否する。
+    if (std.mem.indexOfScalar(u8, docroot, 0) != null) return null;
     if (builtin.os.tag == .windows or builtin.os.tag == .wasi) {
         const directory = std.Io.Dir.cwd().openDir(io, docroot, .{}) catch |err| return if (aotHttpIsStaticPathMiss(err)) null else err;
         return aotHttpVerifyDirectory(io, directory);
@@ -748,18 +757,158 @@ fn aotHttpOpenIndexFile(io: std.Io, directory: std.Io.Dir) !?AotHttpStaticFile {
     return aotHttpOpenRegularFile(io, directory, "index.html");
 }
 
-/// 通常ファイルを開く。POSIXでは`O_NONBLOCK`を付けて開き、書き手のいない
-/// FIFOでもopenで停止しないようにする。開いた後は必ずfdの`stat`で
-/// 通常ファイル（`.file`）であることを確認する（FIFO・socket・device・
-/// ディレクトリ・symlinkは配信しない）。
+/// 通常ファイルを開く。POSIXでは読み取りopenの前に副作用のない種別確認を
+/// 行い、通常ファイル以外（FIFO・socket・device・ディレクトリ・symlink）を
+/// openしない。Linuxでは`O_PATH`で実体を固定してから`/proc/self/fd`経由で
+/// 同じinodeを読み取りopenするため、差し替えの競合余地がない。
 fn aotHttpOpenRegularFile(io: std.Io, directory: std.Io.Dir, name: []const u8) !?AotHttpStaticFile {
-    const file = if (builtin.os.tag == .windows or builtin.os.tag == .wasi)
-        directory.openFile(io, name, .{ .follow_symlinks = false, .allow_directory = false }) catch |err| return if (aotHttpIsStaticPathMiss(err)) null else err
-    else blk: {
-        const fd = std.posix.openat(directory.handle, name, aotHttpRegularFileOpenFlags(), 0) catch |err| return if (aotHttpIsStaticPathMiss(err)) null else err;
-        break :blk std.Io.File{ .handle = fd, .flags = .{ .nonblocking = true } };
+    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) {
+        const file = directory.openFile(io, name, .{ .follow_symlinks = false, .allow_directory = false }) catch |err| return if (aotHttpIsStaticPathMiss(err)) null else err;
+        return aotHttpRequireRegularStaticFile(io, file, name);
+    }
+    const fd = try aotHttpOpenPosixRegularFileFd(io, directory, name) orelse return null;
+    return aotHttpRequireRegularStaticFile(io, .{ .handle = fd, .flags = .{ .nonblocking = true } }, name);
+}
+
+const AotHttpPosixStat = struct {
+    kind: std.Io.File.Kind,
+    inode: u64,
+    device: u64,
+};
+
+/// POSIXで`name`をsymlink非追従でstatする（open前の副作用のない種別確認）。
+fn aotHttpPosixStatAt(directory: std.Io.Dir, name: []const u8) !?AotHttpPosixStat {
+    if (std.mem.indexOfScalar(u8, name, 0) != null) return null;
+    const path = std.posix.toPosixPath(name) catch return null;
+    if (builtin.os.tag == .linux) {
+        var stx: std.os.linux.Statx = undefined;
+        const rc = std.os.linux.statx(directory.handle, &path, std.os.linux.AT.SYMLINK_NOFOLLOW, .{ .TYPE = true, .INO = true }, &stx);
+        switch (std.os.linux.errno(rc)) {
+            .SUCCESS => {},
+            .NOENT, .NOTDIR, .LOOP, .NAMETOOLONG, .NODEV => return null,
+            .ACCES => return error.AccessDenied,
+            else => return error.Unexpected,
+        }
+        return .{
+            .kind = aotHttpKindFromMode(stx.mode),
+            .inode = stx.ino,
+            .device = aotHttpDeviceId(stx.dev_major, stx.dev_minor),
+        };
+    }
+    var st: std.c.Stat = undefined;
+    const rc = std.c.fstatat(directory.handle, &path, &st, std.c.AT.SYMLINK_NOFOLLOW);
+    switch (std.c.errno(rc)) {
+        .SUCCESS => {},
+        .NOENT, .NOTDIR, .LOOP, .NAMETOOLONG, .NODEV => return null,
+        .ACCES => return error.AccessDenied,
+        else => return error.Unexpected,
+    }
+    return .{
+        .kind = aotHttpKindFromMode(st.mode),
+        .inode = @intCast(st.ino),
+        .device = @intCast(st.dev),
     };
-    return aotHttpRequireRegularStaticFile(io, file, name);
+}
+
+/// 開いたfdの種別・inode・deviceを取得する。
+fn aotHttpPosixFstat(fd: std.posix.fd_t) !?AotHttpPosixStat {
+    if (builtin.os.tag == .linux) {
+        var stx: std.os.linux.Statx = undefined;
+        const rc = std.os.linux.statx(fd, "", std.os.linux.AT.EMPTY_PATH, .{ .TYPE = true, .INO = true }, &stx);
+        switch (std.os.linux.errno(rc)) {
+            .SUCCESS => {},
+            .NOENT, .NOTDIR, .LOOP, .NAMETOOLONG, .NODEV => return null,
+            .ACCES => return error.AccessDenied,
+            else => return error.Unexpected,
+        }
+        return .{
+            .kind = aotHttpKindFromMode(stx.mode),
+            .inode = stx.ino,
+            .device = aotHttpDeviceId(stx.dev_major, stx.dev_minor),
+        };
+    }
+    var st: std.c.Stat = undefined;
+    const rc = std.c.fstat(fd, &st);
+    switch (std.c.errno(rc)) {
+        .SUCCESS => {},
+        .NOENT, .NOTDIR, .LOOP, .NAMETOOLONG, .NODEV => return null,
+        .ACCES => return error.AccessDenied,
+        else => return error.Unexpected,
+    }
+    return .{
+        .kind = aotHttpKindFromMode(st.mode),
+        .inode = @intCast(st.ino),
+        .device = @intCast(st.dev),
+    };
+}
+
+fn aotHttpKindFromMode(mode: anytype) std.Io.File.Kind {
+    const value: u32 = @intCast(mode);
+    return switch (value & std.posix.S.IFMT) {
+        std.posix.S.IFREG => .file,
+        std.posix.S.IFDIR => .directory,
+        std.posix.S.IFLNK => .sym_link,
+        std.posix.S.IFIFO => .named_pipe,
+        std.posix.S.IFSOCK => .unix_domain_socket,
+        std.posix.S.IFCHR => .character_device,
+        std.posix.S.IFBLK => .block_device,
+        else => .unknown,
+    };
+}
+
+fn aotHttpDeviceId(major: u32, minor: u32) u64 {
+    return (@as(u64, major) << 32) | minor;
+}
+
+/// POSIXで通常ファイルを開く。open前に種別を確認し、open後にもfdの
+/// 種別と同一inode（device, inode）を検証する。
+fn aotHttpOpenPosixRegularFileFd(io: std.Io, directory: std.Io.Dir, name: []const u8) !?std.posix.fd_t {
+    const pre = try aotHttpPosixStatAt(directory, name) orelse return null;
+    if (pre.kind != .file) return null;
+
+    if (builtin.os.tag == .linux) {
+        // O_PATHのopenは副作用がなく、実体をfdで固定できる。/proc/self/fdは
+        // パスを再解決せず固定したinodeを開くため、差し替えの競合余地がない。
+        const path_fd = std.posix.openat(directory.handle, name, aotHttpPathOpenFlags(), 0) catch |err| return if (aotHttpIsStaticPathMiss(err)) null else err;
+        defer (std.Io.File{ .handle = path_fd, .flags = .{ .nonblocking = false } }).close(io);
+        const path_stat = try aotHttpPosixFstat(path_fd) orelse return null;
+        if (path_stat.kind != .file) return null;
+        if (aotHttpOpenProcFd(path_fd)) |fd| {
+            return fd;
+        } else |_| {
+            // /procが無い環境では事前確認+open+同一inode検証へフォールバック。
+        }
+    }
+
+    const fd = std.posix.openat(directory.handle, name, aotHttpRegularFileOpenFlags(), 0) catch |err| return if (aotHttpIsStaticPathMiss(err)) null else err;
+    const post = aotHttpPosixFstat(fd) catch |err| {
+        (std.Io.File{ .handle = fd, .flags = .{ .nonblocking = true } }).close(io);
+        return err;
+    };
+    if (post == null or post.?.kind != .file or post.?.inode != pre.inode or post.?.device != pre.device) {
+        (std.Io.File{ .handle = fd, .flags = .{ .nonblocking = true } }).close(io);
+        return null;
+    }
+    return fd;
+}
+
+/// Linuxで`/proc/self/fd/<fd>`を読み取りopenする。`path_fd`が固定した
+/// inodeをそのまま開くため、パスの差し替えに影響されない。
+fn aotHttpOpenProcFd(path_fd: std.posix.fd_t) !std.posix.fd_t {
+    var buffer: [64]u8 = undefined;
+    const path = try std.fmt.bufPrint(&buffer, "/proc/self/fd/{d}", .{path_fd});
+    var flags: std.posix.O = .{ .ACCMODE = .RDONLY };
+    flags.NONBLOCK = true;
+    if (@hasField(std.posix.O, "CLOEXEC")) flags.CLOEXEC = true;
+    return std.posix.openat(std.posix.AT.FDCWD, path, flags, 0);
+}
+
+fn aotHttpPathOpenFlags() std.posix.O {
+    var flags: std.posix.O = .{ .ACCMODE = .RDONLY };
+    flags.NOFOLLOW = true;
+    if (@hasField(std.posix.O, "CLOEXEC")) flags.CLOEXEC = true;
+    if (@hasField(std.posix.O, "PATH")) flags.PATH = true;
+    return flags;
 }
 
 /// 開いたファイルが通常ファイルであることをfdから確認する。所有権は常に
@@ -805,6 +954,7 @@ fn aotHttpVerifyDirectory(io: std.Io, directory: std.Io.Dir) !?std.Io.Dir {
 /// `O_SEARCH`（= `O_EXEC | O_DIRECTORY`）を使い、読み取り権限を要求しない。
 /// どちらも使えない環境では`O_RDONLY`にフォールバックする。
 fn aotHttpOpenPosixDirectoryFd(parent: std.Io.Dir, component: []const u8, follow_symlinks: bool) !?std.posix.fd_t {
+    if (std.mem.indexOfScalar(u8, component, 0) != null) return null;
     const flags = aotHttpDirectoryOpenFlags(follow_symlinks);
     const fd = std.posix.openat(parent.handle, component, flags, 0) catch |err| {
         if (aotHttpIsDarwin() and err == error.BadPathName) {
@@ -870,7 +1020,18 @@ pub fn aotHttpReadStaticFile(io: std.Io, file: std.Io.File, allocator: std.mem.A
     if (stat.size >= @as(u64, max_bytes)) return error.StreamTooLong;
     var buffer: [64 * 1024]u8 = undefined;
     var reader = file.reader(io, &buffer);
-    return reader.interface.allocRemaining(allocator, .limited(max_bytes));
+    const data = try reader.interface.allocRemaining(allocator, .limited(max_bytes));
+    return aotHttpEnforceStaticReadLimit(allocator, data, max_bytes);
+}
+
+/// 実際に読み取ったバイト数にも旧`readFileAlloc`と同じ排他的上限を適用する。
+/// stat時点で上限未満でも、読み取り中に上限ちょうどまで伸びた場合は413相当。
+pub fn aotHttpEnforceStaticReadLimit(allocator: std.mem.Allocator, data: []u8, max_bytes: usize) ![]u8 {
+    if (data.len >= max_bytes) {
+        allocator.free(data);
+        return error.StreamTooLong;
+    }
+    return data;
 }
 
 fn aotHttpStaticPathRequiresDirectory(relative: []const u8) bool {
@@ -901,6 +1062,9 @@ fn aotHttpIsStaticPathMiss(err: anyerror) bool {
         error.NetworkNotFound,
         // socket等のopenはENXIO（NoDevice）になる。種別違いとして404。
         error.NoDevice,
+        // Darwinはソケットの読み取りopenにEOPNOTSUPPを返し、Zigは
+        // error.FileLocksUnsupportedへ変換する。種別違いとして404。
+        error.FileLocksUnsupported,
         => true,
         else => false,
     };

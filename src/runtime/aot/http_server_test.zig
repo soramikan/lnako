@@ -15,6 +15,9 @@ const expectAotHttpResponse = http_server.expectAotHttpResponse;
 const aotHttpOpenStaticFile = http_server.aotHttpOpenStaticFile;
 const aotHttpReadStaticFile = http_server.aotHttpReadStaticFile;
 const aotHttpStaticReadErrorStatus = http_server.aotHttpStaticReadErrorStatus;
+const aotHttpEnforceStaticReadLimit = http_server.aotHttpEnforceStaticReadLimit;
+const aotHttpRegisterStaticRoute = http_server.aotHttpRegisterStaticRoute;
+const runtimeUtf8String = state.runtimeUtf8String;
 
 test "AOT HTTP静的配信はdocroot外を指すsymlinkを404にする" {
     const io = aotHttpIo();
@@ -158,6 +161,29 @@ fn createFifo(io: std.Io, directory: std.Io.Dir, name: []const u8) !void {
     defer std.testing.allocator.free(path);
     const rc = std.os.linux.mknodat(std.os.linux.AT.FDCWD, path.ptr, std.os.linux.S.IFIFO | 0o600, 0);
     if (std.os.linux.errno(rc) != .SUCCESS) return error.CreateFifoFailed;
+}
+
+/// POSIXでUnixドメインソケットのファイルを作る（種別拒否の検証用）。
+fn createUnixSocket(io: std.Io, directory: std.Io.Dir, name: []const u8) !void {
+    const root = try directory.realPathFileAlloc(io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(root);
+    // Unixドメインソケットのパス上限（108バイト程度）に収めるため、cwdからの
+    // 相対パスでbindする。ファイル自体はdocroot内に作られる。
+    const cwd = try std.Io.Dir.cwd().realPathFileAlloc(io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(cwd);
+    const relative_root = try std.fs.path.relativeAlloc(std.testing.allocator, cwd, null, cwd, root);
+    defer std.testing.allocator.free(relative_root);
+    const path = try std.fs.path.joinZ(std.testing.allocator, &.{ relative_root, name });
+    defer std.testing.allocator.free(path);
+    const fd = std.c.socket(std.c.AF.UNIX, std.c.SOCK.STREAM, 0);
+    if (fd < 0) return error.SocketFailed;
+    defer (std.Io.File{ .handle = fd, .flags = .{ .nonblocking = false } }).close(io);
+    var address: std.c.sockaddr.un = std.mem.zeroes(std.c.sockaddr.un);
+    address.family = std.c.AF.UNIX;
+    if (@hasField(std.c.sockaddr.un, "len")) address.len = @sizeOf(std.c.sockaddr.un);
+    if (path.len >= address.path.len) return error.NameTooLong;
+    @memcpy(address.path[0..path.len], path);
+    if (std.c.bind(fd, @ptrCast(&address), @intCast(@sizeOf(std.c.sockaddr.un))) != 0) return error.BindFailed;
 }
 
 test "AOT HTTP静的配信はopen済みfdから読むため照合後のsymlink差し替えに影響されない" {
@@ -430,4 +456,50 @@ test "AOT HTTP静的配信は中間ディレクトリのsymlink差し替えと�
     // 差し替えが一度も成功していないテストは競合を検証できていない。
     try std.testing.expect(successful_swaps > 0);
     try std.testing.expectEqual(@as(usize, 0), leaks);
+}
+
+test "AOT HTTP静的配信はUnixドメインソケットをopenせず404にする" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const io = aotHttpIo();
+    var docroot = std.testing.tmpDir(.{});
+    defer docroot.cleanup();
+    try createUnixSocket(io, docroot.dir, "sock");
+    const docroot_path = try docroot.dir.realPathFileAlloc(io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(docroot_path);
+    try std.testing.expect((try aotHttpOpenStaticFile(io, docroot_path, "sock")) == null);
+}
+
+test "AOT HTTP静的配信はNULを含むdocrootで停止しない" {
+    const io = aotHttpIo();
+    var docroot = std.testing.tmpDir(.{});
+    defer docroot.cleanup();
+    try docroot.dir.writeFile(io, .{ .sub_path = "hello.txt", .data = "hello" });
+    const docroot_path = try docroot.dir.realPathFileAlloc(io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(docroot_path);
+    const nul_path = try std.fmt.allocPrint(std.testing.allocator, "{s}\x00evil", .{docroot_path});
+    defer std.testing.allocator.free(nul_path);
+    // toPosixPathのassertで停止せず、404相当のnullになる。
+    try std.testing.expect((try aotHttpOpenStaticFile(io, nul_path, "hello.txt")) == null);
+}
+
+test "AOT HTTP静的配信はNULを含むdocrootの登録を拒否する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    const prefix = try runtimeUtf8String(&runtime, "/static");
+    const path = try runtimeUtf8String(&runtime, "docroot\x00evil");
+    try std.testing.expectError(error.BadPathName, aotHttpRegisterStaticRoute(&runtime, prefix, path));
+    try std.testing.expectEqual(@as(usize, 0), runtime.http_server_state.routes.items.len);
+}
+
+test "AOT HTTP静的配信は読み取り後の上限超過も413相当にする" {
+    const allocator = std.testing.allocator;
+    const under = try allocator.alloc(u8, 3);
+    const kept = try aotHttpEnforceStaticReadLimit(allocator, under, 4);
+    defer allocator.free(kept);
+    try std.testing.expectEqual(@as(usize, 3), kept.len);
+    // 読み取り中に上限ちょうどまで伸びた場合も旧readFileAllocと同じく拒否する。
+    const exact = try allocator.alloc(u8, 4);
+    try std.testing.expectError(error.StreamTooLong, aotHttpEnforceStaticReadLimit(allocator, exact, 4));
+    const over = try allocator.alloc(u8, 5);
+    try std.testing.expectError(error.StreamTooLong, aotHttpEnforceStaticReadLimit(allocator, over, 4));
 }
