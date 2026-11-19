@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const state = @import("state.zig");
 const shared = @import("shared.zig");
 const http_ingress = @import("../../http_ingress.zig");
@@ -839,12 +840,66 @@ fn aotHttpTestSendBytes(io: std.Io, port: u16, bytes: []const u8) !std.Io.net.St
     return client;
 }
 
-/// 接続が応答なしで閉じられたことを確認する。RST由来のread errorも切断として扱う。
-fn expectAotHttpClientClosed(client: std.Io.net.Stream, io: std.Io) !void {
-    var buffer: [512]u8 = undefined;
-    var reader = client.reader(io, &buffer);
-    const line = reader.interface.takeDelimiter('\n') catch return;
-    try std.testing.expect(line == null);
+const AotHttpClientProbe = enum { eof, open, data };
+
+/// 1バイト読み取りに期限を付け、接続状態を判定する。`error.Timeout`だけを
+/// 「開いたまま」とし、読み取りエラーは失敗として伝播する。EOFは0バイト
+/// 読み取りだけで判定し、RSTなどの読み取りエラーを切断成功として扱わない。
+fn probeAotHttpClient(client: std.Io.net.Stream, io: std.Io, timeout_ms: i64) !AotHttpClientProbe {
+    var byte: [1]u8 = undefined;
+    var buffers = [_][]u8{byte[0..]};
+    const result = io.operateTimeout(.{ .net_read = .{
+        .socket_handle = client.socket.handle,
+        .data = buffers[0..],
+    } }, .{ .duration = .{ .raw = .fromMilliseconds(timeout_ms), .clock = .awake } }) catch |err| switch (err) {
+        error.Timeout => return .open,
+        else => return err,
+    };
+    const read_result = try result.net_read;
+    if (read_result.data_len == 0) return .eof;
+    return .data;
+}
+
+/// 期限内に厳密なEOF（0バイト読み取り）を観測する。タイムアウト（接続生存）
+/// や読み取りエラー、予期しないデータはすべてテスト失敗にする。
+fn expectAotHttpClientEof(client: std.Io.net.Stream, io: std.Io) !void {
+    try std.testing.expectEqual(AotHttpClientProbe.eof, try probeAotHttpClient(client, io, 2000));
+}
+
+/// 期限まで読み取りイベントが無いことで、接続が開いたまま残っていることを
+/// 確認する。EOFやデータ到着はテスト失敗にする。
+fn expectAotHttpClientStaysOpen(client: std.Io.net.Stream, io: std.Io) !void {
+    try std.testing.expectEqual(AotHttpClientProbe.open, try probeAotHttpClient(client, io, 100));
+}
+
+/// Linuxでは`/proc/self/fd`を数えてfdの解放を確認する。fd数を観測できない
+/// OSでは`null`を返し、呼び出し側はfd検査を省略する。
+fn aotHttpTestOpenFileDescriptorCount() !?usize {
+    if (builtin.os.tag != .linux) return null;
+    const io = aotHttpIo();
+    var directory = std.Io.Dir.cwd().openDir(io, "/proc/self/fd", .{ .iterate = true }) catch |err| switch (err) {
+        error.FileNotFound => return null,
+        else => return err,
+    };
+    defer directory.close(io);
+    var iterator = directory.iterate();
+    var count: usize = 0;
+    while (try iterator.next(io)) |_| count += 1;
+    return count;
+}
+
+/// テストが開いたfdがすべて解放され、ベースラインへ戻ったことを確認する。
+/// スレッド終了直後の回収を待つため、短い間隔で限定的に再試行する。
+fn expectAotHttpTestFileDescriptorsRestored(baseline: ?usize) !void {
+    const expected = baseline orelse return;
+    const io = aotHttpIo();
+    var attempt: usize = 0;
+    while (attempt < 50) : (attempt += 1) {
+        const current = (try aotHttpTestOpenFileDescriptorCount()) orelse return;
+        if (current == expected) return;
+        std.Io.sleep(io, .fromMilliseconds(10), .awake) catch {};
+    }
+    try std.testing.expectEqual(expected, (try aotHttpTestOpenFileDescriptorCount()).?);
 }
 
 /// テスト用: 1要求を受信して`handleAotHttpRequest`へ渡す。`pollAotHttpServer`は
@@ -1094,9 +1149,13 @@ fn testAotHttpFailingHandler(out: *state.Value, _: *anyopaque, _: ?[*]const stat
 }
 
 /// 応答も`HTTP出力`もせずに戻るハンドラ。`request_active`が残るため、
-/// 要求は`aotHttpHold`の保留経路へ入る。
+/// 要求は`aotHttpHold`の保留経路へ入る。呼び出し回数はルート解決が
+/// 実際にこのハンドラへ届いたことの検証に使う。
+var test_aot_http_noop_callback_count: usize = 0;
+
 fn testAotHttpNoopHandler(out: *state.Value, _: *anyopaque, _: ?[*]const state.Value, _: usize) callconv(.c) void {
     out.* = .{};
+    test_aot_http_noop_callback_count += 1;
 }
 
 test "AOT HTTPはハンドラの実行エラーを呼び出し元へ伝播する" {
@@ -1129,46 +1188,71 @@ test "AOT HTTPはハンドラの実行エラーを呼び出し元へ伝播する
 
 test "AOT HTTPは未登録URLの保留が上限を超えると最古の接続を閉じる" {
     const io = aotHttpIo();
+    // 仕様値は実装定数から導出せず、テスト側で16件を独立に固定する。
+    try std.testing.expectEqual(@as(usize, 16), max_held_http_connections);
+    const expected_held_http_connections: usize = 16;
+    const fd_baseline = try aotHttpTestOpenFileDescriptorCount();
+    if (builtin.os.tag == .linux) try std.testing.expect(fd_baseline != null);
+
     var runtime = Runtime{ .allocator = std.testing.allocator };
-    defer runtime.deinit();
+    var runtime_live = true;
+    defer if (runtime_live) runtime.deinit();
     const address: std.Io.net.IpAddress = .{ .ip4 = .loopback(0) };
     runtime.http_server = try address.listen(io, .{ .reuse_address = true });
     try aotHttpIngressStart(&runtime);
     runtime.http_server_state.started = true;
     const port = runtime.http_server.?.socket.address.getPort();
 
-    var clients: [max_held_http_connections + 1]std.Io.net.Stream = undefined;
+    var clients: [expected_held_http_connections + 1]std.Io.net.Stream = undefined;
     var client_count: usize = 0;
     defer {
         for (clients[0..client_count]) |*client| client.close(io);
     }
-    var accepted: [max_held_http_connections + 1]std.Io.net.Socket.Handle = undefined;
+    var accepted: [expected_held_http_connections + 1]std.Io.net.Socket.Handle = undefined;
     for (&clients, 0..) |*client, index| {
         client.* = try aotHttpTestSendRequest(io, port, "GET /nohandler HTTP/1.1\r\nHost: localhost\r\n\r\n");
         client_count += 1;
         try std.testing.expect(try expectAotHttpRequestHandled(&runtime));
         const held = runtime.held_http_connections.items;
         // 17件目で最古が外れ、以後は16件で頭打ちになる。
-        try std.testing.expectEqual(@min(index + 1, max_held_http_connections), held.len);
+        try std.testing.expectEqual(@min(index + 1, expected_held_http_connections), held.len);
         accepted[index] = held[held.len - 1].socket.handle;
     }
-    try std.testing.expectEqual(max_held_http_connections, runtime.held_http_connections.items.len);
+    try std.testing.expectEqual(expected_held_http_connections, runtime.held_http_connections.items.len);
     // 最新16件は受け付けた順のまま保持され、先頭の1件だけが閉じている。
-    var retained: [max_held_http_connections]std.Io.net.Socket.Handle = undefined;
+    var retained: [expected_held_http_connections]std.Io.net.Socket.Handle = undefined;
     for (runtime.held_http_connections.items, 0..) |stream, index| retained[index] = stream.socket.handle;
     try std.testing.expectEqualSlices(std.Io.net.Socket.Handle, accepted[1..], retained[0..]);
     // hold後は応答中接続とrequest_activeが残らない。
     try std.testing.expect(runtime.http_connection == null);
     try std.testing.expect(!runtime.http_server_state.request_active);
-    // クライアント側でも最古の接続がEOFとして観測できる。
-    try expectAotHttpClientClosed(clients[0], io);
+
+    // (b) 押し出された最古の接続はdeinit前に厳密なEOFで閉じている。
+    try expectAotHttpClientEof(clients[0], io);
+    // (a) 残り16件はdeinit直前まで開いたまま（期限内に読み取りイベントなし）。
+    for (clients[1..]) |*client| try expectAotHttpClientStaysOpen(client.*, io);
+
+    runtime.deinit();
+    runtime_live = false;
+    // (c) deinit後は残り16件も厳密なEOFで閉じる。
+    for (clients[1..]) |*client| try expectAotHttpClientEof(client.*, io);
+    for (&clients) |*client| client.close(io);
+    client_count = 0;
+    // (d) サーバー側fdを含む自プロセスのfdがベースラインへ戻る。
+    try expectAotHttpTestFileDescriptorsRestored(fd_baseline);
 }
 
 test "AOT HTTPは未応答ハンドラの保留でも上限で最古を閉じdeinitで接続を解放する" {
     const io = aotHttpIo();
+    // 仕様値は実装定数から導出せず、テスト側で16件を独立に固定する。
+    try std.testing.expectEqual(@as(usize, 16), max_held_http_connections);
+    const expected_held_http_connections: usize = 16;
+    test_aot_http_noop_callback_count = 0;
     // ハンドラは生成コードと同じく`active_runtime`経由で呼ばれるため、
     // Runtimeはグローバル側に置いてlocal変数と二重に持たない。
     state.active_runtime = Runtime{ .allocator = std.testing.allocator };
+    const fd_baseline = try aotHttpTestOpenFileDescriptorCount();
+    if (builtin.os.tag == .linux) try std.testing.expect(fd_baseline != null);
     defer {
         if (state.active_runtime) |*active| active.deinit();
         state.active_runtime = null;
@@ -1185,33 +1269,46 @@ test "AOT HTTPは未応答ハンドラの保留でも上限で最古を閉じdei
         .callback = try runtime.createFunction(testAotHttpNoopHandler, 0, &.{}),
     });
 
-    var clients: [max_held_http_connections + 1]std.Io.net.Stream = undefined;
+    var clients: [expected_held_http_connections + 1]std.Io.net.Stream = undefined;
     var client_count: usize = 0;
     defer {
         for (clients[0..client_count]) |*client| client.close(io);
     }
-    var accepted: [max_held_http_connections + 1]std.Io.net.Socket.Handle = undefined;
+    var accepted: [expected_held_http_connections + 1]std.Io.net.Socket.Handle = undefined;
     for (&clients, 0..) |*client, index| {
         client.* = try aotHttpTestSendRequest(io, port, "GET /noop HTTP/1.1\r\nHost: localhost\r\n\r\n");
         client_count += 1;
         try std.testing.expect(try expectAotHttpRequestHandled(runtime));
+        // 未登録URL分岐ではなく、登録済みの未応答ハンドラが毎回1回実行された。
+        try std.testing.expectEqual(index + 1, test_aot_http_noop_callback_count);
         const held = runtime.held_http_connections.items;
-        try std.testing.expectEqual(@min(index + 1, max_held_http_connections), held.len);
+        try std.testing.expectEqual(@min(index + 1, expected_held_http_connections), held.len);
         accepted[index] = held[held.len - 1].socket.handle;
     }
-    var retained: [max_held_http_connections]std.Io.net.Socket.Handle = undefined;
+    try std.testing.expectEqual(expected_held_http_connections, runtime.held_http_connections.items.len);
+    try std.testing.expectEqual(clients.len, test_aot_http_noop_callback_count);
+    var retained: [expected_held_http_connections]std.Io.net.Socket.Handle = undefined;
     for (runtime.held_http_connections.items, 0..) |stream, index| retained[index] = stream.socket.handle;
     try std.testing.expectEqualSlices(std.Io.net.Socket.Handle, accepted[1..], retained[0..]);
     // 応答も保留もしなかったハンドラでも、hold後は応答中接続が残らない。
     try std.testing.expect(runtime.http_connection == null);
     try std.testing.expect(!runtime.http_server_state.request_active);
-    try expectAotHttpClientClosed(clients[0], io);
+
+    // (b) 押し出された最古の接続はdeinit前に厳密なEOFで閉じている。
+    try expectAotHttpClientEof(clients[0], io);
+    // (a) 残り16件はdeinit直前まで開いたまま（期限内に読み取りイベントなし）。
+    for (clients[1..]) |*client| try expectAotHttpClientStaysOpen(client.*, io);
 
     // deinitは保持中の16件をすべて閉じる。明示的に呼んでクライアント側の
     // EOFまで確認し、外側のdeferはactive_runtimeをnullにして二重解放を避ける。
     runtime.deinit();
     state.active_runtime = null;
-    for (clients[1..]) |*client| try expectAotHttpClientClosed(client.*, io);
+    // (c) deinit後は残り16件も厳密なEOFで閉じる。
+    for (clients[1..]) |*client| try expectAotHttpClientEof(client.*, io);
+    for (&clients) |*client| client.close(io);
+    client_count = 0;
+    // (d) サーバー側fdを含む自プロセスのfdがベースラインへ戻る。
+    try expectAotHttpTestFileDescriptorsRestored(fd_baseline);
 }
 
 test "AOT HTTPは途中切断と不正chunk/header後に次の要求を受け付ける" {
@@ -1233,7 +1330,7 @@ test "AOT HTTPは途中切断と不正chunk/header後に次の要求を受け付
         var client = try aotHttpTestSendRequest(io, port, case);
         defer client.close(io);
         // 不正な要求は接続単位の受信workerが吸収し、応答なしで閉じる。
-        try expectAotHttpClientClosed(client, io);
+        try expectAotHttpClientEof(client, io);
         try std.testing.expect(runtime.http_connection == null);
         try std.testing.expect(!runtime.http_head_request);
         try std.testing.expect(!runtime.http_server_state.request_active);
