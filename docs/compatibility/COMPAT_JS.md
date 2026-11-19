@@ -299,10 +299,13 @@ AOT compat runtimeはinterpreterと同じホスト変数bridge（`sys.__getSysVa
 AOT例外を残さず既定値／`undefined`へフォールバックし、書き込み側（`sys.__setSysVar`）の
 変換・更新失敗はJS側の`InternalError`として報告します。teardownではhost
 コールバックを先に遮断します。
-一方、`sys.__exec`（文字列による組み込み命令の動的dispatch）はAOTでは
-未対応で、`lnako host command bridge is unavailable` の明示エラーになります
-（フォローアップIssueで追跡）。`console`などinterpreterがbootstrapする
-グローバルはAOTに存在しません。
+AOT compat runtime は `sys.__exec`（`this.__exec` / `sys.__v0.__exec` を含む）で、
+ユーザー定義関数、対応する組み込み命令、登録済みの ESM・ネイティブプラグイン命令を
+動的に呼び出せます（Issue #282、PR #290）。タイマーなどを動的に登録した場合も、
+プログラムの終了前に保留中の非同期処理を実行します。組み込み命令の一部で
+不足引数を `undefined` で補完します。タイマーの引数不足はエラーになり、可変長出力命令
+など補完の対象外の命令には渡された引数をそのまま使います。
+`console` など interpreter が bootstrap するグローバルは AOT に存在しません。
 
 ### npm bare import と ESM plugin
 

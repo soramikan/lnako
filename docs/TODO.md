@@ -5,7 +5,7 @@
 
 `verified: 527` は、追跡されたfixture・dispatch・公式比較・3 OS attestationに基づく命令entryの実行証拠です。全ての入力値、Node/ECMAScript APIの全境界、実ネットワーク・外部アプリ・任意の外部toolまで完全同値であることを意味しません。未検証境界は本書と [互換性の概要](COMPATIBILITY.md) に明示します。
 
-## リリース済みの状態（v0.1.0 / v0.1.1 / v0.2.0 / v0.2.1 / v0.2.2 / v0.2.3 / v0.2.4）
+## リリース済みの状態（v0.1.0 / v0.1.1 / v0.2.0 / v0.2.1 / v0.2.2 / v0.2.3 / v0.2.4 / v0.2.5）
 
 - **v0.1.0（初回正式リリース）**：
   - 標準cnako 527 entry（native 523、compat-js 4、blocked 0）の実装と、macOS arm64・Linux x86_64・Windows x86_64の3 OSにおけるCI 54/54全job成功・attestation検証を達成。
@@ -66,6 +66,10 @@
   - **Zig 0.17.0ツールチェーンへの移行とビルド基盤の安定化**：
     - 基準Zigバージョンを `0.17.0` へ移行し、`zig-pubgrub` `v0.1.2` への更新および標準ライブラリAPI移行を完了（[#213](https://github.com/soramikan/lnako/pull/213)）。
     - Windows環境におけるパスダイジェスト算出およびキャッシュ読み込みの非ブロッキングI/Oハングを解消。
+- **v0.2.5（パッケージ配布・静的公開・AOTとQuickJSの連携拡充）**
+  - npm ESM の解決、依存同梱とSBOM出力、静的レジストリへの公開に対応。
+  - 明示的に有効にした AOT compat-js で、JS命令の値変換、ホスト変数の参照・更新、`sys.__exec` による動的呼び出しに対応。
+  - 言語互換性の修正と、正規表現・HTTP処理・コンパイラの堅牢性強化。詳細は [v0.2.5 リリースノート](releases/v0.2.5.md) を参照。
 
 ## 明示的に非対応とする境界（意図的制限・後続課題）
 
@@ -141,7 +145,7 @@ Project [#2](https://github.com/users/soramikan/projects/2)、label `package-sys
 | 命令 metadata の静的検査（#52） | 完了 | なし（declared command 接続・OS 条件の照合表示・名前空間 check・`check --load-plugins` の JS/native 実登録照合は #211/#227/#251/#259 で実装済み） |
 | npm 取得（#53） | 部分実装 | Node lifecycle script は対象外（cache 欠落時の sync 側 tarball 取得は実装済み） |
 | QuickJS ESM（#54） | 部分実装 | 下記の npm ESM 境界（字句 fail-closed・exports 再帰 64 段/wildcard 展開 1 MiB の上限・legacy `main`/`module` の拡張子補完・`module` 優先・exports target の URL 非デコード・`node` 条件の非暗黙化）。`exports` 無し `name/sub` の従来解決、`package_root`/入口の symlink canonicalization、registry の root 入口遅延解決（エラー分類の保持）は実装済み。QuickJS ESM の実行は `--compat-js` のみ。lock context 別の複数 version 解決・importer scope・cache miss の instance 単位診断は #258 で実装済み |
-| AOT + QuickJS（#55） | 部分実装 | `JSメソッド実行`/`JSオブジェクト取得` の AOT は #256、AOT dispatch trace（compat JS 4命令）は #263、ESM plugin 命令の AOT codegen は #271、ESM plugin の実行時 invoke は #275 で実装済み。Issue #55 の Unit 0〜3 として、Unit 0 で `resolveAotCallback` のモジュールサフィックス曖昧性判定と既存 `Closure` スロット再利用、Unit 1 で `Value.unboundValue`・`AotVarFrame`・`aotCompatResolve` の変数解決基盤、Unit 2 で1引数 `JSオブジェクト取得`（変数フレーム・動的グローバル・名前付き関数・システム定数の解決）、Unit 3 で QuickJS ホスト変数 bridge（`sys.__getSysVar` / `sys.__findVar` / `sys.__setSysVar` / `sys.__getSore` / `sys.__setSore`）と teardown のhostコールバック遮断を実装し、`tests/fixtures/compat-js-var-bridge.nako3` の3者オラクル比較を追加しました。あわせて `JS実行` の full 変換（BigInt・関数値・配列・辞書・循環）と JS 関数値の保持・呼出し、Nako→JS callback（`hostFunction`/`hostInvoke`）・GC trace/deinit hook・Promise/BigInt/ByteBuffer の callback 変換、`JS関数実行` の実引数・戻り値の full 変換（ネスト/循環/疎配列・関数値・BigInt・bytes・Promise 解決値）、`JSオブジェクト取得`/`JSメソッド実行` の external でないコンテナの full 変換（ネスト配列/辞書・関数値・BigInt）を接続済みです。残る意図的境界はトップレベル（およびコンテナ内）の Promise/bytes 拒否、`sys.__exec`（組み込み命令の文字列dispatch・フォローアップIssue）、Windows x86_64 の compat AOT リンク（`quickjs_win32_shim` を追加済みだが CI 検証待ち） |
+| AOT + QuickJS（#55） | 部分実装 | `JSメソッド実行`/`JSオブジェクト取得` の AOT は #256、AOT dispatch trace（compat JS 4命令）は #263、ESM plugin 命令の AOT codegen は #271、ESM plugin の実行時 invoke は #275 で実装済み。Issue #55 の Unit 0〜3 として、Unit 0 で `resolveAotCallback` のモジュールサフィックス曖昧性判定と既存 `Closure` スロット再利用、Unit 1 で `Value.unboundValue`・`AotVarFrame`・`aotCompatResolve` の変数解決基盤、Unit 2 で1引数 `JSオブジェクト取得`（変数フレーム・動的グローバル・名前付き関数・システム定数の解決）、Unit 3 で QuickJS ホスト変数 bridge（`sys.__getSysVar` / `sys.__findVar` / `sys.__setSysVar` / `sys.__getSore` / `sys.__setSore`）と teardown のhostコールバック遮断を実装し、`tests/fixtures/compat-js-var-bridge.nako3` の3者オラクル比較を追加しました。あわせて `JS実行` の full 変換（BigInt・関数値・配列・辞書・循環）と JS 関数値の保持・呼出し、Nako→JS callback（`hostFunction`/`hostInvoke`）・GC trace/deinit hook・Promise/BigInt/ByteBuffer の callback 変換、`JS関数実行` の実引数・戻り値の full 変換（ネスト/循環/疎配列・関数値・BigInt・bytes・Promise 解決値）、`JSオブジェクト取得`/`JSメソッド実行` の external でないコンテナの full 変換（ネスト配列/辞書・関数値・BigInt）を接続済みです。`sys.__exec` の動的呼び出しは #290（Issue #282）で対応済みです。残る境界は `JSオブジェクト取得` / `JSメソッド実行` でのトップレベルおよびコンテナ内の Promise/bytes の拒否と、Windows x86_64 の compat AOT リンク（`quickjs_win32_shim` を追加済みだが CI 検証待ち） |
 | 依存同梱（#56） | 完了 | なし（payload・移動可能 loader・SBOM 一致・source-only 依存・推移的動的 library 依存の検出/複製/`bundle.json` 記録/先読み、in-place 書換は #260/#268/#269 と本変更で実装済み） |
 | publish（#57） | 部分実装 | dry-run と static registry への冪等 PUT は #252、publish→取得 E2E は #257、実 registry backend への upload と `index.json` 登録は本変更で実装済み。target 適合の要求範囲は PUBLISHING.md §4.1 で確定。version record の `artifacts` に収録実装（source/native/ESM）を記録するよう本変更で修正済み。残りは中央 publication API（認証付き一括登録） |
 | 3 OS E2E・文書（#58） | 完了 | なし（参照パッケージの publish→取得 E2E は #257、3 OS 結合は CI の `Package publish E2E check` が macOS/Linux/Windows でフル CI 時に実行、文書は #253） |
