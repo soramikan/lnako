@@ -35,6 +35,11 @@ const invokeAotCallback = state.invokeAotCallback;
 
 const AotHttpRequest = http_ingress.Request;
 
+/// 応答保留の上限。Interpreter側`CliHost`の`max_held_http_connections`と
+/// 同じ値に揃える。未登録URLや未応答ハンドラの接続を無制限に保持すると
+/// fdを使い切ってacceptが枯渇するため、上限超過時は最古の接続を閉じる。
+const max_held_http_connections: usize = 16;
+
 const AotHttpChunkedBody = struct {
     body: []u8,
     too_large: bool,
@@ -254,6 +259,13 @@ fn resetAotHttpConnection(runtime: *Runtime) void {
 
 pub fn aotHttpHold(runtime: *Runtime) !void {
     const stream = runtime.http_connection orelse return error.HttpServerResponseOutsideRequest;
+    const io = aotHttpIo();
+    // Interpreter側`holdHttpServerResponse`と同じく、保持数が上限に達して
+    // いたら最古の接続を閉じて回収する。閉じた接続は`orderedRemove`で保持
+    // 対象から外れるため、deinitで二重にcloseしない。
+    while (runtime.held_http_connections.items.len >= max_held_http_connections) {
+        runtime.held_http_connections.orderedRemove(0).close(io);
+    }
     try runtime.held_http_connections.append(runtime.allocator, stream);
     resetAotHttpConnection(runtime);
 }
@@ -1081,6 +1093,12 @@ fn testAotHttpFailingHandler(out: *state.Value, _: *anyopaque, _: ?[*]const stat
     if (state.active_runtime) |*active| active.setFailure(error.CallbackExecutionFailed);
 }
 
+/// 応答も`HTTP出力`もせずに戻るハンドラ。`request_active`が残るため、
+/// 要求は`aotHttpHold`の保留経路へ入る。
+fn testAotHttpNoopHandler(out: *state.Value, _: *anyopaque, _: ?[*]const state.Value, _: usize) callconv(.c) void {
+    out.* = .{};
+}
+
 test "AOT HTTPはハンドラの実行エラーを呼び出し元へ伝播する" {
     const io = aotHttpIo();
     // ハンドラは生成コードと同じく`active_runtime`経由で失敗を記録するため、
@@ -1107,6 +1125,93 @@ test "AOT HTTPはハンドラの実行エラーを呼び出し元へ伝播する
     defer client.close(io);
     // 利用者プログラムの例外を500応答へ丸めず、イベントループへ返す。
     try std.testing.expectError(error.CallbackExecutionFailed, expectAotHttpRequestHandled(runtime));
+}
+
+test "AOT HTTPは未登録URLの保留が上限を超えると最古の接続を閉じる" {
+    const io = aotHttpIo();
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    const address: std.Io.net.IpAddress = .{ .ip4 = .loopback(0) };
+    runtime.http_server = try address.listen(io, .{ .reuse_address = true });
+    try aotHttpIngressStart(&runtime);
+    runtime.http_server_state.started = true;
+    const port = runtime.http_server.?.socket.address.getPort();
+
+    var clients: [max_held_http_connections + 1]std.Io.net.Stream = undefined;
+    var client_count: usize = 0;
+    defer {
+        for (clients[0..client_count]) |*client| client.close(io);
+    }
+    var accepted: [max_held_http_connections + 1]std.Io.net.Socket.Handle = undefined;
+    for (&clients, 0..) |*client, index| {
+        client.* = try aotHttpTestSendRequest(io, port, "GET /nohandler HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        client_count += 1;
+        try std.testing.expect(try expectAotHttpRequestHandled(&runtime));
+        const held = runtime.held_http_connections.items;
+        // 17件目で最古が外れ、以後は16件で頭打ちになる。
+        try std.testing.expectEqual(@min(index + 1, max_held_http_connections), held.len);
+        accepted[index] = held[held.len - 1].socket.handle;
+    }
+    try std.testing.expectEqual(max_held_http_connections, runtime.held_http_connections.items.len);
+    // 最新16件は受け付けた順のまま保持され、先頭の1件だけが閉じている。
+    var retained: [max_held_http_connections]std.Io.net.Socket.Handle = undefined;
+    for (runtime.held_http_connections.items, 0..) |stream, index| retained[index] = stream.socket.handle;
+    try std.testing.expectEqualSlices(std.Io.net.Socket.Handle, accepted[1..], retained[0..]);
+    // hold後は応答中接続とrequest_activeが残らない。
+    try std.testing.expect(runtime.http_connection == null);
+    try std.testing.expect(!runtime.http_server_state.request_active);
+    // クライアント側でも最古の接続がEOFとして観測できる。
+    try expectAotHttpClientClosed(clients[0], io);
+}
+
+test "AOT HTTPは未応答ハンドラの保留でも上限で最古を閉じdeinitで接続を解放する" {
+    const io = aotHttpIo();
+    // ハンドラは生成コードと同じく`active_runtime`経由で呼ばれるため、
+    // Runtimeはグローバル側に置いてlocal変数と二重に持たない。
+    state.active_runtime = Runtime{ .allocator = std.testing.allocator };
+    defer {
+        if (state.active_runtime) |*active| active.deinit();
+        state.active_runtime = null;
+    }
+    const runtime = if (state.active_runtime) |*active| active else unreachable;
+    const address: std.Io.net.IpAddress = .{ .ip4 = .loopback(0) };
+    runtime.http_server = try address.listen(io, .{ .reuse_address = true });
+    try aotHttpIngressStart(runtime);
+    runtime.http_server_state.started = true;
+    const port = runtime.http_server.?.socket.address.getPort();
+    try runtime.http_server_state.routes.append(runtime.allocator, .{
+        .kind = .callback,
+        .prefix = try runtime.allocator.dupe(u8, "/noop"),
+        .callback = try runtime.createFunction(testAotHttpNoopHandler, 0, &.{}),
+    });
+
+    var clients: [max_held_http_connections + 1]std.Io.net.Stream = undefined;
+    var client_count: usize = 0;
+    defer {
+        for (clients[0..client_count]) |*client| client.close(io);
+    }
+    var accepted: [max_held_http_connections + 1]std.Io.net.Socket.Handle = undefined;
+    for (&clients, 0..) |*client, index| {
+        client.* = try aotHttpTestSendRequest(io, port, "GET /noop HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        client_count += 1;
+        try std.testing.expect(try expectAotHttpRequestHandled(runtime));
+        const held = runtime.held_http_connections.items;
+        try std.testing.expectEqual(@min(index + 1, max_held_http_connections), held.len);
+        accepted[index] = held[held.len - 1].socket.handle;
+    }
+    var retained: [max_held_http_connections]std.Io.net.Socket.Handle = undefined;
+    for (runtime.held_http_connections.items, 0..) |stream, index| retained[index] = stream.socket.handle;
+    try std.testing.expectEqualSlices(std.Io.net.Socket.Handle, accepted[1..], retained[0..]);
+    // 応答も保留もしなかったハンドラでも、hold後は応答中接続が残らない。
+    try std.testing.expect(runtime.http_connection == null);
+    try std.testing.expect(!runtime.http_server_state.request_active);
+    try expectAotHttpClientClosed(clients[0], io);
+
+    // deinitは保持中の16件をすべて閉じる。明示的に呼んでクライアント側の
+    // EOFまで確認し、外側のdeferはactive_runtimeをnullにして二重解放を避ける。
+    runtime.deinit();
+    state.active_runtime = null;
+    for (clients[1..]) |*client| try expectAotHttpClientClosed(client.*, io);
 }
 
 test "AOT HTTPは途中切断と不正chunk/header後に次の要求を受け付ける" {
