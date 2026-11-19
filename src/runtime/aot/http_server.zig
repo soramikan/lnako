@@ -842,10 +842,79 @@ fn aotHttpTestSendBytes(io: std.Io, port: u16, bytes: []const u8) !std.Io.net.St
 
 const AotHttpClientProbe = enum { eof, open, data };
 
+/// WindowsのソケットはWinsockのSOCKETではなくAFDハンドルであり、
+/// `operateTimeout`の並行`net_read`は`error.ConcurrencyUnavailable`になる。
+/// そのためAFD_POLLで期限付きに読み取り可能/切断を待ち、イベントが
+/// 出てから通常のreadでEOFとデータを厳密に分類する。
+const probeAotHttpClientWindows = if (builtin.os.tag == .windows) struct {
+    const windows = std.os.windows;
+
+    const AfdPollHandleInfo = extern struct {
+        handle: windows.HANDLE,
+        events: u32,
+        status: windows.NTSTATUS,
+    };
+    const AfdPollInfo = extern struct {
+        timeout: windows.LARGE_INTEGER,
+        number_of_handles: u32,
+        exclusive: u32,
+        handles: [1]AfdPollHandleInfo,
+    };
+    const afd_poll_receive: u32 = 0x0001;
+    const afd_poll_disconnect: u32 = 0x0008;
+    const afd_poll_abort: u32 = 0x0010;
+
+    fn probe(client: std.Io.net.Stream, io: std.Io, timeout_ms: i64) !AotHttpClientProbe {
+        var poll_info = AfdPollInfo{
+            .timeout = -timeout_ms * 10_000,
+            .number_of_handles = 1,
+            .exclusive = 0,
+            .handles = .{.{
+                .handle = client.socket.handle,
+                .events = afd_poll_receive | afd_poll_disconnect | afd_poll_abort,
+                .status = .SUCCESS,
+            }},
+        };
+        const poll_bytes = std.mem.asBytes(&poll_info);
+        const result = try io.operate(.{ .device_io_control = .{
+            .file = .{ .handle = client.socket.handle, .flags = .{ .nonblocking = true } },
+            .code = windows.IOCTL.AFD.POLL,
+            .in = poll_bytes,
+            .out = poll_bytes,
+        } });
+        switch (result.device_io_control.u.Status) {
+            .SUCCESS => {},
+            .TIMEOUT, .CANCELLED => return .open,
+            else => |status| return windows.unexpectedStatus(status),
+        }
+        switch (poll_info.handles[0].status) {
+            .SUCCESS => {},
+            .TIMEOUT, .CANCELLED => return .open,
+            else => |status| return windows.unexpectedStatus(status),
+        }
+        if (poll_info.handles[0].events == 0) return .open;
+        // AFD_POLLが読み取り可能/切断を通知済みなので、通常のnet_readは
+        // 待たずに完了する。`Stream.read`はWindowsでReadResultを分解できず
+        // コンパイルできないため、ここでは生のnet_read結果を使う。
+        var byte: [1]u8 = undefined;
+        var buffers = [_][]u8{byte[0..]};
+        const read_result = try (try io.operate(.{ .net_read = .{
+            .socket_handle = client.socket.handle,
+            .data = buffers[0..],
+        } })).net_read;
+        if (read_result.data_len == 0) return .eof;
+        return .data;
+    }
+}.probe else struct {
+    fn probe(_: std.Io.net.Stream, _: std.Io, _: i64) !AotHttpClientProbe {
+        unreachable;
+    }
+}.probe;
+
 /// 1バイト読み取りに期限を付け、接続状態を判定する。`error.Timeout`だけを
 /// 「開いたまま」とし、読み取りエラーは失敗として伝播する。EOFは0バイト
 /// 読み取りだけで判定し、RSTなどの読み取りエラーを切断成功として扱わない。
-fn probeAotHttpClient(client: std.Io.net.Stream, io: std.Io, timeout_ms: i64) !AotHttpClientProbe {
+fn probeAotHttpClientTimeout(client: std.Io.net.Stream, io: std.Io, timeout_ms: i64) !AotHttpClientProbe {
     var byte: [1]u8 = undefined;
     var buffers = [_][]u8{byte[0..]};
     const result = io.operateTimeout(.{ .net_read = .{
@@ -860,6 +929,11 @@ fn probeAotHttpClient(client: std.Io.net.Stream, io: std.Io, timeout_ms: i64) !A
     return .data;
 }
 
+fn probeAotHttpClient(client: std.Io.net.Stream, io: std.Io, timeout_ms: i64) !AotHttpClientProbe {
+    if (builtin.os.tag == .windows) return probeAotHttpClientWindows(client, io, timeout_ms);
+    return probeAotHttpClientTimeout(client, io, timeout_ms);
+}
+
 /// 期限内に厳密なEOF（0バイト読み取り）を観測する。タイムアウト（接続生存）
 /// や読み取りエラー、予期しないデータはすべてテスト失敗にする。
 fn expectAotHttpClientEof(client: std.Io.net.Stream, io: std.Io) !void {
@@ -870,6 +944,17 @@ fn expectAotHttpClientEof(client: std.Io.net.Stream, io: std.Io) !void {
 /// 確認する。EOFやデータ到着はテスト失敗にする。
 fn expectAotHttpClientStaysOpen(client: std.Io.net.Stream, io: std.Io) !void {
     try std.testing.expectEqual(AotHttpClientProbe.open, try probeAotHttpClient(client, io, 100));
+}
+
+/// 不正な要求を送った接続は、サーバーが未読データを残して閉じるためRSTに
+/// なることがある。ここではEOFまたは接続リセットだけを「閉じた」とみなす。
+/// 保留接続の検証は上の厳密EOFヘルパーを使い、この緩和を適用しない。
+fn expectAotHttpClientClosedAfterMalformed(client: std.Io.net.Stream, io: std.Io) !void {
+    const probe = probeAotHttpClient(client, io, 2000) catch |err| switch (err) {
+        error.ConnectionResetByPeer, error.SocketUnconnected => return,
+        else => return err,
+    };
+    try std.testing.expectEqual(AotHttpClientProbe.eof, probe);
 }
 
 /// Linuxでは`/proc/self/fd`を数えてfdの解放を確認する。fd数を観測できない
@@ -1330,7 +1415,7 @@ test "AOT HTTPは途中切断と不正chunk/header後に次の要求を受け付
         var client = try aotHttpTestSendRequest(io, port, case);
         defer client.close(io);
         // 不正な要求は接続単位の受信workerが吸収し、応答なしで閉じる。
-        try expectAotHttpClientEof(client, io);
+        try expectAotHttpClientClosedAfterMalformed(client, io);
         try std.testing.expect(runtime.http_connection == null);
         try std.testing.expect(!runtime.http_head_request);
         try std.testing.expect(!runtime.http_server_state.request_active);
