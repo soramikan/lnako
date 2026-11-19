@@ -865,34 +865,48 @@ const probeAotHttpClientWindows = if (builtin.os.tag == .windows) struct {
     const afd_poll_abort: u32 = 0x0010;
 
     fn probe(client: std.Io.net.Stream, io: std.Io, timeout_ms: i64) !AotHttpClientProbe {
-        var poll_info = AfdPollInfo{
+        const relevant_events = afd_poll_receive | afd_poll_disconnect | afd_poll_abort;
+        var poll_input = AfdPollInfo{
             .timeout = -timeout_ms * 10_000,
             .number_of_handles = 1,
             .exclusive = 0,
             .handles = .{.{
                 .handle = client.socket.handle,
-                .events = afd_poll_receive | afd_poll_disconnect | afd_poll_abort,
+                .events = relevant_events,
                 .status = .SUCCESS,
             }},
         };
-        const poll_bytes = std.mem.asBytes(&poll_info);
+        // 入出力を同じバッファにすると、ドライバがヘッダーだけ書き戻した場合に
+        // 入力のイベントマスクが残り、読み取り可能と誤認する。出力は0初期化
+        // した別バッファにし、件数・ハンドル・出力長を検証する。
+        var poll_output: AfdPollInfo = std.mem.zeroes(AfdPollInfo);
         const result = try io.operate(.{ .device_io_control = .{
             .file = .{ .handle = client.socket.handle, .flags = .{ .nonblocking = true } },
             .code = windows.IOCTL.AFD.POLL,
-            .in = poll_bytes,
-            .out = poll_bytes,
+            .in = std.mem.asBytes(&poll_input),
+            .out = std.mem.asBytes(&poll_output),
         } });
-        switch (result.device_io_control.u.Status) {
+        const iosb = result.device_io_control;
+        switch (iosb.u.Status) {
             .SUCCESS => {},
-            .TIMEOUT, .CANCELLED => return .open,
+            .TIMEOUT => return .open,
             else => |status| return windows.unexpectedStatus(status),
         }
-        switch (poll_info.handles[0].status) {
+        // 出力0件は期限切れ（イベントなし）として扱う。この場合は入力の
+        // イベントマスクが残っていても読み取りには進まない。
+        if (poll_output.number_of_handles == 0) return .open;
+        // 出力長が報告された場合はAfdPollInfo全体を含むことを要求する。
+        // 0はドライバが長さを報告しない場合があるため、件数とハンドルで
+        // 実際に出力が書き戻されたことを検証する。
+        if (iosb.Information != 0 and iosb.Information < @sizeOf(AfdPollInfo)) return error.InvalidAfdPollOutput;
+        if (poll_output.number_of_handles != 1) return error.InvalidAfdPollOutput;
+        if (poll_output.handles[0].handle != client.socket.handle) return error.InvalidAfdPollOutput;
+        switch (poll_output.handles[0].status) {
             .SUCCESS => {},
-            .TIMEOUT, .CANCELLED => return .open,
+            .TIMEOUT => return .open,
             else => |status| return windows.unexpectedStatus(status),
         }
-        if (poll_info.handles[0].events == 0) return .open;
+        if ((poll_output.handles[0].events & relevant_events) == 0) return .open;
         // AFD_POLLが読み取り可能/切断を通知済みなので、通常のnet_readは
         // 待たずに完了する。`Stream.read`はWindowsでReadResultを分解できず
         // コンパイルできないため、ここでは生のnet_read結果を使う。
