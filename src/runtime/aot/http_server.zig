@@ -397,6 +397,7 @@ fn aotHttpReject(runtime: *Runtime, status: u16) !bool {
 const aot_http_bad_request_body = "<html><meta charset=\"utf-8\"><body><h1>400 要求が不正です。</h1></body></html>";
 const aot_http_internal_error_body = "<html><meta charset=\"utf-8\"><body><h1>500 サーバ内部エラーです。</h1></body></html>";
 const aot_http_not_found_body = "<html><meta charset=\"utf-8\"><body><h1>404 見当たりません。</h1></body></html>";
+const aot_http_static_too_large_body = "<html><meta charset=\"utf-8\"><body><h1>413 要求が大きすぎます。</h1></body></html>";
 
 /// 受信完了した要求をengineのqueueから取り出す。header/body受信自体は
 /// 接続単位のworker threadが担うため、低速・切断した接続はこのloopを
@@ -640,9 +641,10 @@ pub fn aotHttpServeStatic(runtime: *Runtime, route: AotHttpRoute, path: []const 
     // あることを確認する。文字列比較だけではdocroot内のsymlinkが外を
     // 指す場合を検出できない（Interpreter側resolveHttpServerStaticPathと
     // 同じ判定）。
-    const root_real = std.Io.Dir.cwd().realPathFileAlloc(io, route.path, runtime.allocator) catch |err| switch (err) {
-        error.FileNotFound => return aotHttpRespondWith(runtime, 404, &.{}, aot_http_not_found_body),
-        else => return err,
+    const root_real = std.Io.Dir.cwd().realPathFileAlloc(io, route.path, runtime.allocator) catch |err| {
+        // Interpreter側resolveStaticPathFnと同じく、解決不能なパスは404。
+        if (!aotHttpIsMissingStaticPath(err)) return err;
+        return aotHttpRespondWith(runtime, 404, &.{}, aot_http_not_found_body);
     };
     defer runtime.allocator.free(root_real);
     var target = try std.fs.path.join(runtime.allocator, &.{ root_real, std.mem.trimStart(u8, sanitized, "/\\") });
@@ -657,13 +659,20 @@ pub fn aotHttpServeStatic(runtime: *Runtime, route: AotHttpRoute, path: []const 
         },
         .file => {},
     }
-    const resolved = std.Io.Dir.cwd().realPathFileAlloc(io, target, runtime.allocator) catch |err| switch (err) {
-        error.FileNotFound => return aotHttpRespondWith(runtime, 404, &.{}, aot_http_not_found_body),
-        else => return err,
+    const resolved = std.Io.Dir.cwd().realPathFileAlloc(io, target, runtime.allocator) catch |err| {
+        if (!aotHttpIsMissingStaticPath(err)) return err;
+        return aotHttpRespondWith(runtime, 404, &.{}, aot_http_not_found_body);
     };
     defer runtime.allocator.free(resolved);
     if (!aotHttpIsUnderRoot(resolved, root_real)) return aotHttpRespondWith(runtime, 404, &.{}, aot_http_not_found_body);
-    const body = try std.Io.Dir.cwd().readFileAlloc(io, resolved, runtime.allocator, .limited(1024 * 1024 * 1024));
+    const body = std.Io.Dir.cwd().readFileAlloc(io, resolved, runtime.allocator, .limited(1024 * 1024 * 1024)) catch |err| {
+        const status = aotHttpStaticReadErrorStatus(err) orelse return err;
+        return aotHttpRespondWith(runtime, status, &.{}, switch (status) {
+            404 => aot_http_not_found_body,
+            413 => aot_http_static_too_large_body,
+            else => aot_http_internal_error_body,
+        });
+    };
     defer runtime.allocator.free(body);
     const saved_status = runtime.http_server_state.response_status;
     runtime.http_server_state.response_status = 200;
@@ -671,6 +680,27 @@ pub fn aotHttpServeStatic(runtime: *Runtime, route: AotHttpRoute, path: []const 
     try aotHttpAppendHeader(runtime, "Content-Type", aotHttpMimeType(resolved));
     defer runtime.http_server_state.response_status = saved_status;
     return aotHttpRespondSafe(runtime, body);
+}
+
+/// パス解決のI/Oエラーが「存在しない・種別違い・解決不能」を表すか。
+/// 権限等のホスト側障害はfalseにして呼び出し元の500へ伝播させる。
+fn aotHttpIsMissingStaticPath(err: anyerror) bool {
+    return switch (err) {
+        error.FileNotFound, error.NotDir, error.IsDir, error.SymLinkLoop, error.NameTooLong, error.BadPathName => true,
+        else => false,
+    };
+}
+
+/// 静的配信の読み込みI/Oエラーを要求スコープのstatusへ分類する。
+/// 解決後に消えた・種別が変わったファイルは404、容量超過は413、
+/// 権限等のホスト側障害は500。OOMだけは伝播させる（null）。
+fn aotHttpStaticReadErrorStatus(err: anyerror) ?u16 {
+    return switch (err) {
+        error.OutOfMemory => null,
+        error.StreamTooLong => 413,
+        error.FileNotFound, error.NotDir, error.IsDir => 404,
+        else => 500,
+    };
 }
 
 fn aotHttpIsUnderRoot(resolved: []const u8, root: []const u8) bool {
@@ -707,9 +737,11 @@ pub fn aotHttpRemoveParentSegments(allocator: std.mem.Allocator, source: []const
 }
 
 pub fn aotHttpStatPath(path: []const u8) !AotHttpPathStat {
-    const stat = std.Io.Dir.cwd().statFile(aotHttpIo(), path, .{}) catch |err| return switch (err) {
-        error.FileNotFound, error.NotDir => .missing,
-        else => err,
+    const stat = std.Io.Dir.cwd().statFile(aotHttpIo(), path, .{}) catch |err| {
+        // 存在しない・種別違い・解決不能はmissing（404）。権限等の
+        // ホスト側障害は呼び出し元の500へ伝播させる。
+        if (!aotHttpIsMissingStaticPath(err)) return err;
+        return .missing;
     };
     return switch (stat.kind) {
         .file => .file,
@@ -845,6 +877,17 @@ test "AOT HTTPは不正query encodingを400で捨てて要求処理を続ける"
         try std.testing.expect(runtime.http_connection == null);
         try expectAotHttpResponse(client, io, "HTTP/1.1 400", null, null);
     }
+}
+
+test "AOT静的配信の読み込みI/Oエラーは要求スコープのstatusへ分類する" {
+    try std.testing.expectEqual(@as(?u16, 404), aotHttpStaticReadErrorStatus(error.FileNotFound));
+    try std.testing.expectEqual(@as(?u16, 404), aotHttpStaticReadErrorStatus(error.NotDir));
+    try std.testing.expectEqual(@as(?u16, 404), aotHttpStaticReadErrorStatus(error.IsDir));
+    try std.testing.expectEqual(@as(?u16, 413), aotHttpStaticReadErrorStatus(error.StreamTooLong));
+    try std.testing.expectEqual(@as(?u16, 500), aotHttpStaticReadErrorStatus(error.AccessDenied));
+    try std.testing.expectEqual(@as(?u16, 500), aotHttpStaticReadErrorStatus(error.InputOutput));
+    // OOMだけはイベントループへ伝播する。
+    try std.testing.expectEqual(@as(?u16, null), aotHttpStaticReadErrorStatus(error.OutOfMemory));
 }
 
 test "AOT HTTP静的配信はdocroot外を指すsymlinkを404にする" {

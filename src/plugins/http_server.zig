@@ -290,6 +290,8 @@ pub fn poll(runtime: *Runtime, state: *State, context: Context, effects: Effects
 
 const bad_request_body = "<html><meta charset=\"utf-8\"><body><h1>400 要求が不正です。</h1></body></html>";
 const internal_error_body = "<html><meta charset=\"utf-8\"><body><h1>500 サーバ内部エラーです。</h1></body></html>";
+const static_not_found_body = "<html><meta charset=\"utf-8\"><body><h1>404 見当たりません。</h1></body></html>";
+const static_too_large_body = "<html><meta charset=\"utf-8\"><body><h1>413 要求が大きすぎます。</h1></body></html>";
 
 /// 受信後の要求処理で起きた失敗を1回だけ応答して捨てる。
 /// 1件の要求でイベントループ（＝プロセス）を止めない。
@@ -608,17 +610,50 @@ fn serveStatic(runtime: *Runtime, state: *State, context: Context, route: Route,
         else => return err,
     };
     defer freeStaticPathComponents(runtime.allocator(), &components);
-    const resolved = (try context.resolveStaticPathFn(context.context, runtime.allocator(), route.path, components.items)) orelse {
-        return respondConnectionSafe(state, context, 404, &.{}, "<html><meta charset=\"utf-8\"><body><h1>404 見当たりません。</h1></body></html>");
-    };
+    const resolved = context.resolveStaticPathFn(context.context, runtime.allocator(), route.path, components.items) catch |err| {
+        const status = staticResolveErrorStatus(err) orelse return err;
+        return respondStaticFailure(state, context, status);
+    } orelse return respondStaticFailure(state, context, 404);
     defer runtime.allocator().free(resolved.path);
-    if (resolved.kind != .file) return respondConnectionSafe(state, context, 404, &.{}, "<html><meta charset=\"utf-8\"><body><h1>404 見当たりません。</h1></body></html>");
-    const body = context.readStaticFileFn(context.context, runtime.allocator(), resolved.path) catch |err| switch (err) {
-        error.StreamTooLong => return respondConnectionSafe(state, context, 413, &.{}, "<html><meta charset=\"utf-8\"><body><h1>413 要求が大きすぎます。</h1></body></html>"),
-        else => return err,
+    if (resolved.kind != .file) return respondStaticFailure(state, context, 404);
+    const body = context.readStaticFileFn(context.context, runtime.allocator(), resolved.path) catch |err| {
+        const status = staticReadErrorStatus(err) orelse return err;
+        return respondStaticFailure(state, context, status);
     };
     defer runtime.allocator().free(body);
     try respondConnectionSafe(state, context, 200, &.{.{ .name = "Content-Type", .value = mimeType(resolved.path) }}, body);
+}
+
+/// 静的パス解決のI/Oエラーを要求スコープのHTTP statusへ分類する。
+/// パスが無い・種別違い・解決不能は404、権限等のホスト側障害は500。
+/// OOMだけはイベントループへ伝播させる（null）。
+fn staticResolveErrorStatus(err: anyerror) ?u16 {
+    return switch (err) {
+        error.OutOfMemory => null,
+        error.FileNotFound, error.NotDir, error.IsDir, error.SymLinkLoop, error.NameTooLong, error.BadPathName => 404,
+        else => 500,
+    };
+}
+
+/// 静的ファイル読み込みのI/Oエラーを要求スコープのHTTP statusへ分類する。
+/// 解決後に消えた・種別が変わったファイルは404、容量超過は413、
+/// 権限等のホスト側障害は500。OOMだけは伝播させる（null）。
+fn staticReadErrorStatus(err: anyerror) ?u16 {
+    return switch (err) {
+        error.OutOfMemory => null,
+        error.FileNotFound, error.NotDir, error.IsDir => 404,
+        error.StreamTooLong => 413,
+        else => 500,
+    };
+}
+
+fn respondStaticFailure(state: *State, context: Context, status: u16) !void {
+    const body = switch (status) {
+        404 => static_not_found_body,
+        413 => static_too_large_body,
+        else => internal_error_body,
+    };
+    return respondConnectionSafe(state, context, status, &.{}, body);
 }
 
 fn staticPathComponents(allocator: std.mem.Allocator, source: []const u8) !std.ArrayList([]u8) {
@@ -627,7 +662,11 @@ fn staticPathComponents(allocator: std.mem.Allocator, source: []const u8) !std.A
     var it = std.mem.splitScalar(u8, source, '/');
     while (it.next()) |raw| {
         if (raw.len == 0) continue;
-        const decoded = try percentDecode(allocator, raw, false, true);
+        const decoded = percentDecode(allocator, raw, false, true) catch |err| switch (err) {
+            // strict復号の失敗（不正な%・不正UTF-8）はパス不正として同じ分類にする。
+            error.InvalidHttpQueryEncoding => return error.InvalidHttpStaticPath,
+            else => return err,
+        };
         if (decoded.len == 0 or std.mem.eql(u8, decoded, ".") or std.mem.eql(u8, decoded, "..")) {
             allocator.free(decoded);
             return error.InvalidHttpStaticPath;
@@ -764,6 +803,10 @@ test "静的ファイル配信のパス成分は..や制御文字、空を拒否
     try std.testing.expectError(error.InvalidHttpStaticPath, staticPathComponents(std.testing.allocator, "/foo/.."));
     try std.testing.expectError(error.InvalidHttpStaticPath, staticPathComponents(std.testing.allocator, "/foo/%00"));
     try std.testing.expectError(error.InvalidHttpStaticPath, staticPathComponents(std.testing.allocator, "/foo/bar%0a"));
+    // strict復号の失敗（不正な%・不正UTF-8）も静的パス不正として同じ分類にする。
+    try std.testing.expectError(error.InvalidHttpStaticPath, staticPathComponents(std.testing.allocator, "/foo/%zz"));
+    try std.testing.expectError(error.InvalidHttpStaticPath, staticPathComponents(std.testing.allocator, "/foo/%ff"));
+    try std.testing.expectError(error.InvalidHttpStaticPath, staticPathComponents(std.testing.allocator, "/foo/%2"));
 }
 
 const PollFixture = struct {
@@ -773,6 +816,9 @@ const PollFixture = struct {
     target: []const u8 = "/",
     content_type: []const u8 = "",
     body: []const u8 = "",
+    resolve_error: ?anyerror = null,
+    read_error: ?anyerror = null,
+    resolved_path: ?[]const u8 = null,
     receive_count: usize = 0,
     hold_count: usize = 0,
     response_count: usize = 0,
@@ -848,12 +894,17 @@ fn pollFixtureInvoke(_: *anyopaque, _: Value, _: []const Value) anyerror!Value {
 
 fn pollFixtureSetGlobal(_: *anyopaque, _: []const u8, _: Value) anyerror!void {}
 
-fn pollFixtureResolveStaticPath(_: *anyopaque, _: std.mem.Allocator, _: []const u8, _: []const []const u8) anyerror!?ResolvedPath {
-    return null;
+fn pollFixtureResolveStaticPath(context: *anyopaque, allocator: std.mem.Allocator, _: []const u8, _: []const []const u8) anyerror!?ResolvedPath {
+    const fixture: *PollFixture = @ptrCast(@alignCast(context));
+    if (fixture.resolve_error) |err| return err;
+    const resolved_path = fixture.resolved_path orelse return null;
+    return .{ .path = try allocator.dupeSentinel(u8, resolved_path, 0), .kind = .file };
 }
 
-fn pollFixtureReadStaticFile(_: *anyopaque, _: std.mem.Allocator, _: []const u8) anyerror![]u8 {
-    return error.Unexpected;
+fn pollFixtureReadStaticFile(context: *anyopaque, allocator: std.mem.Allocator, _: []const u8) anyerror![]u8 {
+    const fixture: *PollFixture = @ptrCast(@alignCast(context));
+    if (fixture.read_error) |err| return err;
+    return allocator.dupe(u8, "STATIC");
 }
 
 fn pollFixtureSaveUpload(context: *anyopaque, allocator: std.mem.Allocator, _: []const u8, _: []const u8) anyerror![]u8 {
@@ -946,6 +997,115 @@ test "HTTP静的配信の親参照を含むパスは400で捨てる" {
     try std.testing.expect(try poll(&runtime, &state, context, effects));
     try std.testing.expect(try poll(&runtime, &state, context, effects));
     try std.testing.expectEqual(@as(u16, 400), fixture.last_status);
+}
+
+/// 静的配信の1要求を処理し、要求スコープのstatusで応答することを検査する。
+fn expectStaticFailure(target: []const u8, resolve_error: ?anyerror, read_error: ?anyerror, expected_status: u16) !void {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var state: State = .{ .started = true };
+    defer state.deinit(std.testing.allocator);
+    try state.routes.append(std.testing.allocator, .{
+        .kind = .static,
+        .prefix = try std.testing.allocator.dupe(u8, "/static"),
+        .path = try std.testing.allocator.dupe(u8, "."),
+    });
+    var fixture: PollFixture = .{
+        .mode = .invalid_then_valid,
+        .target = target,
+        .resolve_error = resolve_error,
+        .read_error = read_error,
+        .resolved_path = if (read_error != null) "/tmp/lnako-static-fixture" else null,
+    };
+    const context = pollFixtureContext(&fixture);
+    const effects = pollFixtureEffects(&fixture);
+
+    // 最初のpollは受信エラー、2回目が対象要求。どちらもエラーを返さない。
+    try std.testing.expect(try poll(&runtime, &state, context, effects));
+    try std.testing.expect(try poll(&runtime, &state, context, effects));
+    try std.testing.expectEqual(expected_status, fixture.last_status);
+    try std.testing.expectEqual(@as(usize, 1), fixture.response_count);
+}
+
+test "HTTP静的配信の不正percent encodingは400で捨てる" {
+    try expectStaticFailure("/static/%zz", null, null, 400);
+    try expectStaticFailure("/static/%ff", null, null, 400);
+}
+
+test "HTTP静的配信の解決I/Oエラーは要求スコープのstatusで捨てる" {
+    // 存在しない・種別違い・symlink/名前の解決不能は404。
+    try expectStaticFailure("/static/secret.txt", error.NotDir, null, 404);
+    try expectStaticFailure("/static/secret.txt", error.SymLinkLoop, null, 404);
+    try expectStaticFailure("/static/secret.txt", error.NameTooLong, null, 404);
+    try expectStaticFailure("/static/secret.txt", error.IsDir, null, 404);
+    // 権限等のホスト側障害は500。
+    try expectStaticFailure("/static/secret.txt", error.AccessDenied, null, 500);
+}
+
+test "HTTP静的配信の読み込みI/Oエラーは要求スコープのstatusで捨てる" {
+    try expectStaticFailure("/static/hello.txt", null, error.AccessDenied, 500);
+    try expectStaticFailure("/static/hello.txt", null, error.InputOutput, 500);
+    try expectStaticFailure("/static/hello.txt", null, error.FileNotFound, 404);
+    try expectStaticFailure("/static/hello.txt", null, error.NotDir, 404);
+    try expectStaticFailure("/static/hello.txt", null, error.IsDir, 404);
+    try expectStaticFailure("/static/hello.txt", null, error.StreamTooLong, 413);
+}
+
+test "HTTP静的配信の読み込み失敗後も要求処理を続ける" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var state: State = .{ .started = true };
+    defer state.deinit(std.testing.allocator);
+    try state.routes.append(std.testing.allocator, .{
+        .kind = .static,
+        .prefix = try std.testing.allocator.dupe(u8, "/static"),
+        .path = try std.testing.allocator.dupe(u8, "."),
+    });
+    var fixture: PollFixture = .{
+        .mode = .invalid_then_valid,
+        .target = "/static/hello.txt",
+        .read_error = error.AccessDenied,
+        .resolved_path = "/tmp/lnako-static-fixture",
+    };
+    const context = pollFixtureContext(&fixture);
+    const effects = pollFixtureEffects(&fixture);
+
+    try std.testing.expect(try poll(&runtime, &state, context, effects));
+    try std.testing.expect(try poll(&runtime, &state, context, effects));
+    try std.testing.expectEqual(@as(u16, 500), fixture.last_status);
+
+    // 1件のI/O障害でループを止めず、次の要求は通常どおり配信する。
+    fixture.read_error = null;
+    try std.testing.expect(try poll(&runtime, &state, context, effects));
+    try std.testing.expectEqual(@as(u16, 200), fixture.last_status);
+    try std.testing.expectEqual(@as(usize, 2), fixture.response_count);
+}
+
+test "HTTP静的配信のOOMは要求スコープで握らず伝播する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var state: State = .{ .started = true };
+    defer state.deinit(std.testing.allocator);
+    try state.routes.append(std.testing.allocator, .{
+        .kind = .static,
+        .prefix = try std.testing.allocator.dupe(u8, "/static"),
+        .path = try std.testing.allocator.dupe(u8, "."),
+    });
+    var fixture: PollFixture = .{
+        .mode = .invalid_then_valid,
+        .target = "/static/hello.txt",
+        .resolve_error = error.OutOfMemory,
+    };
+    const context = pollFixtureContext(&fixture);
+    const effects = pollFixtureEffects(&fixture);
+    try std.testing.expect(try poll(&runtime, &state, context, effects));
+    try std.testing.expectError(error.OutOfMemory, poll(&runtime, &state, context, effects));
+
+    // 解決後の読み込みで起きたOOMも同じく伝播する。
+    fixture.resolve_error = null;
+    fixture.read_error = error.OutOfMemory;
+    fixture.resolved_path = "/tmp/lnako-static-fixture";
+    try std.testing.expectError(error.OutOfMemory, poll(&runtime, &state, context, effects));
 }
 
 test "未登録URLへのmultipart POSTはアップロードを永続化しない" {
