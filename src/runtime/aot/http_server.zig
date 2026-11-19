@@ -647,7 +647,7 @@ pub fn aotHttpPercentDecode(allocator: std.mem.Allocator, source: []const u8, pl
 
 /// 静的配信で開いたファイル。`name`はContent-Type判定に使う相対名で、
 /// `aotHttpServeStatic`の`sanitized`か静的リテラルを指す（所有しない）。
-const AotHttpStaticFile = struct {
+pub const AotHttpStaticFile = struct {
     file: std.Io.File,
     name: []const u8,
 };
@@ -666,7 +666,7 @@ pub fn aotHttpServeStatic(runtime: *Runtime, route: AotHttpRoute, path: []const 
     var opened = (try aotHttpOpenStaticFile(io, route.path, sanitized)) orelse
         return aotHttpRespondWith(runtime, 404, &.{}, aot_http_not_found_body);
     defer opened.file.close(io);
-    const body = aotHttpReadStaticFile(io, opened.file, runtime.allocator) catch |err| {
+    const body = aotHttpReadStaticFile(io, opened.file, runtime.allocator, aot_http_static_max_bytes) catch |err| {
         const status = aotHttpStaticReadErrorStatus(err) orelse return err;
         return aotHttpRespondWith(runtime, status, &.{}, switch (status) {
             404 => aot_http_not_found_body,
@@ -696,10 +696,13 @@ pub fn aotHttpServeStatic(runtime: *Runtime, route: AotHttpRoute, path: []const 
 /// あり、そこからの相対openがlink先へ解決されうる。開いた後に対象の実体が
 /// 通常のディレクトリ／ファイルであることを`stat`で確認し、symlinkや
 /// reparse point（`unknown`）は配信しない（fail closed）。
-fn aotHttpOpenStaticFile(io: std.Io, docroot: []const u8, relative: []const u8) !?AotHttpStaticFile {
-    var directory = std.Io.Dir.cwd().openDir(io, docroot, .{}) catch |err| return if (aotHttpIsStaticPathMiss(err)) null else err;
+pub fn aotHttpOpenStaticFile(io: std.Io, docroot: []const u8, relative: []const u8) !?AotHttpStaticFile {
+    var directory = try aotHttpOpenDocRoot(io, docroot) orelse return null;
     defer directory.close(io);
 
+    // 末尾が区切り、または末尾成分が`.`ならディレクトリ指定。通常ファイルに
+    // 対して`hello.txt/`や`hello.txt/.`を付けた要求は従来どおり404にする。
+    const requires_directory = aotHttpStaticPathRequiresDirectory(relative);
     var components: AotHttpStaticPathIterator = .{ .path = relative };
     const first = components.next() orelse return aotHttpOpenIndexFile(io, directory);
     if (!aotHttpValidStaticComponent(first)) return null;
@@ -711,28 +714,52 @@ fn aotHttpOpenStaticFile(io: std.Io, docroot: []const u8, relative: []const u8) 
         directory = child;
         component = next_component;
     }
-    return aotHttpOpenStaticTarget(io, directory, component);
+    return aotHttpOpenStaticTarget(io, directory, component, requires_directory);
+}
+
+/// docrootを開く。docrootは設定値なのでsymlinkを追従する（従来の
+/// `realPathFileAlloc`と同じ）。POSIXでは読み取り権限を要求しない
+/// `O_PATH`（Linux）/`O_SEARCH`（Darwin）で開く。
+fn aotHttpOpenDocRoot(io: std.Io, docroot: []const u8) !?std.Io.Dir {
+    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) {
+        const directory = std.Io.Dir.cwd().openDir(io, docroot, .{}) catch |err| return if (aotHttpIsStaticPathMiss(err)) null else err;
+        return aotHttpVerifyDirectory(io, directory);
+    }
+    const fd = try aotHttpOpenPosixDirectoryFd(std.Io.Dir.cwd(), docroot, true) orelse return null;
+    return aotHttpVerifyDirectory(io, .{ .handle = fd });
 }
 
 /// 最終成分を開く。ディレクトリなら従来どおり`index.html`を配信する。
-fn aotHttpOpenStaticTarget(io: std.Io, directory: std.Io.Dir, component: []const u8) !?AotHttpStaticFile {
-    // 通常ファイル以外（FIFO・socket・device・symlink）は開かない。特にFIFOは
-    // 読み取りopenが書き手待ちで停止するため、open前にkindを確認する。
-    const stat = directory.statFile(io, component, .{ .follow_symlinks = false }) catch |err| return if (aotHttpIsStaticPathMiss(err)) null else err;
-    if (stat.kind == .directory) {
-        const child = try aotHttpOpenChildDirectory(io, directory, component) orelse return null;
+fn aotHttpOpenStaticTarget(io: std.Io, directory: std.Io.Dir, component: []const u8, requires_directory: bool) !?AotHttpStaticFile {
+    // まずディレクトリとして開く。通常ファイル・FIFO・symlinkはここで
+    // 失敗するため、通常ファイル経路へ進む。事前statに依存しないので、
+    // statとopenの間で種別が変わってもfd側の確認で拒否できる。
+    if (try aotHttpOpenChildDirectory(io, directory, component)) |child| {
         defer child.close(io);
         return aotHttpOpenIndexFile(io, child);
     }
-    if (stat.kind != .file) return null;
-    const file = directory.openFile(io, component, .{ .follow_symlinks = false, .allow_directory = false }) catch |err| return if (aotHttpIsStaticPathMiss(err)) null else err;
-    return aotHttpRequireRegularStaticFile(io, file, component);
+    if (requires_directory) return null;
+    return aotHttpOpenRegularFile(io, directory, component);
 }
 
 /// `directory/index.html`を開く。docroot直下と、ディレクトリ指定の両方で使う。
+/// 通常ファイル経路と同じ非ブロッキングopen + fd種別確認を共用する。
 fn aotHttpOpenIndexFile(io: std.Io, directory: std.Io.Dir) !?AotHttpStaticFile {
-    const file = directory.openFile(io, "index.html", .{ .follow_symlinks = false, .allow_directory = false }) catch |err| return if (aotHttpIsStaticPathMiss(err)) null else err;
-    return aotHttpRequireRegularStaticFile(io, file, "index.html");
+    return aotHttpOpenRegularFile(io, directory, "index.html");
+}
+
+/// 通常ファイルを開く。POSIXでは`O_NONBLOCK`を付けて開き、書き手のいない
+/// FIFOでもopenで停止しないようにする。開いた後は必ずfdの`stat`で
+/// 通常ファイル（`.file`）であることを確認する（FIFO・socket・device・
+/// ディレクトリ・symlinkは配信しない）。
+fn aotHttpOpenRegularFile(io: std.Io, directory: std.Io.Dir, name: []const u8) !?AotHttpStaticFile {
+    const file = if (builtin.os.tag == .windows or builtin.os.tag == .wasi)
+        directory.openFile(io, name, .{ .follow_symlinks = false, .allow_directory = false }) catch |err| return if (aotHttpIsStaticPathMiss(err)) null else err
+    else blk: {
+        const fd = std.posix.openat(directory.handle, name, aotHttpRegularFileOpenFlags(), 0) catch |err| return if (aotHttpIsStaticPathMiss(err)) null else err;
+        break :blk std.Io.File{ .handle = fd, .flags = .{ .nonblocking = true } };
+    };
+    return aotHttpRequireRegularStaticFile(io, file, name);
 }
 
 /// 開いたファイルが通常ファイルであることをfdから確認する。所有権は常に
@@ -751,22 +778,112 @@ fn aotHttpRequireRegularStaticFile(io: std.Io, file: std.Io.File, name: []const 
 
 /// 中間ディレクトリを1成分だけ、symlinkを辿らずに開く。
 fn aotHttpOpenChildDirectory(io: std.Io, parent: std.Io.Dir, component: []const u8) !?std.Io.Dir {
-    const child = parent.openDir(io, component, .{ .follow_symlinks = false }) catch |err| return if (aotHttpIsStaticPathMiss(err)) null else err;
-    const stat = child.stat(io) catch |err| {
-        child.close(io);
+    const child = if (builtin.os.tag == .windows or builtin.os.tag == .wasi)
+        parent.openDir(io, component, .{ .follow_symlinks = false }) catch |err| return if (aotHttpIsStaticPathMiss(err)) null else err
+    else blk: {
+        const fd = try aotHttpOpenPosixDirectoryFd(parent, component, false) orelse return null;
+        break :blk std.Io.Dir{ .handle = fd };
+    };
+    return aotHttpVerifyDirectory(io, child);
+}
+
+/// 開いたディレクトリの実体が通常のディレクトリであることを確認する。
+/// Windowsのreparse point（`.sym_link`/`.unknown`）はここで拒否する。
+fn aotHttpVerifyDirectory(io: std.Io, directory: std.Io.Dir) !?std.Io.Dir {
+    const stat = directory.stat(io) catch |err| {
+        directory.close(io);
         return err;
     };
     if (stat.kind != .directory) {
-        child.close(io);
+        directory.close(io);
         return null;
     }
-    return child;
+    return directory;
 }
 
-fn aotHttpReadStaticFile(io: std.Io, file: std.Io.File, allocator: std.mem.Allocator) ![]u8 {
+/// POSIXでディレクトリを1成分だけ開く。Linuxは`O_PATH`、Darwinは
+/// `O_SEARCH`（= `O_EXEC | O_DIRECTORY`）を使い、読み取り権限を要求しない。
+/// どちらも使えない環境では`O_RDONLY`にフォールバックする。
+fn aotHttpOpenPosixDirectoryFd(parent: std.Io.Dir, component: []const u8, follow_symlinks: bool) !?std.posix.fd_t {
+    const flags = aotHttpDirectoryOpenFlags(follow_symlinks);
+    const fd = std.posix.openat(parent.handle, component, flags, 0) catch |err| {
+        if (aotHttpIsDarwin() and err == error.BadPathName) {
+            // O_SEARCH非対応の環境では従来のO_RDONLYで開き直す。
+            const fallback_flags = aotHttpDirectoryOpenFlagsFallback(follow_symlinks);
+            return std.posix.openat(parent.handle, component, fallback_flags, 0) catch |fallback_err| return if (aotHttpIsStaticPathMiss(fallback_err)) null else fallback_err;
+        }
+        return if (aotHttpIsStaticPathMiss(err)) null else err;
+    };
+    return fd;
+}
+
+fn aotHttpIsDarwin() bool {
+    return switch (builtin.os.tag) {
+        .macos, .ios, .tvos, .watchos, .visionos, .maccatalyst, .driverkit => true,
+        else => false,
+    };
+}
+
+/// ディレクトリ用のopenフラグ。Linuxの`O_PATH`は読み取り権限を要求せず、
+/// `openat`の起点として使える。Darwinの`O_SEARCH`は`O_EXEC | O_DIRECTORY`
+/// で、Zigの`std.posix.O`に`SEARCH`フィールドが無いため同梱の
+/// `sys/fcntl.h`の値をビットで立てる。
+fn aotHttpDirectoryOpenFlags(follow_symlinks: bool) std.posix.O {
+    var flags: std.posix.O = .{ .ACCMODE = .RDONLY };
+    flags.DIRECTORY = true;
+    flags.NOFOLLOW = !follow_symlinks;
+    if (@hasField(std.posix.O, "CLOEXEC")) flags.CLOEXEC = true;
+    if (@hasField(std.posix.O, "PATH")) {
+        flags.PATH = true;
+    } else if (aotHttpIsDarwin()) {
+        flags = @bitCast(@as(u32, @bitCast(flags)) | 0x40000000);
+    }
+    return flags;
+}
+
+/// `O_PATH`/`O_SEARCH`を使わないディレクトリopenフラグ（フォールバック）。
+fn aotHttpDirectoryOpenFlagsFallback(follow_symlinks: bool) std.posix.O {
+    var flags: std.posix.O = .{ .ACCMODE = .RDONLY };
+    flags.DIRECTORY = true;
+    flags.NOFOLLOW = !follow_symlinks;
+    if (@hasField(std.posix.O, "CLOEXEC")) flags.CLOEXEC = true;
+    return flags;
+}
+
+/// 通常ファイル用のopenフラグ。`O_NONBLOCK`でFIFOのopen停止を防ぎ、
+/// `O_NOFOLLOW`で最終成分のsymlinkを拒否する。
+fn aotHttpRegularFileOpenFlags() std.posix.O {
+    var flags: std.posix.O = .{ .ACCMODE = .RDONLY };
+    flags.NOFOLLOW = true;
+    flags.NONBLOCK = true;
+    if (@hasField(std.posix.O, "CLOEXEC")) flags.CLOEXEC = true;
+    if (@hasField(std.posix.O, "LARGEFILE")) flags.LARGEFILE = true;
+    if (@hasField(std.posix.O, "NOCTTY")) flags.NOCTTY = true;
+    return flags;
+}
+
+/// 静的配信の読み込み上限。旧`readFileAlloc(.limited(N))`は「N以上」で
+/// `StreamTooLong`だったため、境界を変えないようfdのサイズが上限以上なら
+/// 読み取り前に413相当を返す。
+pub fn aotHttpReadStaticFile(io: std.Io, file: std.Io.File, allocator: std.mem.Allocator, max_bytes: usize) ![]u8 {
+    const stat = try file.stat(io);
+    if (stat.size >= @as(u64, max_bytes)) return error.StreamTooLong;
     var buffer: [64 * 1024]u8 = undefined;
     var reader = file.reader(io, &buffer);
-    return reader.interface.allocRemaining(allocator, .limited(aot_http_static_max_bytes));
+    return reader.interface.allocRemaining(allocator, .limited(max_bytes));
+}
+
+fn aotHttpStaticPathRequiresDirectory(relative: []const u8) bool {
+    var index = relative.len;
+    var trailing_separator = false;
+    while (index > 0 and aotHttpIsStaticPathSeparator(relative[index - 1])) {
+        index -= 1;
+        trailing_separator = true;
+    }
+    if (index == 0) return true;
+    const end = index;
+    while (index > 0 and !aotHttpIsStaticPathSeparator(relative[index - 1])) index -= 1;
+    return trailing_separator or std.mem.eql(u8, relative[index..end], ".");
 }
 
 /// 経路が存在しない／配信対象でない（クライアント起因）エラーを404にする。
@@ -782,6 +899,8 @@ fn aotHttpIsStaticPathMiss(err: anyerror) bool {
         error.BadPathName,
         error.NameTooLong,
         error.NetworkNotFound,
+        // socket等のopenはENXIO（NoDevice）になる。種別違いとして404。
+        error.NoDevice,
         => true,
         else => false,
     };
@@ -790,7 +909,7 @@ fn aotHttpIsStaticPathMiss(err: anyerror) bool {
 /// 静的配信の読み込みI/Oエラーを要求スコープのstatusへ分類する。
 /// 解決後に消えた・種別が変わったファイルは404、容量超過は413、
 /// 権限等のホスト側障害は500。OOMだけは伝播させる（null）。
-fn aotHttpStaticReadErrorStatus(err: anyerror) ?u16 {
+pub fn aotHttpStaticReadErrorStatus(err: anyerror) ?u16 {
     return switch (err) {
         error.OutOfMemory => null,
         error.StreamTooLong => 413,
@@ -946,7 +1065,7 @@ pub fn aotHttpUploadBasename(path: []const u8) []const u8 {
     return path[start..];
 }
 
-fn aotHttpTestSendRequest(io: std.Io, port: u16, request: []const u8) !std.Io.net.Stream {
+pub fn aotHttpTestSendRequest(io: std.Io, port: u16, request: []const u8) !std.Io.net.Stream {
     var client = try aotHttpTestSendBytes(io, port, request);
     errdefer client.close(io);
     try client.shutdown(io, .send);
@@ -1151,7 +1270,7 @@ fn expectAotHttpRequestHandled(runtime: *Runtime) !bool {
 }
 
 /// 応答全体を読み、status行・本文断片・禁止断片を検査する。
-fn expectAotHttpResponse(client: std.Io.net.Stream, io: std.Io, status: []const u8, body: ?[]const u8, forbidden: ?[]const u8) !void {
+pub fn expectAotHttpResponse(client: std.Io.net.Stream, io: std.Io, status: []const u8, body: ?[]const u8, forbidden: ?[]const u8) !void {
     var buffer: [4096]u8 = undefined;
     var reader = client.reader(io, &buffer);
     const response = try reader.interface.allocRemaining(std.testing.allocator, .limited(64 * 1024));
@@ -1190,53 +1309,6 @@ test "AOT静的配信の読み込みI/Oエラーは要求スコープのstatus�
     try std.testing.expectEqual(@as(?u16, 500), aotHttpStaticReadErrorStatus(error.InputOutput));
     // OOMだけはイベントループへ伝播する。
     try std.testing.expectEqual(@as(?u16, null), aotHttpStaticReadErrorStatus(error.OutOfMemory));
-}
-
-test "AOT HTTP静的配信はdocroot外を指すsymlinkを404にする" {
-    const io = aotHttpIo();
-    var docroot = std.testing.tmpDir(.{});
-    defer docroot.cleanup();
-    var outside = std.testing.tmpDir(.{});
-    defer outside.cleanup();
-    try docroot.dir.writeFile(io, .{ .sub_path = "hello.txt", .data = "hello" });
-    try outside.dir.writeFile(io, .{ .sub_path = "secret.txt", .data = "OUTSIDE-SECRET" });
-    const docroot_path = try docroot.dir.realPathFileAlloc(io, ".", std.testing.allocator);
-    defer std.testing.allocator.free(docroot_path);
-    const outside_path = try outside.dir.realPathFileAlloc(io, ".", std.testing.allocator);
-    defer std.testing.allocator.free(outside_path);
-    const secret_path = try std.fs.path.join(std.testing.allocator, &.{ outside_path, "secret.txt" });
-    defer std.testing.allocator.free(secret_path);
-    const link_path = try std.fs.path.join(std.testing.allocator, &.{ docroot_path, "leak" });
-    defer std.testing.allocator.free(link_path);
-    try std.Io.Dir.symLinkAbsolute(io, secret_path, link_path, .{});
-
-    var runtime = Runtime{ .allocator = std.testing.allocator };
-    defer runtime.deinit();
-    const address: std.Io.net.IpAddress = .{ .ip4 = .loopback(0) };
-    runtime.http_server = try address.listen(io, .{ .reuse_address = true });
-    try aotHttpIngressStart(&runtime);
-    runtime.http_server_state.started = true;
-    const port = runtime.http_server.?.socket.address.getPort();
-    var route = AotHttpRoute{
-        .kind = .static,
-        .prefix = try runtime.allocator.dupe(u8, "/static"),
-        .path = try runtime.allocator.dupe(u8, docroot_path),
-    };
-    defer route.deinit(runtime.allocator);
-
-    var inside = try aotHttpTestSendRequest(io, port, "GET /static/hello.txt HTTP/1.1\r\nHost: localhost\r\n\r\n");
-    defer inside.close(io);
-    var inside_request = try aotHttpReceiveRequest(&runtime);
-    defer inside_request.deinit();
-    try aotHttpServeStatic(&runtime, route, aotHttpPathOnly(inside_request.target));
-    try expectAotHttpResponse(inside, io, "HTTP/1.1 200", "hello", null);
-
-    var escaped = try aotHttpTestSendRequest(io, port, "GET /static/leak HTTP/1.1\r\nHost: localhost\r\n\r\n");
-    defer escaped.close(io);
-    var escaped_request = try aotHttpReceiveRequest(&runtime);
-    defer escaped_request.deinit();
-    try aotHttpServeStatic(&runtime, route, aotHttpPathOnly(escaped_request.target));
-    try expectAotHttpResponse(escaped, io, "HTTP/1.1 404", null, "OUTSIDE-SECRET");
 }
 
 test "AOT HTTPは未登録URLへのmultipart POSTで本文を解析しない" {
@@ -1662,198 +1734,6 @@ test "AOT HTTPは受信中の低速接続に関わらず別接続の完了要求
     try std.testing.expect(std.mem.startsWith(u8, status_line.?, "HTTP/1.1 200"));
 }
 
-test "AOT HTTP静的配信はファイル、index、404の経路で一時パスを解放する" {
-    var temporary = std.testing.tmpDir(.{});
-    defer temporary.cleanup();
-    const io = aotHttpIo();
-    try temporary.dir.writeFile(io, .{ .sub_path = "index.html", .data = "root" });
-    try temporary.dir.writeFile(io, .{ .sub_path = "hello.txt", .data = "hello" });
-    try temporary.dir.createDirPath(io, "nested");
-    try temporary.dir.writeFile(io, .{ .sub_path = "nested/index.html", .data = "nested" });
-    try temporary.dir.createDirPath(io, "empty");
-
-    var runtime = Runtime{ .allocator = std.testing.allocator };
-    defer runtime.deinit();
-    const root = try temporary.dir.realPathFileAlloc(io, ".", runtime.allocator);
-    defer runtime.allocator.free(root);
-    const address: std.Io.net.IpAddress = .{ .ip4 = .loopback(0) };
-    runtime.http_server = try address.listen(io, .{ .reuse_address = true });
-    try aotHttpIngressStart(&runtime);
-    runtime.http_server_state.started = true;
-    const port = runtime.http_server.?.socket.address.getPort();
-
-    var route = AotHttpRoute{
-        .kind = .static,
-        .prefix = try runtime.allocator.dupe(u8, "/static"),
-        .path = try runtime.allocator.dupe(u8, root),
-    };
-    defer route.deinit(runtime.allocator);
-
-    const targets = [_][]const u8{
-        "/static/hello.txt",
-        "/static/",
-        "/static/nested/",
-        "/static/empty/",
-        "/static/missing.txt",
-    };
-    for (targets) |target| {
-        const request_bytes = try std.fmt.allocPrint(runtime.allocator, "GET {s} HTTP/1.1\r\nHost: localhost\r\n\r\n", .{target});
-        defer runtime.allocator.free(request_bytes);
-        var client = try aotHttpTestSendRequest(io, port, request_bytes);
-        defer client.close(io);
-        var request = try aotHttpReceiveRequest(&runtime);
-        defer request.deinit();
-        try aotHttpServeStatic(&runtime, route, aotHttpPathOnly(request.target));
-        try std.testing.expect(runtime.http_connection == null);
-    }
-}
-
-/// `parent/name`の実ディレクトリを、`target`へのsymlinkへ置き換える
-/// （攻撃者が照合後・open前に中間ディレクトリを差し替える状況の再現）。
-fn replaceDirectoryWithSymlink(io: std.Io, parent: std.Io.Dir, name: []const u8, target: []const u8) !void {
-    try parent.deleteTree(io, name);
-    const link_path = try parent.realPathFileAlloc(io, ".", std.testing.allocator);
-    defer std.testing.allocator.free(link_path);
-    const path = try std.fs.path.join(std.testing.allocator, &.{ link_path, name });
-    defer std.testing.allocator.free(path);
-    try std.Io.Dir.symLinkAbsolute(io, target, path, .{});
-}
-
-test "AOT HTTP静的配信はopen済みfdから読むため照合後のsymlink差し替えに影響されない" {
-    const io = aotHttpIo();
-    var docroot = std.testing.tmpDir(.{});
-    defer docroot.cleanup();
-    var outside = std.testing.tmpDir(.{});
-    defer outside.cleanup();
-    try docroot.dir.createDirPath(io, "sub");
-    try docroot.dir.writeFile(io, .{ .sub_path = "sub/hello.txt", .data = "INSIDE" });
-    try outside.dir.writeFile(io, .{ .sub_path = "hello.txt", .data = "OUTSIDE-SECRET" });
-    const docroot_path = try docroot.dir.realPathFileAlloc(io, ".", std.testing.allocator);
-    defer std.testing.allocator.free(docroot_path);
-    const outside_path = try outside.dir.realPathFileAlloc(io, ".", std.testing.allocator);
-    defer std.testing.allocator.free(outside_path);
-
-    // `aotHttpServeStatic`と同じ順序で開く。旧実装はここでrealpath文字列を
-    // 照合し、後から同じ文字列を開き直していた。
-    var opened = (try aotHttpOpenStaticFile(io, docroot_path, "sub/hello.txt")).?;
-    defer opened.file.close(io);
-    try std.testing.expectEqualStrings("hello.txt", opened.name);
-
-    // 開いた後（読み取り前）に中間ディレクトリをdocroot外へのsymlinkへ差し替える。
-    try replaceDirectoryWithSymlink(io, docroot.dir, "sub", outside_path);
-
-    const body = try aotHttpReadStaticFile(io, opened.file, std.testing.allocator);
-    defer std.testing.allocator.free(body);
-    try std.testing.expectEqualStrings("INSIDE", body);
-}
-
-test "AOT HTTP静的配信は中間・最終成分のsymlinkをdocroot内でも追従しない" {
-    const io = aotHttpIo();
-    var docroot = std.testing.tmpDir(.{});
-    defer docroot.cleanup();
-    try docroot.dir.writeFile(io, .{ .sub_path = "hello.txt", .data = "hello" });
-    try docroot.dir.createDirPath(io, "nested");
-    try docroot.dir.writeFile(io, .{ .sub_path = "nested/index.html", .data = "nested" });
-
-    const docroot_path = try docroot.dir.realPathFileAlloc(io, ".", std.testing.allocator);
-    defer std.testing.allocator.free(docroot_path);
-    const hello_path = try std.fs.path.join(std.testing.allocator, &.{ docroot_path, "hello.txt" });
-    defer std.testing.allocator.free(hello_path);
-    const alias_path = try std.fs.path.join(std.testing.allocator, &.{ docroot_path, "alias.txt" });
-    defer std.testing.allocator.free(alias_path);
-    try std.Io.Dir.symLinkAbsolute(io, hello_path, alias_path, .{});
-    const nested_path = try std.fs.path.join(std.testing.allocator, &.{ docroot_path, "nested" });
-    defer std.testing.allocator.free(nested_path);
-    const nested_link = try std.fs.path.join(std.testing.allocator, &.{ docroot_path, "nested_link" });
-    defer std.testing.allocator.free(nested_link);
-    try std.Io.Dir.symLinkAbsolute(io, nested_path, nested_link, .{});
-
-    // 通常ファイルはこれまでどおり配信する。
-    var plain = (try aotHttpOpenStaticFile(io, docroot_path, "hello.txt")).?;
-    plain.file.close(io);
-
-    // docroot内を指すsymlinkでも追従しない（fail closed）。
-    try std.testing.expect((try aotHttpOpenStaticFile(io, docroot_path, "alias.txt")) == null);
-    try std.testing.expect((try aotHttpOpenStaticFile(io, docroot_path, "nested_link/index.html")) == null);
-    try std.testing.expect((try aotHttpOpenStaticFile(io, docroot_path, "nested_link")) == null);
-    // ディレクトリ指定はindex.htmlをfdから開く。
-    var index = (try aotHttpOpenStaticFile(io, docroot_path, "nested")).?;
-    defer index.file.close(io);
-    try std.testing.expectEqualStrings("index.html", index.name);
-}
-
-test "AOT HTTP静的配信は中間ディレクトリのsymlink差し替えと競合してもdocroot外を読まない" {
-    // RENAME_EXCHANGEで実ディレクトリとdocroot外へのsymlinkを原子的に入れ替え、
-    // 照合とopenの間の実時間ウィンドウを攻撃者が継続的に狙う状況を作る。
-    // 修正前はこのテストでdocroot外の`OUTSIDE-SECRET`が返る（PoC）。
-    if (builtin.os.tag != .linux) return error.SkipZigTest;
-    const io = aotHttpIo();
-    var docroot = std.testing.tmpDir(.{});
-    defer docroot.cleanup();
-    var outside = std.testing.tmpDir(.{});
-    defer outside.cleanup();
-    try docroot.dir.createDirPath(io, "sub");
-    try docroot.dir.writeFile(io, .{ .sub_path = "sub/hello.txt", .data = "INSIDE" });
-    try outside.dir.writeFile(io, .{ .sub_path = "hello.txt", .data = "OUTSIDE-SECRET" });
-    const docroot_path = try docroot.dir.realPathFileAlloc(io, ".", std.testing.allocator);
-    defer std.testing.allocator.free(docroot_path);
-    const outside_path = try outside.dir.realPathFileAlloc(io, ".", std.testing.allocator);
-    defer std.testing.allocator.free(outside_path);
-    const swap_dir = try std.fs.path.joinZ(std.testing.allocator, &.{ docroot_path, "sub" });
-    defer std.testing.allocator.free(swap_dir);
-    const swap_link = try std.fs.path.joinZ(std.testing.allocator, &.{ docroot_path, "sub_link" });
-    defer std.testing.allocator.free(swap_link);
-    try std.Io.Dir.symLinkAbsolute(io, outside_path, swap_link, .{});
-
-    const swapper = struct {
-        fn run(dir: [:0]const u8, link: [:0]const u8, stop: *std.atomic.Value(bool), swaps: *std.atomic.Value(u64)) void {
-            const linux = std.os.linux;
-            while (!stop.load(.acquire)) {
-                _ = linux.renameat2(linux.AT.FDCWD, dir.ptr, linux.AT.FDCWD, link.ptr, .{ .EXCHANGE = true });
-                _ = swaps.fetchAdd(1, .monotonic);
-            }
-        }
-    };
-
-    var runtime = Runtime{ .allocator = std.testing.allocator };
-    defer runtime.deinit();
-    const address: std.Io.net.IpAddress = .{ .ip4 = .loopback(0) };
-    runtime.http_server = try address.listen(io, .{ .reuse_address = true });
-    try aotHttpIngressStart(&runtime);
-    runtime.http_server_state.started = true;
-    const port = runtime.http_server.?.socket.address.getPort();
-    var route = AotHttpRoute{
-        .kind = .static,
-        .prefix = try runtime.allocator.dupe(u8, "/static"),
-        .path = try runtime.allocator.dupe(u8, docroot_path),
-    };
-    defer route.deinit(runtime.allocator);
-
-    var stop = std.atomic.Value(bool).init(false);
-    var swaps = std.atomic.Value(u64).init(0);
-    const thread = try std.Thread.spawn(.{}, swapper.run, .{ swap_dir, swap_link, &stop, &swaps });
-    var joined = false;
-    defer if (!joined) {
-        stop.store(true, .release);
-        thread.join();
-    };
-
-    var leaks: usize = 0;
-    for (0..400) |_| {
-        var client = try aotHttpTestSendRequest(io, port, "GET /static/sub/hello.txt HTTP/1.1\r\nHost: localhost\r\n\r\n");
-        defer client.close(io);
-        var request = try aotHttpReceiveRequest(&runtime);
-        defer request.deinit();
-        try aotHttpServeStatic(&runtime, route, aotHttpPathOnly(request.target));
-        var buffer: [4096]u8 = undefined;
-        var reader = client.reader(io, &buffer);
-        const response = try reader.interface.allocRemaining(std.testing.allocator, .limited(64 * 1024));
-        defer std.testing.allocator.free(response);
-        if (std.mem.indexOf(u8, response, "OUTSIDE-SECRET") != null) leaks += 1;
-    }
-    stop.store(true, .release);
-    thread.join();
-    joined = true;
-    std.debug.print("\n[AOT静的配信TOCTOU回帰] swaps={d} requests=400 docroot外読み出し={d}\n", .{ swaps.load(.monotonic), leaks });
-    try std.testing.expectEqual(@as(usize, 0), leaks);
+test {
+    _ = @import("http_server_test.zig");
 }
