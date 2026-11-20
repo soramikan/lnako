@@ -22,7 +22,7 @@ const aotHttpOpenPosixRegularFileFallback = http_server.aotHttpOpenPosixRegularF
 const aotHttpUnsignedId = http_server.aotHttpUnsignedId;
 const aotHttpReadStaticFromReader = http_server.aotHttpReadStaticFromReader;
 const aotHttpIsStaticPathMiss = http_server.aotHttpIsStaticPathMiss;
-const aotHttpProcFallbackDecision = http_server.aotHttpProcFallbackDecision;
+const aotHttpOpenLinuxWithHooks = http_server.aotHttpOpenLinuxWithHooks;
 const aotHttpIsProcUnavailable = http_server.aotHttpIsProcUnavailable;
 const aotHttpRestoreReadError = http_server.aotHttpRestoreReadError;
 const aotHttpStatFromStatx = http_server.aotHttpStatFromStatx;
@@ -584,23 +584,67 @@ test "AOT HTTP静的配信は要求パス先頭のバックスラッシュを従
     try expectAotHttpResponse(client, io, "HTTP/1.1 200", "hello", null);
 }
 
-test "AOT HTTP静的配信はprocfsフォールバックの発動条件を厳密に判定する" {
-    // AccessDenied・fd上限はprocfs不在ではないのでフォールバックしない。
-    try std.testing.expect(!aotHttpIsProcUnavailable(error.AccessDenied));
-    try std.testing.expect(!aotHttpIsProcUnavailable(error.ProcessFdQuotaExceeded));
-    try std.testing.expect(!aotHttpIsProcUnavailable(error.SystemFdQuotaExceeded));
-    try std.testing.expect(aotHttpIsProcUnavailable(error.FileNotFound));
-    try std.testing.expect(aotHttpIsProcUnavailable(error.NotDir));
+/// `aotHttpOpenLinuxWithHooks`の本番分岐を直接検証するためのモック。
+const LinuxOpenMock = struct {
+    open_proc_result: anyerror!std.posix.fd_t,
+    probe_result: anyerror!bool,
+    fallback_result: anyerror!?std.posix.fd_t,
+    open_proc_calls: usize = 0,
+    probe_calls: usize = 0,
+    fallback_calls: usize = 0,
 
-    // /proc/self/fdが利用可能なら、FileNotFound/NotDirでもフォールバックしない。
-    try std.testing.expectEqual(@as(?anyerror, error.FileNotFound), try aotHttpProcFallbackDecision(error.FileNotFound, true));
-    try std.testing.expectEqual(@as(?anyerror, error.NotDir), try aotHttpProcFallbackDecision(error.NotDir, true));
-    // /proc/self/fdの確認自体が失敗したらそのエラーを伝播する。
-    try std.testing.expectError(error.AccessDenied, aotHttpProcFallbackDecision(error.FileNotFound, error.AccessDenied));
-    try std.testing.expectError(error.ProcessFdQuotaExceeded, aotHttpProcFallbackDecision(error.NotDir, error.ProcessFdQuotaExceeded));
-    // FileNotFound/NotDirかつ/proc/self/fd不在のときだけフォールバックする。
-    try std.testing.expectEqual(@as(?anyerror, null), try aotHttpProcFallbackDecision(error.FileNotFound, false));
-    try std.testing.expectEqual(@as(?anyerror, null), try aotHttpProcFallbackDecision(error.NotDir, false));
+    pub fn openProc(self: *LinuxOpenMock, proc_fd: std.posix.fd_t) anyerror!std.posix.fd_t {
+        _ = proc_fd;
+        self.open_proc_calls += 1;
+        return self.open_proc_result;
+    }
+    pub fn probeProcDir(self: *LinuxOpenMock) anyerror!bool {
+        self.probe_calls += 1;
+        return self.probe_result;
+    }
+    pub fn fallback(self: *LinuxOpenMock) anyerror!?std.posix.fd_t {
+        self.fallback_calls += 1;
+        return self.fallback_result;
+    }
+};
+
+test "AOT HTTP静的配信はLinuxのprocfsフォールバック分岐を直接検証する" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+    // 1. procfs openのAccessDenied/fd上限はprobe/fallbackを呼ばず伝播する。
+    for ([_]anyerror{ error.AccessDenied, error.ProcessFdQuotaExceeded, error.SystemFdQuotaExceeded }) |open_err| {
+        var mock = LinuxOpenMock{ .open_proc_result = open_err, .probe_result = false, .fallback_result = 42 };
+        try std.testing.expectError(open_err, aotHttpOpenLinuxWithHooks(&mock, 0));
+        try std.testing.expectEqual(@as(usize, 1), mock.open_proc_calls);
+        try std.testing.expectEqual(@as(usize, 0), mock.probe_calls);
+        try std.testing.expectEqual(@as(usize, 0), mock.fallback_calls);
+    }
+    // 2. FileNotFound/NotDir + procfs利用可能 → 元エラー、fallbackなし。
+    for ([_]anyerror{ error.FileNotFound, error.NotDir }) |open_err| {
+        var mock = LinuxOpenMock{ .open_proc_result = open_err, .probe_result = true, .fallback_result = 42 };
+        try std.testing.expectError(open_err, aotHttpOpenLinuxWithHooks(&mock, 0));
+        try std.testing.expectEqual(@as(usize, 1), mock.probe_calls);
+        try std.testing.expectEqual(@as(usize, 0), mock.fallback_calls);
+    }
+    // 3. procfs確認自体の失敗はそのエラーを伝播し、fallbackしない。
+    {
+        var mock = LinuxOpenMock{ .open_proc_result = error.FileNotFound, .probe_result = error.AccessDenied, .fallback_result = 42 };
+        try std.testing.expectError(error.AccessDenied, aotHttpOpenLinuxWithHooks(&mock, 0));
+        try std.testing.expectEqual(@as(usize, 1), mock.probe_calls);
+        try std.testing.expectEqual(@as(usize, 0), mock.fallback_calls);
+    }
+    // 4. procfs不在のときだけfallbackを1回呼ぶ。
+    {
+        var mock = LinuxOpenMock{ .open_proc_result = error.FileNotFound, .probe_result = false, .fallback_result = 42 };
+        try std.testing.expectEqual(@as(?std.posix.fd_t, 42), try aotHttpOpenLinuxWithHooks(&mock, 0));
+        try std.testing.expectEqual(@as(usize, 1), mock.probe_calls);
+        try std.testing.expectEqual(@as(usize, 1), mock.fallback_calls);
+    }
+    {
+        var mock = LinuxOpenMock{ .open_proc_result = error.NotDir, .probe_result = false, .fallback_result = null };
+        try std.testing.expectEqual(@as(?std.posix.fd_t, null), try aotHttpOpenLinuxWithHooks(&mock, 0));
+        try std.testing.expectEqual(@as(usize, 1), mock.probe_calls);
+        try std.testing.expectEqual(@as(usize, 1), mock.fallback_calls);
+    }
 }
 
 test "AOT HTTP静的配信はReadFailedから元の読み取りエラーを復元する" {
@@ -611,6 +655,31 @@ test "AOT HTTP静的配信はReadFailedから元の読み取りエラーを復�
     // 復元したエラーが要求スコープの分類へ正しく接続する。
     try std.testing.expectEqual(@as(?u16, 404), aotHttpStaticReadErrorStatus(aotHttpRestoreReadError(error.ReadFailed, error.IsDir)));
     try std.testing.expectEqual(@as(?u16, 500), aotHttpStaticReadErrorStatus(aotHttpRestoreReadError(error.ReadFailed, error.AccessDenied)));
+}
+
+/// Linuxでディレクトリfdを`File`として`aotHttpReadStaticFile`へ渡し、
+/// `File.Reader`の`ReadFailed`から`error.IsDir`が復元されることを検証する。
+fn expectLinuxReadFailedRestoresIsDir() !void {
+    const io = aotHttpIo();
+    var docroot = std.testing.tmpDir(.{});
+    defer docroot.cleanup();
+    try docroot.dir.createDirPath(io, "dir");
+    const dir_path = try docroot.dir.realPathFileAlloc(io, "dir", std.testing.allocator);
+    defer std.testing.allocator.free(dir_path);
+    const fd = std.posix.openat(std.posix.AT.FDCWD, dir_path, .{ .ACCMODE = .RDONLY, .DIRECTORY = true }, 0) catch |err| return err;
+    const file = std.Io.File{ .handle = fd, .flags = .{ .nonblocking = false } };
+    defer file.close(io);
+    // statは成功し、読み取りだけがerror.IsDirで失敗する。
+    try std.testing.expectError(error.IsDir, aotHttpReadStaticFile(io, file, std.testing.allocator, 1024 * 1024));
+    try std.testing.expectEqual(@as(?u16, 404), aotHttpStaticReadErrorStatus(error.IsDir));
+}
+
+test "AOT HTTP静的配信はFile.ReaderのReadFailedから元エラーを復元する" {
+    if (builtin.os.tag == .linux) {
+        try expectLinuxReadFailedRestoresIsDir();
+    } else {
+        return error.SkipZigTest;
+    }
 }
 
 test "AOT HTTP静的配信はstatxのTYPE/INO欠落をfail closedにする" {
