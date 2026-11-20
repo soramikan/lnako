@@ -22,6 +22,10 @@ const aotHttpOpenPosixRegularFileFallback = http_server.aotHttpOpenPosixRegularF
 const aotHttpUnsignedId = http_server.aotHttpUnsignedId;
 const aotHttpReadStaticFromReader = http_server.aotHttpReadStaticFromReader;
 const aotHttpIsStaticPathMiss = http_server.aotHttpIsStaticPathMiss;
+const aotHttpProcFallbackDecision = http_server.aotHttpProcFallbackDecision;
+const aotHttpIsProcUnavailable = http_server.aotHttpIsProcUnavailable;
+const aotHttpRestoreReadError = http_server.aotHttpRestoreReadError;
+const aotHttpStatFromStatx = http_server.aotHttpStatFromStatx;
 const runtimeUtf8String = state.runtimeUtf8String;
 
 test "AOT HTTP静的配信はdocroot外を指すsymlinkを404にする" {
@@ -578,4 +582,54 @@ test "AOT HTTP静的配信は要求パス先頭のバックスラッシュを従
     defer request.deinit();
     try aotHttpServeStatic(&runtime, route, aotHttpPathOnly(request.target));
     try expectAotHttpResponse(client, io, "HTTP/1.1 200", "hello", null);
+}
+
+test "AOT HTTP静的配信はprocfsフォールバックの発動条件を厳密に判定する" {
+    // AccessDenied・fd上限はprocfs不在ではないのでフォールバックしない。
+    try std.testing.expect(!aotHttpIsProcUnavailable(error.AccessDenied));
+    try std.testing.expect(!aotHttpIsProcUnavailable(error.ProcessFdQuotaExceeded));
+    try std.testing.expect(!aotHttpIsProcUnavailable(error.SystemFdQuotaExceeded));
+    try std.testing.expect(aotHttpIsProcUnavailable(error.FileNotFound));
+    try std.testing.expect(aotHttpIsProcUnavailable(error.NotDir));
+
+    // /proc/self/fdが利用可能なら、FileNotFound/NotDirでもフォールバックしない。
+    try std.testing.expectEqual(@as(?anyerror, error.FileNotFound), try aotHttpProcFallbackDecision(error.FileNotFound, true));
+    try std.testing.expectEqual(@as(?anyerror, error.NotDir), try aotHttpProcFallbackDecision(error.NotDir, true));
+    // /proc/self/fdの確認自体が失敗したらそのエラーを伝播する。
+    try std.testing.expectError(error.AccessDenied, aotHttpProcFallbackDecision(error.FileNotFound, error.AccessDenied));
+    try std.testing.expectError(error.ProcessFdQuotaExceeded, aotHttpProcFallbackDecision(error.NotDir, error.ProcessFdQuotaExceeded));
+    // FileNotFound/NotDirかつ/proc/self/fd不在のときだけフォールバックする。
+    try std.testing.expectEqual(@as(?anyerror, null), try aotHttpProcFallbackDecision(error.FileNotFound, false));
+    try std.testing.expectEqual(@as(?anyerror, null), try aotHttpProcFallbackDecision(error.NotDir, false));
+}
+
+test "AOT HTTP静的配信はReadFailedから元の読み取りエラーを復元する" {
+    try std.testing.expectEqual(@as(anyerror, error.IsDir), aotHttpRestoreReadError(error.ReadFailed, error.IsDir));
+    try std.testing.expectEqual(@as(anyerror, error.AccessDenied), aotHttpRestoreReadError(error.ReadFailed, error.AccessDenied));
+    try std.testing.expectEqual(@as(anyerror, error.ReadFailed), aotHttpRestoreReadError(error.ReadFailed, null));
+    try std.testing.expectEqual(@as(anyerror, error.StreamTooLong), aotHttpRestoreReadError(error.StreamTooLong, error.IsDir));
+    // 復元したエラーが要求スコープの分類へ正しく接続する。
+    try std.testing.expectEqual(@as(?u16, 404), aotHttpStaticReadErrorStatus(aotHttpRestoreReadError(error.ReadFailed, error.IsDir)));
+    try std.testing.expectEqual(@as(?u16, 500), aotHttpStaticReadErrorStatus(aotHttpRestoreReadError(error.ReadFailed, error.AccessDenied)));
+}
+
+test "AOT HTTP静的配信はstatxのTYPE/INO欠落をfail closedにする" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+    var stx: std.os.linux.Statx = std.mem.zeroes(std.os.linux.Statx);
+    stx.mode = std.posix.S.IFREG | 0o644;
+    stx.ino = 42;
+    stx.dev_major = 1;
+    stx.dev_minor = 2;
+
+    stx.mask = .{ .TYPE = true, .INO = true };
+    const stat = aotHttpStatFromStatx(stx).?;
+    try std.testing.expectEqual(std.Io.File.Kind.file, stat.kind);
+    try std.testing.expectEqual(@as(u64, 42), stat.inode);
+
+    stx.mask = .{ .INO = true };
+    try std.testing.expect(aotHttpStatFromStatx(stx) == null);
+    stx.mask = .{ .TYPE = true };
+    try std.testing.expect(aotHttpStatFromStatx(stx) == null);
+    stx.mask = .{};
+    try std.testing.expect(aotHttpStatFromStatx(stx) == null);
 }
