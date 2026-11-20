@@ -661,17 +661,48 @@ fn removeUnderscores(allocator: std.mem.Allocator, literal: []const u8) Error![]
     return result.toOwnedSlice(allocator);
 }
 
+/// binary64の最大有限値と2^1024の中点は2^1024 - 2^970で、これ以上は
+/// 必ずInfinityへ丸まる。基数2・8・16は2の冪なので、有効桁数nの最小値
+/// 2^((n-1)*bits)が2^1024以上なら桁あふれが確定する。
+const binary64_overflow_bits = 1024;
+
+fn radixBits(base: u8) ?u8 {
+    return switch (base) {
+        2 => 1,
+        8 => 3,
+        16 => 4,
+        else => null,
+    };
+}
+
 fn parseNumberValue(allocator: std.mem.Allocator, literal: []const u8, base: u8) Error!f64 {
     if (base == 10) return std.fmt.parseFloat(f64, literal) catch error.InvalidNumber;
     const digits = literal[2..];
+    // 先頭ゼロを除いた有効桁だけを多倍長変換へ渡す。巨大な先頭ゼロ列で
+    // 変換コストが増えないようにする。
+    var first_significant: usize = 0;
+    while (first_significant < digits.len and digits[first_significant] == '0') : (first_significant += 1) {}
+    const significant = digits[first_significant..];
+    // 既存の字句エラーを保つため、先頭ゼロを含む全桁を検証する。
+    for (digits) |byte| {
+        if (byte == '_') continue;
+        if (!isDigitForBase(byte, base)) return error.InvalidNumber;
+    }
+    if (significant.len == 0) return 0.0;
+    const bits_per_digit = radixBits(base) orelse return error.InvalidNumber;
+    // 境界の桁数だけは多倍長変換で正確に丸める。これを超える有効桁数は
+    // 最小値でも2^1024以上になるため、変換せずInfinityを返す。
+    const max_exact_digits = (binary64_overflow_bits + @as(usize, bits_per_digit) - 1) / bits_per_digit;
+    if (significant.len > max_exact_digits) return std.math.inf(f64);
+    // ここでの有効桁数は2進1024桁・8進342桁・16進256桁に収まる。
     // 公式`parseNumber`は`Number(hex)`でbinary64へ丸めるため、u64を超える
     // 16進・8進・2進リテラルもInvalidNumberにせず同じ丸め結果にする。
-    if (std.fmt.parseInt(u64, digits, base)) |integer| {
+    if (std.fmt.parseInt(u64, significant, base)) |integer| {
         return @floatFromInt(integer);
     } else |_| {}
     var big = std.math.big.int.Managed.init(allocator) catch return error.OutOfMemory;
     defer big.deinit();
-    big.setString(base, digits) catch |err| switch (err) {
+    big.setString(base, significant) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => return error.InvalidNumber,
     };
