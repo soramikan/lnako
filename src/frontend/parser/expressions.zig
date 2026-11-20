@@ -321,7 +321,10 @@ pub fn parseObjectAfterOpen(self: *Parser, open: Token) ParseFailure!*ast.Node {
     defer self.delimited_expression_depth -= 1;
     var values: std.ArrayList(*ast.Node) = .empty;
     while (!self.at(.right_brace) and !self.at(.eof)) {
-        if (self.at(.eol) or self.at(.comma)) {
+        // 公式`yJSONObjectValue`は要素間の改行だけを読み飛ばし、先頭・連続の
+        // コンマはキーとして解釈できないため構文診断にする。末尾コンマは
+        // 各要素の後で消費するので、ここへ戻った時点で`}`なら受理される。
+        if (self.at(.eol)) {
             _ = self.advance();
             continue;
         }

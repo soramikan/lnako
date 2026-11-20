@@ -697,6 +697,16 @@ test "数値だけの辞書要素を正規化した数値キーと数値値へ�
     }
 }
 
+test "u64を超える16進の数値だけの辞書要素を公式のキーへ正規化する" {
+    var result = try parse(std.testing.allocator, "A={0x10000000000000000}\n", "numeric-overflow.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const object = result.root.?.children[0].children[0];
+    try std.testing.expectEqual(@as(usize, 2), object.children.len);
+    try std.testing.expectEqualStrings("18446744073709552000", object.children[0].value);
+    try std.testing.expectEqual(@as(f64, 18446744073709551616), object.children[1].number_value.?);
+}
+
 test "数値だけの辞書要素を明示キーと両順序で混在させ末尾コンマを受理する" {
     var result = try parse(std.testing.allocator, "A={10,a:1}\nB={b:2,20}\nC={30,}\n", "numeric-mixed.nako3");
     defer result.deinit();
@@ -714,6 +724,23 @@ test "数値だけの辞書要素を明示キーと両順序で混在させ末�
     const third = result.root.?.children[4].children[0];
     try std.testing.expectEqualStrings("30", third.children[0].value);
     try std.testing.expectEqual(ast.Kind.number, third.children[1].kind);
+}
+
+test "辞書リテラルの先頭・連続コンマを拒否し末尾コンマを受理する" {
+    const invalid = [_][]const u8{ "A={,10}\n", "A={10,,20}\n", "A={,\n10}\n", "A={10,\n,20}\n" };
+    for (invalid) |source| {
+        var result = try parse(std.testing.allocator, source, "numeric-comma-invalid.nako3");
+        defer result.deinit();
+        try std.testing.expect(!result.succeeded());
+        try std.testing.expectEqualStrings("辞書のキーが必要です", result.diagnostics[0].message);
+    }
+
+    const valid = [_][]const u8{ "A={10,}\n", "A={10,\n20,}\n", "A={a:1,b:2,}\n", "A={\"a\":1,\"b\":2,}\n" };
+    for (valid) |source| {
+        var result = try parse(std.testing.allocator, source, "numeric-comma-valid.nako3");
+        defer result.deinit();
+        try std.testing.expect(result.succeeded());
+    }
 }
 
 test "符号付き・式・数値キーへの値指定を辞書リテラルで拒否する" {
