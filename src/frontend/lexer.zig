@@ -381,7 +381,7 @@ const Lexer = struct {
         else
             try removeUnderscores(self.allocator, self.source.text[start..value_end]);
         try self.emit(kind, start, self.offset, value, value_josi, raw_josi);
-        if (kind == .number) self.tokens.items[self.tokens.items.len - 1].number_value = try parseNumberValue(value, base);
+        if (kind == .number) self.tokens.items[self.tokens.items.len - 1].number_value = try parseNumberValue(self.allocator, value, base);
     }
 
     fn readString(self: *Lexer) Error!void {
@@ -661,10 +661,22 @@ fn removeUnderscores(allocator: std.mem.Allocator, literal: []const u8) Error![]
     return result.toOwnedSlice(allocator);
 }
 
-fn parseNumberValue(literal: []const u8, base: u8) Error!f64 {
+fn parseNumberValue(allocator: std.mem.Allocator, literal: []const u8, base: u8) Error!f64 {
     if (base == 10) return std.fmt.parseFloat(f64, literal) catch error.InvalidNumber;
-    const integer = std.fmt.parseInt(u64, literal[2..], base) catch return error.InvalidNumber;
-    return @floatFromInt(integer);
+    const digits = literal[2..];
+    // 公式`parseNumber`は`Number(hex)`でbinary64へ丸めるため、u64を超える
+    // 16進・8進・2進リテラルもInvalidNumberにせず同じ丸め結果にする。
+    if (std.fmt.parseInt(u64, digits, base)) |integer| {
+        return @floatFromInt(integer);
+    } else |_| {}
+    var big = std.math.big.int.Managed.init(allocator) catch return error.OutOfMemory;
+    defer big.deinit();
+    big.setString(base, digits) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return error.InvalidNumber,
+    };
+    const converted = big.toFloat(f64, .nearest_even);
+    return converted[0];
 }
 
 /// `予約語一覧取得`が返す、公式v3.7.24の公開順序。
@@ -794,6 +806,15 @@ test "全角演算子・BigInt・数値区切りを扱う" {
     try std.testing.expectEqualStrings("0xFFn", stream.tokens[2].value);
     try std.testing.expectEqual(Kind.comma, stream.tokens[3].kind);
     try std.testing.expectEqualStrings("1000.5", stream.tokens[6].value);
+}
+
+test "u64を超える16進・8進・2進リテラルをbinary64へ丸める" {
+    var stream = try tokenize(std.testing.allocator, "0x10000000000000000、0o2000000000000000000000、0b10000000000000000000000000000000000000000000000000000000000000000");
+    defer stream.deinit();
+    const expected: f64 = 18446744073709551616;
+    try std.testing.expectEqual(expected, stream.tokens[0].number_value.?);
+    try std.testing.expectEqual(expected, stream.tokens[2].number_value.?);
+    try std.testing.expectEqual(expected, stream.tokens[4].number_value.?);
 }
 
 test "数値単位・小数・単語分割を公式規則で扱う" {

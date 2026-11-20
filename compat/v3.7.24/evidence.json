@@ -8,9 +8,9 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 807,
-    "nativeAot": 444,
-    "interpreter": 373,
+    "total": 809,
+    "nativeAot": 445,
+    "interpreter": 374,
     "compatJs": 9
   },
   "fixtureCoverageStates": {
@@ -15125,6 +15125,7 @@
       ],
       "aotFixtureIds": [
         "native-cut-commands",
+        "native-dictionary-numeric-key-boundaries",
         "native-system-array-fill-byte-buffer-json-clone",
         "native-system-array-fill-sparse-clone",
         "native-system-array-sparse-copy-reference-concat",
@@ -15174,6 +15175,9 @@
         },
         "aot": {
           "native-cut-commands": [
+            "fixture.commands"
+          ],
+          "native-dictionary-numeric-key-boundaries": [
             "fixture.commands"
           ],
           "native-system-array-fill-byte-buffer-json-clone": [
@@ -16154,6 +16158,7 @@
       ],
       "aotFixtureIds": [
         "native-cut-commands",
+        "native-dictionary-numeric-key-boundaries",
         "native-system-array-fill-sparse-clone",
         "native-system-array-own-properties",
         "native-system-array-sparse-copy-reference-concat",
@@ -16181,6 +16186,9 @@
         },
         "aot": {
           "native-cut-commands": [
+            "fixture.commands"
+          ],
+          "native-dictionary-numeric-key-boundaries": [
             "fixture.commands"
           ],
           "native-system-array-fill-sparse-clone": [
@@ -16737,6 +16745,7 @@
       ],
       "aotFixtureIds": [
         "native-cut-commands",
+        "native-dictionary-numeric-key-boundaries",
         "native-numeric-pow-ecmascript-specials",
         "native-system-array-callback-order",
         "native-system-array-callback-order-large",
@@ -16764,6 +16773,9 @@
         },
         "aot": {
           "native-cut-commands": [
+            "fixture.commands"
+          ],
+          "native-dictionary-numeric-key-boundaries": [
             "fixture.commands"
           ],
           "native-numeric-pow-ecmascript-specials": [
