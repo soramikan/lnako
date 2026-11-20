@@ -603,6 +603,40 @@ test "SSA IRで条件・反復・関数・配列辞書を実行する" {
     try std.testing.expectEqualStrings("10\n5\n7\n", host.written());
 }
 
+test "数値だけの辞書要素を正規化した数値キーで登録し重複は後勝ちにする" {
+    const source =
+        "A={10,a:1}\n" ++
+        "A@\"10\"を表示\n" ++
+        "A@\"a\"を表示\n" ++
+        "B={b:2,20}\n" ++
+        "B@\"20\"を表示\n" ++
+        "B@\"b\"を表示\n" ++
+        "C={001,1.50,1e3,１０}\n" ++
+        "C@\"1\"を表示\n" ++
+        "C@\"1.5\"を表示\n" ++
+        "C@\"1000\"を表示\n" ++
+        "C@\"10\"を表示\n" ++
+        "D={10,\"10\":2}\n" ++
+        "D@\"10\"を表示\n" ++
+        "E={\"10\":2,10}\n" ++
+        "E@\"10\"を表示\n" ++
+        "F={10,}\n" ++
+        "F@\"10\"を表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("10\n1\n20\n2\n1\n1.5\n1000\n10\n2\n10\n10\n", host.written());
+}
+
 test "Interpreter幅変換は辞書のカスタムsubstring・charAt・splitとprototypeを呼び出す" {
     const source =
         "P={}\n" ++

@@ -4,6 +4,7 @@ const token_mod = @import("../token.zig");
 const parser_mod = @import("../parser.zig");
 const builder = @import("builder.zig");
 const helpers = @import("helpers.zig");
+const number_text = @import("../../number_text.zig");
 
 const Parser = parser_mod.Parser;
 const ParseFailure = parser_mod.ParseFailure;
@@ -325,6 +326,22 @@ pub fn parseObjectAfterOpen(self: *Parser, open: Token) ParseFailure!*ast.Node {
             continue;
         }
         const key_token = self.advance();
+        if (key_token.kind == .number) {
+            // 公式`yJSONObjectValue`は数値トークン1個をキーと値の両方へ積み、
+            // 実行時のJSオブジェクトがキーを`Number::toString`で文字列化する。
+            // `数値:値`は公式も受理しないため、コロンは明示的に拒否する。
+            if (self.at(.colon)) {
+                return self.fail(.expected_name, "数値の辞書キーに値を指定できません", key_token);
+            }
+            const key = try builder.makeNode(self, .string, key_token);
+            // `Writer.Allocating`の失敗は確保失敗だけなので、parserの
+            // `error{OutOfMemory, ParseFailed}`へ写像する。
+            key.value = number_text.toStringAlloc(self.allocator, key_token.number_value orelse 0) catch return error.OutOfMemory;
+            try values.append(self.allocator, key);
+            try values.append(self.allocator, try builder.valueNode(self, .number, key_token));
+            if (self.at(.comma)) _ = self.advance();
+            continue;
+        }
         if (key_token.kind != .identifier and key_token.kind != .string) {
             return self.fail(.expected_name, "辞書のキーが必要です", key_token);
         }

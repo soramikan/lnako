@@ -921,5 +921,9 @@
     "id": "nested-named-function-imported",
     "files": {"nested-lib.nako3": "●外とは\n　●内とは\n　　「lib内」を表示\n　ここまで\n　内\nここまで\n"},
     "source": "!「./nested-lib.nako3」を取り込む\n内\n外\n"
+  },
+  {
+    "id": "dict-numeric-key-shorthand",
+    "source": "A={10}\nA@\"10\"を表示\nB={10,20}\nB@\"10\"を表示\nB@\"20\"を表示\nC={10,a:1}\nC@\"10\"を表示\nC@\"a\"を表示\nD={a:1,10}\nD@\"10\"を表示\nD@\"a\"を表示\nE={001}\nE@\"1\"を表示\nF={1.50}\nF@\"1.5\"を表示\nG={1e3}\nG@\"1000\"を表示\nH={１０}\nH@\"10\"を表示\nI={10,}\nI@\"10\"を表示\nJ={10,\"10\":2}\nJ@\"10\"を表示\nK={\"10\":2,10}\nK@\"10\"を表示\n"
   }
 ]
