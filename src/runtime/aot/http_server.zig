@@ -842,6 +842,50 @@ fn aotHttpTestSendBytes(io: std.Io, port: u16, bytes: []const u8) !std.Io.net.St
 
 const AotHttpClientProbe = enum { eof, open, data };
 
+const AfdPollHandleInfo = extern struct {
+    handle: std.os.windows.HANDLE,
+    events: u32,
+    status: std.os.windows.NTSTATUS,
+};
+const AfdPollInfo = extern struct {
+    timeout: std.os.windows.LARGE_INTEGER,
+    number_of_handles: u32,
+    exclusive: u32,
+    handles: [1]AfdPollHandleInfo,
+};
+const afd_poll_receive: u32 = 0x0001;
+const afd_poll_disconnect: u32 = 0x0008;
+const afd_poll_abort: u32 = 0x0010;
+const afd_poll_relevant_events = afd_poll_receive | afd_poll_disconnect | afd_poll_abort;
+const AfdPollInterpretation = enum { open, ready };
+
+/// AFD_POLLの出力をOS非依存で解釈する。Linuxの単体テストからも直接呼べる。
+fn interpretAfdPollOutput(
+    ioctl_status: std.os.windows.NTSTATUS,
+    information: usize,
+    output: *const AfdPollInfo,
+    expected_handle: std.os.windows.HANDLE,
+) !AfdPollInterpretation {
+    switch (ioctl_status) {
+        .SUCCESS => {},
+        .TIMEOUT => return .open,
+        else => |status| return std.os.windows.unexpectedStatus(status),
+    }
+    // ヘッダー未満（0を含む）は出力なしとみなさず不正出力にする。
+    if (information < @offsetOf(AfdPollInfo, "handles")) return error.InvalidAfdPollOutput;
+    if (output.number_of_handles == 0) return .open;
+    if (output.number_of_handles != 1) return error.InvalidAfdPollOutput;
+    if (information < @sizeOf(AfdPollInfo)) return error.InvalidAfdPollOutput;
+    if (output.handles[0].handle != expected_handle) return error.InvalidAfdPollOutput;
+    switch (output.handles[0].status) {
+        .SUCCESS => {},
+        .TIMEOUT => return .open,
+        else => |status| return std.os.windows.unexpectedStatus(status),
+    }
+    if ((output.handles[0].events & afd_poll_relevant_events) == 0) return error.InvalidAfdPollOutput;
+    return .ready;
+}
+
 /// WindowsのソケットはWinsockのSOCKETではなくAFDハンドルであり、
 /// `operateTimeout`の並行`net_read`は`error.ConcurrencyUnavailable`になる。
 /// そのためAFD_POLLで期限付きに読み取り可能/切断を待ち、イベントが
@@ -849,30 +893,14 @@ const AotHttpClientProbe = enum { eof, open, data };
 const probeAotHttpClientWindows = if (builtin.os.tag == .windows) struct {
     const windows = std.os.windows;
 
-    const AfdPollHandleInfo = extern struct {
-        handle: windows.HANDLE,
-        events: u32,
-        status: windows.NTSTATUS,
-    };
-    const AfdPollInfo = extern struct {
-        timeout: windows.LARGE_INTEGER,
-        number_of_handles: u32,
-        exclusive: u32,
-        handles: [1]AfdPollHandleInfo,
-    };
-    const afd_poll_receive: u32 = 0x0001;
-    const afd_poll_disconnect: u32 = 0x0008;
-    const afd_poll_abort: u32 = 0x0010;
-
     fn probe(client: std.Io.net.Stream, io: std.Io, timeout_ms: i64) !AotHttpClientProbe {
-        const relevant_events = afd_poll_receive | afd_poll_disconnect | afd_poll_abort;
         var poll_input = AfdPollInfo{
             .timeout = -timeout_ms * 10_000,
             .number_of_handles = 1,
             .exclusive = 0,
             .handles = .{.{
                 .handle = client.socket.handle,
-                .events = relevant_events,
+                .events = afd_poll_relevant_events,
                 .status = .SUCCESS,
             }},
         };
@@ -887,26 +915,10 @@ const probeAotHttpClientWindows = if (builtin.os.tag == .windows) struct {
             .out = std.mem.asBytes(&poll_output),
         } });
         const iosb = result.device_io_control;
-        switch (iosb.u.Status) {
-            .SUCCESS => {},
-            .TIMEOUT => return .open,
-            else => |status| return windows.unexpectedStatus(status),
+        switch (try interpretAfdPollOutput(iosb.u.Status, iosb.Information, &poll_output, client.socket.handle)) {
+            .open => return .open,
+            .ready => {},
         }
-        // 出力0件は期限切れ（イベントなし）として扱う。この場合は入力の
-        // イベントマスクが残っていても読み取りには進まない。
-        if (poll_output.number_of_handles == 0) return .open;
-        // 出力長が報告された場合はAfdPollInfo全体を含むことを要求する。
-        // 0はドライバが長さを報告しない場合があるため、件数とハンドルで
-        // 実際に出力が書き戻されたことを検証する。
-        if (iosb.Information != 0 and iosb.Information < @sizeOf(AfdPollInfo)) return error.InvalidAfdPollOutput;
-        if (poll_output.number_of_handles != 1) return error.InvalidAfdPollOutput;
-        if (poll_output.handles[0].handle != client.socket.handle) return error.InvalidAfdPollOutput;
-        switch (poll_output.handles[0].status) {
-            .SUCCESS => {},
-            .TIMEOUT => return .open,
-            else => |status| return windows.unexpectedStatus(status),
-        }
-        if ((poll_output.handles[0].events & relevant_events) == 0) return .open;
         // AFD_POLLが読み取り可能/切断を通知済みなので、通常のnet_readは
         // 待たずに完了する。`Stream.read`はWindowsでReadResultを分解できず
         // コンパイルできないため、ここでは生のnet_read結果を使う。
@@ -1408,6 +1420,48 @@ test "AOT HTTPは未応答ハンドラの保留でも上限で最古を閉じdei
     client_count = 0;
     // (d) サーバー側fdを含む自プロセスのfdがベースラインへ戻る。
     try expectAotHttpTestFileDescriptorsRestored(fd_baseline);
+}
+
+test "AOT HTTPのAFD_POLL出力判定は不完全な出力とキャンセルを拒否する" {
+    const windows = std.os.windows;
+    const handle: windows.HANDLE = @ptrFromInt(0x1234);
+    const other: windows.HANDLE = @ptrFromInt(0x5678);
+    const header_len = @offsetOf(AfdPollInfo, "handles");
+    const full_len = @sizeOf(AfdPollInfo);
+    var output: AfdPollInfo = std.mem.zeroes(AfdPollInfo);
+    output.handles[0].handle = handle;
+    output.handles[0].events = afd_poll_receive;
+    output.handles[0].status = .SUCCESS;
+
+    // ヘッダー未満（0を含む）は0件とみなさず不正出力。
+    try std.testing.expectError(error.InvalidAfdPollOutput, interpretAfdPollOutput(.SUCCESS, 0, &output, handle));
+    try std.testing.expectError(error.InvalidAfdPollOutput, interpretAfdPollOutput(.SUCCESS, header_len - 1, &output, handle));
+
+    // ヘッダー長以上で0件なら期限切れ。
+    output.number_of_handles = 0;
+    try std.testing.expectEqual(AfdPollInterpretation.open, try interpretAfdPollOutput(.SUCCESS, header_len, &output, handle));
+
+    // 1件でも全体長未満・ハンドル不一致は不正出力。
+    output.number_of_handles = 1;
+    try std.testing.expectError(error.InvalidAfdPollOutput, interpretAfdPollOutput(.SUCCESS, full_len - 1, &output, handle));
+    try std.testing.expectError(error.InvalidAfdPollOutput, interpretAfdPollOutput(.SUCCESS, full_len, &output, other));
+
+    // 個別ハンドルのタイムアウトのみ生存、キャンセルはエラー。
+    output.handles[0].status = .TIMEOUT;
+    try std.testing.expectEqual(AfdPollInterpretation.open, try interpretAfdPollOutput(.SUCCESS, full_len, &output, handle));
+    output.handles[0].status = .CANCELLED;
+    try std.testing.expectError(error.Unexpected, interpretAfdPollOutput(.SUCCESS, full_len, &output, handle));
+
+    // 1件出力で対象イベント0は不正出力、有効イベントありはready。
+    output.handles[0].status = .SUCCESS;
+    output.handles[0].events = 0;
+    try std.testing.expectError(error.InvalidAfdPollOutput, interpretAfdPollOutput(.SUCCESS, full_len, &output, handle));
+    output.handles[0].events = afd_poll_disconnect;
+    try std.testing.expectEqual(AfdPollInterpretation.ready, try interpretAfdPollOutput(.SUCCESS, full_len, &output, handle));
+
+    // IOCTL全体のタイムアウトのみ生存、キャンセルはエラー。
+    try std.testing.expectEqual(AfdPollInterpretation.open, try interpretAfdPollOutput(.TIMEOUT, 0, &output, handle));
+    try std.testing.expectError(error.Unexpected, interpretAfdPollOutput(.CANCELLED, full_len, &output, handle));
 }
 
 test "AOT HTTPは途中切断と不正chunk/header後に次の要求を受け付ける" {
