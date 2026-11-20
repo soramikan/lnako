@@ -892,17 +892,41 @@ fn aotHttpOpenPosixRegularFileFd(io: std.Io, directory: std.Io.Dir, name: []cons
         defer (std.Io.File{ .handle = path_fd, .flags = .{ .nonblocking = false } }).close(io);
         const path_stat = try aotHttpPosixFstat(path_fd) orelse return null;
         if (path_stat.kind != .file) return null;
-        if (aotHttpOpenProcFd(path_fd)) |fd| {
-            return fd;
-        } else |err| {
-            // procfsが無い場合だけパス名openへフォールバックする。
-            // AccessDenied・fd上限・その他は副作用のあるopenをやり直さず伝播する。
-            if (!aotHttpIsProcUnavailable(err)) return err;
-            if (try aotHttpProcFallbackDecision(err, aotHttpProcFdDirectoryAvailable(io))) |propagate| return propagate;
-        }
+        const Hooks = struct {
+            io: std.Io,
+            directory: std.Io.Dir,
+            name: []const u8,
+            pre: AotHttpPosixStat,
+            fn openProc(self: @This(), proc_fd: std.posix.fd_t) anyerror!std.posix.fd_t {
+                _ = self;
+                return aotHttpOpenProcFd(proc_fd);
+            }
+            fn probeProcDir(self: @This()) anyerror!bool {
+                return aotHttpProcFdDirectoryAvailable(self.io);
+            }
+            fn fallback(self: @This()) anyerror!?std.posix.fd_t {
+                return aotHttpOpenPosixRegularFileFallback(self.io, self.directory, self.name, self.pre);
+            }
+        };
+        return aotHttpOpenLinuxWithHooks(Hooks{ .io = io, .directory = directory, .name = name, .pre = pre }, path_fd);
     }
 
     return aotHttpOpenPosixRegularFileFallback(io, directory, name, pre);
+}
+
+/// Linuxのprocfs openからパス名openへのフォールバック分岐。
+/// `openProc`がprocfs不在（FileNotFound/NotDir）以外ならそのエラーを返す。
+/// procfs不在でも`probeProcDir`が利用可能なら元エラーを返し、確認自体の
+/// 失敗はそのエラーを伝播する。両方不在のときだけ`fallback`を呼ぶ。
+pub fn aotHttpOpenLinuxWithHooks(hooks: anytype, path_fd: std.posix.fd_t) anyerror!?std.posix.fd_t {
+    if (hooks.openProc(path_fd)) |fd| {
+        return fd;
+    } else |err| {
+        if (!aotHttpIsProcUnavailable(err)) return err;
+        const available = hooks.probeProcDir() catch |probe_err| return probe_err;
+        if (available) return err;
+    }
+    return hooks.fallback();
 }
 
 /// `/proc/self/fd`が無いことによるエラーか。それ以外はフォールバックしない。
@@ -911,15 +935,6 @@ pub fn aotHttpIsProcUnavailable(err: anyerror) bool {
         error.FileNotFound, error.NotDir => true,
         else => false,
     };
-}
-
-/// procfsのopenエラーと`/proc/self/fd`の利用可否から、パス名openへ
-/// フォールバックすべきか決める。nullならフォールバック、非nullは伝播する
-/// エラー。`/proc/self/fd`の確認自体が失敗した場合はそのエラーを伝播する。
-pub fn aotHttpProcFallbackDecision(proc_err: anyerror, proc_dir_result: anyerror!bool) anyerror!?anyerror {
-    const available = try proc_dir_result;
-    if (available) return @as(?anyerror, proc_err);
-    return null;
 }
 
 /// `/proc/self/fd`ディレクトリが利用可能か。不在（FileNotFound/NotDir）だけ
