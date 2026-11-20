@@ -792,11 +792,7 @@ pub fn aotHttpPosixStatAt(directory: std.Io.Dir, name: []const u8) !?AotHttpPosi
             .ACCES => return error.AccessDenied,
             else => return error.Unexpected,
         }
-        return .{
-            .kind = aotHttpKindFromMode(stx.mode),
-            .inode = stx.ino,
-            .device = aotHttpDeviceId(stx.dev_major, stx.dev_minor),
-        };
+        return aotHttpStatFromStatx(stx);
     }
     var st: std.c.Stat = undefined;
     const rc = std.c.fstatat(directory.handle, &path, &st, std.c.AT.SYMLINK_NOFOLLOW);
@@ -824,11 +820,7 @@ fn aotHttpPosixFstat(fd: std.posix.fd_t) !?AotHttpPosixStat {
             .ACCES => return error.AccessDenied,
             else => return error.Unexpected,
         }
-        return .{
-            .kind = aotHttpKindFromMode(stx.mode),
-            .inode = stx.ino,
-            .device = aotHttpDeviceId(stx.dev_major, stx.dev_minor),
-        };
+        return aotHttpStatFromStatx(stx);
     }
     var st: std.c.Stat = undefined;
     const rc = std.c.fstat(fd, &st);
@@ -842,6 +834,17 @@ fn aotHttpPosixFstat(fd: std.posix.fd_t) !?AotHttpPosixStat {
         .kind = aotHttpKindFromMode(st.mode),
         .inode = aotHttpUnsignedId(st.ino),
         .device = aotHttpUnsignedId(st.dev),
+    };
+}
+
+/// `statx`の結果から種別・inode・deviceを取り出す。`TYPE`/`INO`が
+/// 要求どおり返っていない場合はfail closed（null）にする。
+pub fn aotHttpStatFromStatx(stx: std.os.linux.Statx) ?AotHttpPosixStat {
+    if (!stx.mask.TYPE or !stx.mask.INO) return null;
+    return .{
+        .kind = aotHttpKindFromMode(stx.mode),
+        .inode = stx.ino,
+        .device = aotHttpDeviceId(stx.dev_major, stx.dev_minor),
     };
 }
 
@@ -895,7 +898,7 @@ fn aotHttpOpenPosixRegularFileFd(io: std.Io, directory: std.Io.Dir, name: []cons
             // procfsが無い場合だけパス名openへフォールバックする。
             // AccessDenied・fd上限・その他は副作用のあるopenをやり直さず伝播する。
             if (!aotHttpIsProcUnavailable(err)) return err;
-            if (try aotHttpProcFdDirectoryAvailable(io)) return err;
+            if (try aotHttpProcFallbackDecision(err, aotHttpProcFdDirectoryAvailable(io))) |propagate| return propagate;
         }
     }
 
@@ -903,11 +906,20 @@ fn aotHttpOpenPosixRegularFileFd(io: std.Io, directory: std.Io.Dir, name: []cons
 }
 
 /// `/proc/self/fd`が無いことによるエラーか。それ以外はフォールバックしない。
-fn aotHttpIsProcUnavailable(err: anyerror) bool {
+pub fn aotHttpIsProcUnavailable(err: anyerror) bool {
     return switch (err) {
         error.FileNotFound, error.NotDir => true,
         else => false,
     };
+}
+
+/// procfsのopenエラーと`/proc/self/fd`の利用可否から、パス名openへ
+/// フォールバックすべきか決める。nullならフォールバック、非nullは伝播する
+/// エラー。`/proc/self/fd`の確認自体が失敗した場合はそのエラーを伝播する。
+pub fn aotHttpProcFallbackDecision(proc_err: anyerror, proc_dir_result: anyerror!bool) anyerror!?anyerror {
+    const available = try proc_dir_result;
+    if (available) return @as(?anyerror, proc_err);
+    return null;
 }
 
 /// `/proc/self/fd`ディレクトリが利用可能か。不在（FileNotFound/NotDir）だけ
@@ -1067,7 +1079,16 @@ pub fn aotHttpReadStaticFile(io: std.Io, file: std.Io.File, allocator: std.mem.A
     const stat = try file.stat(io);
     var buffer: [64 * 1024]u8 = undefined;
     var reader = file.reader(io, &buffer);
-    return aotHttpReadStaticFromReader(&reader.interface, stat.size, allocator, max_bytes);
+    return aotHttpReadStaticFromReader(&reader.interface, stat.size, allocator, max_bytes) catch |err| {
+        return aotHttpRestoreReadError(err, reader.err);
+    };
+}
+
+/// `File.Reader`は実エラーを`reader.err`へ保存して`error.ReadFailed`を返す。
+/// 要求スコープの404/500分類に使えるよう元エラーを復元する。
+pub fn aotHttpRestoreReadError(err: anyerror, reader_err: ?anyerror) anyerror {
+    if (err == error.ReadFailed) return reader_err orelse error.ReadFailed;
+    return err;
 }
 
 /// 事前statのサイズと実際の読み取り結果の両方に排他的上限を適用する。
