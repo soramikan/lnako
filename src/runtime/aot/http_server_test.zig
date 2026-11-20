@@ -17,6 +17,11 @@ const aotHttpReadStaticFile = http_server.aotHttpReadStaticFile;
 const aotHttpStaticReadErrorStatus = http_server.aotHttpStaticReadErrorStatus;
 const aotHttpEnforceStaticReadLimit = http_server.aotHttpEnforceStaticReadLimit;
 const aotHttpRegisterStaticRoute = http_server.aotHttpRegisterStaticRoute;
+const aotHttpPosixStatAt = http_server.aotHttpPosixStatAt;
+const aotHttpOpenPosixRegularFileFallback = http_server.aotHttpOpenPosixRegularFileFallback;
+const aotHttpUnsignedId = http_server.aotHttpUnsignedId;
+const aotHttpReadStaticFromReader = http_server.aotHttpReadStaticFromReader;
+const aotHttpIsStaticPathMiss = http_server.aotHttpIsStaticPathMiss;
 const runtimeUtf8String = state.runtimeUtf8String;
 
 test "AOT HTTP静的配信はdocroot外を指すsymlinkを404にする" {
@@ -458,15 +463,31 @@ test "AOT HTTP静的配信は中間ディレクトリのsymlink差し替えと�
     try std.testing.expectEqual(@as(usize, 0), leaks);
 }
 
-test "AOT HTTP静的配信はUnixドメインソケットをopenせず404にする" {
-    if (builtin.os.tag == .windows) return error.SkipZigTest;
+test "AOT HTTP静的配信はLinuxでFIFOとソケットを事前statで検出し404にする" {
+    // Linuxで確認できる範囲: statxが.named_pipe/.unix_domain_socketを返し、
+    // aotHttpOpenStaticFileが読み取りopen前にnullを返すこと。
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
     const io = aotHttpIo();
     var docroot = std.testing.tmpDir(.{});
     defer docroot.cleanup();
+    try createFifo(io, docroot.dir, "pipe");
     try createUnixSocket(io, docroot.dir, "sock");
     const docroot_path = try docroot.dir.realPathFileAlloc(io, ".", std.testing.allocator);
     defer std.testing.allocator.free(docroot_path);
+
+    const pipe_stat = (try aotHttpPosixStatAt(docroot.dir, "pipe")).?;
+    try std.testing.expectEqual(std.Io.File.Kind.named_pipe, pipe_stat.kind);
+    const sock_stat = (try aotHttpPosixStatAt(docroot.dir, "sock")).?;
+    try std.testing.expectEqual(std.Io.File.Kind.unix_domain_socket, sock_stat.kind);
+
+    try std.testing.expect((try aotHttpOpenStaticFile(io, docroot_path, "pipe")) == null);
     try std.testing.expect((try aotHttpOpenStaticFile(io, docroot_path, "sock")) == null);
+}
+
+test "AOT HTTP静的配信はDarwinのソケットopen拒否を404に分類する" {
+    // Darwinはソケットの読み取りopenにEOPNOTSUPPを返し、Zigは
+    // error.FileLocksUnsupportedへ変換する。種別違いとして404にする。
+    try std.testing.expect(aotHttpIsStaticPathMiss(error.FileLocksUnsupported));
 }
 
 test "AOT HTTP静的配信はNULを含むdocrootで停止しない" {
@@ -491,15 +512,70 @@ test "AOT HTTP静的配信はNULを含むdocrootの登録を拒否する" {
     try std.testing.expectEqual(@as(usize, 0), runtime.http_server_state.routes.items.len);
 }
 
-test "AOT HTTP静的配信は読み取り後の上限超過も413相当にする" {
-    const allocator = std.testing.allocator;
-    const under = try allocator.alloc(u8, 3);
-    const kept = try aotHttpEnforceStaticReadLimit(allocator, under, 4);
-    defer allocator.free(kept);
-    try std.testing.expectEqual(@as(usize, 3), kept.len);
-    // 読み取り中に上限ちょうどまで伸びた場合も旧readFileAllocと同じく拒否する。
-    const exact = try allocator.alloc(u8, 4);
-    try std.testing.expectError(error.StreamTooLong, aotHttpEnforceStaticReadLimit(allocator, exact, 4));
-    const over = try allocator.alloc(u8, 5);
-    try std.testing.expectError(error.StreamTooLong, aotHttpEnforceStaticReadLimit(allocator, over, 4));
+test "AOT HTTP静的配信は読み取り中に上限ちょうどへ達すると413相当にする" {
+    // 事前statは上限未満（2 < 4）だが、実読取が上限ちょうど（4バイト）に
+    // 達する経路をReader.fixedで通す。testing.allocatorがリークも検出する。
+    var reader = std.Io.Reader.fixed("1234");
+    try std.testing.expectError(error.StreamTooLong, aotHttpReadStaticFromReader(&reader, 2, std.testing.allocator, 4));
+
+    // 上限直前（3バイト）は成功する。
+    var short_reader = std.Io.Reader.fixed("123");
+    const kept = try aotHttpReadStaticFromReader(&short_reader, 2, std.testing.allocator, 4);
+    defer std.testing.allocator.free(kept);
+    try std.testing.expectEqualStrings("123", kept);
+}
+
+test "AOT HTTP静的配信は符号付きdev_tの負値を安全にu64へ変換する" {
+    try std.testing.expectEqual(@as(u64, 0xffffffff), aotHttpUnsignedId(@as(i32, -1)));
+    try std.testing.expectEqual(@as(u64, 0x7fffffff), aotHttpUnsignedId(@as(i32, 0x7fffffff)));
+    try std.testing.expectEqual(@as(u64, 0xffffffffffffffff), aotHttpUnsignedId(@as(i64, -1)));
+}
+
+test "AOT HTTP静的配信のprocfsフォールバックは同一inodeだけを受け付ける" {
+    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) return error.SkipZigTest;
+    const io = aotHttpIo();
+    var docroot = std.testing.tmpDir(.{});
+    defer docroot.cleanup();
+    try docroot.dir.writeFile(io, .{ .sub_path = "a.txt", .data = "A" });
+    try docroot.dir.writeFile(io, .{ .sub_path = "b.txt", .data = "B" });
+    const docroot_path = try docroot.dir.realPathFileAlloc(io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(docroot_path);
+
+    const pre_a = (try aotHttpPosixStatAt(docroot.dir, "a.txt")).?;
+    // 事前statがa.txtのままb.txtを開こうとすると(dev, ino)不一致で拒否する。
+    try std.testing.expect((try aotHttpOpenPosixRegularFileFallback(io, docroot.dir, "b.txt", pre_a)) == null);
+    // 同一inodeなら開ける。
+    const fd = (try aotHttpOpenPosixRegularFileFallback(io, docroot.dir, "a.txt", pre_a)).?;
+    (std.Io.File{ .handle = fd, .flags = .{ .nonblocking = true } }).close(io);
+}
+
+test "AOT HTTP静的配信は要求パス先頭のバックスラッシュを従来どおり除去する" {
+    const io = aotHttpIo();
+    var docroot = std.testing.tmpDir(.{});
+    defer docroot.cleanup();
+    try docroot.dir.writeFile(io, .{ .sub_path = "hello.txt", .data = "hello" });
+    const docroot_path = try docroot.dir.realPathFileAlloc(io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(docroot_path);
+
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    const address: std.Io.net.IpAddress = .{ .ip4 = .loopback(0) };
+    runtime.http_server = try address.listen(io, .{ .reuse_address = true });
+    try aotHttpIngressStart(&runtime);
+    runtime.http_server_state.started = true;
+    const port = runtime.http_server.?.socket.address.getPort();
+    var route = AotHttpRoute{
+        .kind = .static,
+        .prefix = try runtime.allocator.dupe(u8, "/static"),
+        .path = try runtime.allocator.dupe(u8, docroot_path),
+    };
+    defer route.deinit(runtime.allocator);
+
+    // ベース実装は先頭の`/`と`\`をtrimStartで除去していた。
+    var client = try aotHttpTestSendRequest(io, port, "GET /static/\\hello.txt HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    defer client.close(io);
+    var request = try aotHttpReceiveRequest(&runtime);
+    defer request.deinit();
+    try aotHttpServeStatic(&runtime, route, aotHttpPathOnly(request.target));
+    try expectAotHttpResponse(client, io, "HTTP/1.1 200", "hello", null);
 }
