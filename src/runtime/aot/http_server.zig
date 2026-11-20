@@ -1321,6 +1321,8 @@ test "AOT HTTPは未登録URLの保留が上限を超えると最古の接続を
     }
     var accepted: [expected_held_http_connections + 1]std.Io.net.Socket.Handle = undefined;
     for (&clients, 0..) |*client, index| {
+        // 17件目を送る直前は、まだ最古の接続が閉じられていない。
+        if (index == expected_held_http_connections) try expectAotHttpClientStaysOpen(clients[0], io);
         client.* = try aotHttpTestSendRequest(io, port, "GET /nohandler HTTP/1.1\r\nHost: localhost\r\n\r\n");
         client_count += 1;
         try std.testing.expect(try expectAotHttpRequestHandled(&runtime));
@@ -1359,11 +1361,13 @@ test "AOT HTTPは未応答ハンドラの保留でも上限で最古を閉じdei
     try std.testing.expectEqual(@as(usize, 16), max_held_http_connections);
     const expected_held_http_connections: usize = 16;
     test_aot_http_noop_callback_count = 0;
+    // 基準値の取得・検査はグローバル状態を設定する前に行い、失敗時に
+    // active_runtimeへRuntimeが残らないようにする。
+    const fd_baseline = try aotHttpTestOpenFileDescriptorCount();
+    if (builtin.os.tag == .linux) try std.testing.expect(fd_baseline != null);
     // ハンドラは生成コードと同じく`active_runtime`経由で呼ばれるため、
     // Runtimeはグローバル側に置いてlocal変数と二重に持たない。
     state.active_runtime = Runtime{ .allocator = std.testing.allocator };
-    const fd_baseline = try aotHttpTestOpenFileDescriptorCount();
-    if (builtin.os.tag == .linux) try std.testing.expect(fd_baseline != null);
     defer {
         if (state.active_runtime) |*active| active.deinit();
         state.active_runtime = null;
@@ -1387,6 +1391,8 @@ test "AOT HTTPは未応答ハンドラの保留でも上限で最古を閉じdei
     }
     var accepted: [expected_held_http_connections + 1]std.Io.net.Socket.Handle = undefined;
     for (&clients, 0..) |*client, index| {
+        // 17件目を送る直前は、まだ最古の接続が閉じられていない。
+        if (index == expected_held_http_connections) try expectAotHttpClientStaysOpen(clients[0], io);
         client.* = try aotHttpTestSendRequest(io, port, "GET /noop HTTP/1.1\r\nHost: localhost\r\n\r\n");
         client_count += 1;
         try std.testing.expect(try expectAotHttpRequestHandled(runtime));
