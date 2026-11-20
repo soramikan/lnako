@@ -672,7 +672,66 @@ test "辞書の引用符付き省略値を文字列として構文解析する" 
     try std.testing.expectEqual(ast.Kind.string, object.children[3].kind);
 }
 
-test "公式同様に辞書リテラルの数値キーを拒否する" {
+test "数値だけの辞書要素を正規化した数値キーと数値値へ構文解析する" {
+    var result = try parse(std.testing.allocator, "A={10,20,001,1.50,1e3,１０}\n", "numeric-shorthand.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const object = result.root.?.children[0].children[0];
+    try std.testing.expectEqual(ast.Kind.object_literal, object.kind);
+    try std.testing.expectEqual(@as(usize, 12), object.children.len);
+    const expected = [_]struct { key: []const u8, value: f64 }{
+        .{ .key = "10", .value = 10 },
+        .{ .key = "20", .value = 20 },
+        .{ .key = "1", .value = 1 },
+        .{ .key = "1.5", .value = 1.5 },
+        .{ .key = "1000", .value = 1000 },
+        .{ .key = "10", .value = 10 },
+    };
+    for (expected, 0..) |item, index| {
+        const key = object.children[index * 2];
+        const value = object.children[index * 2 + 1];
+        try std.testing.expectEqual(ast.Kind.string, key.kind);
+        try std.testing.expectEqualStrings(item.key, key.value);
+        try std.testing.expectEqual(ast.Kind.number, value.kind);
+        try std.testing.expectEqual(item.value, value.number_value.?);
+    }
+}
+
+test "数値だけの辞書要素を明示キーと両順序で混在させ末尾コンマを受理する" {
+    var result = try parse(std.testing.allocator, "A={10,a:1}\nB={b:2,20}\nC={30,}\n", "numeric-mixed.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const first = result.root.?.children[0].children[0];
+    try std.testing.expectEqualStrings("10", first.children[0].value);
+    try std.testing.expectEqual(ast.Kind.number, first.children[1].kind);
+    try std.testing.expectEqualStrings("a", first.children[2].value);
+    try std.testing.expectEqual(ast.Kind.number, first.children[3].kind);
+    const second = result.root.?.children[2].children[0];
+    try std.testing.expectEqualStrings("b", second.children[0].value);
+    try std.testing.expectEqual(ast.Kind.number, second.children[1].kind);
+    try std.testing.expectEqualStrings("20", second.children[2].value);
+    try std.testing.expectEqual(ast.Kind.number, second.children[3].kind);
+    const third = result.root.?.children[4].children[0];
+    try std.testing.expectEqualStrings("30", third.children[0].value);
+    try std.testing.expectEqual(ast.Kind.number, third.children[1].kind);
+}
+
+test "符号付き・式・数値キーへの値指定を辞書リテラルで拒否する" {
+    const cases = [_]struct { source: []const u8, message: []const u8 }{
+        .{ .source = "A={-10}\n", .message = "辞書のキーが必要です" },
+        .{ .source = "A={+10}\n", .message = "辞書のキーが必要です" },
+        .{ .source = "A={1+2}\n", .message = "辞書のキーが必要です" },
+        .{ .source = "A={1:2}\n", .message = "数値の辞書キーに値を指定できません" },
+    };
+    for (cases) |case| {
+        var result = try parse(std.testing.allocator, case.source, "numeric-invalid.nako3");
+        defer result.deinit();
+        try std.testing.expect(!result.succeeded());
+        try std.testing.expectEqualStrings(case.message, result.diagnostics[0].message);
+    }
+}
+
+test "公式同様に辞書リテラルの数値キーへの値指定を拒否する" {
     var result = try parse(std.testing.allocator, "A={1:2}\n", "numeric-key.nako3");
     defer result.deinit();
     try std.testing.expect(!result.succeeded());
