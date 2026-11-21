@@ -381,7 +381,7 @@ const Lexer = struct {
         else
             try removeUnderscores(self.allocator, self.source.text[start..value_end]);
         try self.emit(kind, start, self.offset, value, value_josi, raw_josi);
-        if (kind == .number) self.tokens.items[self.tokens.items.len - 1].number_value = try parseNumberValue(value, base);
+        if (kind == .number) self.tokens.items[self.tokens.items.len - 1].number_value = try parseNumberValue(self.allocator, value, base);
     }
 
     fn readString(self: *Lexer) Error!void {
@@ -661,10 +661,53 @@ fn removeUnderscores(allocator: std.mem.Allocator, literal: []const u8) Error![]
     return result.toOwnedSlice(allocator);
 }
 
-fn parseNumberValue(literal: []const u8, base: u8) Error!f64 {
+/// binary64の最大有限値と2^1024の中点は2^1024 - 2^970で、これ以上は
+/// 必ずInfinityへ丸まる。基数2・8・16は2の冪なので、有効桁数nの最小値
+/// 2^((n-1)*bits)が2^1024以上なら桁あふれが確定する。
+const binary64_overflow_bits = 1024;
+
+fn radixBits(base: u8) ?u8 {
+    return switch (base) {
+        2 => 1,
+        8 => 3,
+        16 => 4,
+        else => null,
+    };
+}
+
+fn parseNumberValue(allocator: std.mem.Allocator, literal: []const u8, base: u8) Error!f64 {
     if (base == 10) return std.fmt.parseFloat(f64, literal) catch error.InvalidNumber;
-    const integer = std.fmt.parseInt(u64, literal[2..], base) catch return error.InvalidNumber;
-    return @floatFromInt(integer);
+    const digits = literal[2..];
+    // 先頭ゼロを除いた有効桁だけを多倍長変換へ渡す。巨大な先頭ゼロ列で
+    // 変換コストが増えないようにする。
+    var first_significant: usize = 0;
+    while (first_significant < digits.len and digits[first_significant] == '0') : (first_significant += 1) {}
+    const significant = digits[first_significant..];
+    // 既存の字句エラーを保つため、先頭ゼロを含む全桁を検証する。
+    for (digits) |byte| {
+        if (byte == '_') continue;
+        if (!isDigitForBase(byte, base)) return error.InvalidNumber;
+    }
+    if (significant.len == 0) return 0.0;
+    const bits_per_digit = radixBits(base) orelse return error.InvalidNumber;
+    // 境界の桁数だけは多倍長変換で正確に丸める。これを超える有効桁数は
+    // 最小値でも2^1024以上になるため、変換せずInfinityを返す。
+    const max_exact_digits = (binary64_overflow_bits + @as(usize, bits_per_digit) - 1) / bits_per_digit;
+    if (significant.len > max_exact_digits) return std.math.inf(f64);
+    // ここでの有効桁数は2進1024桁・8進342桁・16進256桁に収まる。
+    // 公式`parseNumber`は`Number(hex)`でbinary64へ丸めるため、u64を超える
+    // 16進・8進・2進リテラルもInvalidNumberにせず同じ丸め結果にする。
+    if (std.fmt.parseInt(u64, significant, base)) |integer| {
+        return @floatFromInt(integer);
+    } else |_| {}
+    var big = std.math.big.int.Managed.init(allocator) catch return error.OutOfMemory;
+    defer big.deinit();
+    big.setString(base, significant) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return error.InvalidNumber,
+    };
+    const converted = big.toFloat(f64, .nearest_even);
+    return converted[0];
 }
 
 /// `予約語一覧取得`が返す、公式v3.7.24の公開順序。
@@ -794,6 +837,15 @@ test "全角演算子・BigInt・数値区切りを扱う" {
     try std.testing.expectEqualStrings("0xFFn", stream.tokens[2].value);
     try std.testing.expectEqual(Kind.comma, stream.tokens[3].kind);
     try std.testing.expectEqualStrings("1000.5", stream.tokens[6].value);
+}
+
+test "u64を超える16進・8進・2進リテラルをbinary64へ丸める" {
+    var stream = try tokenize(std.testing.allocator, "0x10000000000000000、0o2000000000000000000000、0b10000000000000000000000000000000000000000000000000000000000000000");
+    defer stream.deinit();
+    const expected: f64 = 18446744073709551616;
+    try std.testing.expectEqual(expected, stream.tokens[0].number_value.?);
+    try std.testing.expectEqual(expected, stream.tokens[2].number_value.?);
+    try std.testing.expectEqual(expected, stream.tokens[4].number_value.?);
 }
 
 test "数値単位・小数・単語分割を公式規則で扱う" {

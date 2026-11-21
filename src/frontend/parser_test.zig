@@ -672,7 +672,176 @@ test "辞書の引用符付き省略値を文字列として構文解析する" 
     try std.testing.expectEqual(ast.Kind.string, object.children[3].kind);
 }
 
-test "公式同様に辞書リテラルの数値キーを拒否する" {
+test "数値だけの辞書要素を正規化した数値キーと数値値へ構文解析する" {
+    var result = try parse(std.testing.allocator, "A={10,20,001,1.50,1e3,１０}\n", "numeric-shorthand.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const object = result.root.?.children[0].children[0];
+    try std.testing.expectEqual(ast.Kind.object_literal, object.kind);
+    try std.testing.expectEqual(@as(usize, 12), object.children.len);
+    const expected = [_]struct { key: []const u8, value: f64 }{
+        .{ .key = "10", .value = 10 },
+        .{ .key = "20", .value = 20 },
+        .{ .key = "1", .value = 1 },
+        .{ .key = "1.5", .value = 1.5 },
+        .{ .key = "1000", .value = 1000 },
+        .{ .key = "10", .value = 10 },
+    };
+    for (expected, 0..) |item, index| {
+        const key = object.children[index * 2];
+        const value = object.children[index * 2 + 1];
+        try std.testing.expectEqual(ast.Kind.string, key.kind);
+        try std.testing.expectEqualStrings(item.key, key.value);
+        try std.testing.expectEqual(ast.Kind.number, value.kind);
+        try std.testing.expectEqual(item.value, value.number_value.?);
+    }
+}
+
+test "u64を超える16進の数値だけの辞書要素を公式のキーへ正規化する" {
+    var result = try parse(std.testing.allocator, "A={0x10000000000000000}\n", "numeric-overflow.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const object = result.root.?.children[0].children[0];
+    try std.testing.expectEqual(@as(usize, 2), object.children.len);
+    try std.testing.expectEqualStrings("18446744073709552000", object.children[0].value);
+    try std.testing.expectEqual(@as(f64, 18446744073709551616), object.children[1].number_value.?);
+}
+
+test "巨大な基数リテラルは有効桁数からInfinityへ短絡する" {
+    const allocator = std.testing.allocator;
+    const cases = [_]struct { prefix: []const u8, digit: u8, count: usize }{
+        .{ .prefix = "0x", .digit = 'f', .count = 250_000 },
+        .{ .prefix = "0x", .digit = 'f', .count = 500_000 },
+        .{ .prefix = "0b", .digit = '1', .count = 500_000 },
+        .{ .prefix = "0o", .digit = '7', .count = 500_000 },
+    };
+    for (cases) |case| {
+        const digits = try allocator.alloc(u8, case.count);
+        defer allocator.free(digits);
+        @memset(digits, case.digit);
+        const source = try std.fmt.allocPrint(allocator, "{s}{s}を表示\n", .{ case.prefix, digits });
+        defer allocator.free(source);
+        var result = try parse(allocator, source, "huge-radix.nako3");
+        defer result.deinit();
+        try std.testing.expect(result.succeeded());
+        const call = result.root.?.children[0];
+        try std.testing.expectEqual(ast.Kind.function_call, call.kind);
+        try std.testing.expect(std.math.isInf(call.children[0].number_value.?));
+    }
+}
+
+test "基数リテラルのbinary64境界を正確に丸める" {
+    const allocator = std.testing.allocator;
+    const cases = [_]struct { prefix: []const u8, digit: u8, count: usize, expected: ?f64 }{
+        .{ .prefix = "0x", .digit = 'f', .count = 255, .expected = @exp2(@as(f64, 1020)) },
+        .{ .prefix = "0x", .digit = 'f', .count = 256, .expected = null },
+        .{ .prefix = "0x1", .digit = '0', .count = 255, .expected = @exp2(@as(f64, 1020)) },
+        .{ .prefix = "0x1", .digit = '0', .count = 256, .expected = null },
+        .{ .prefix = "0b1", .digit = '0', .count = 1023, .expected = @exp2(@as(f64, 1023)) },
+        .{ .prefix = "0b1", .digit = '0', .count = 1024, .expected = null },
+        .{ .prefix = "0o1", .digit = '0', .count = 341, .expected = @exp2(@as(f64, 1023)) },
+        .{ .prefix = "0o1", .digit = '0', .count = 342, .expected = null },
+    };
+    for (cases) |case| {
+        const digits = try allocator.alloc(u8, case.count);
+        defer allocator.free(digits);
+        @memset(digits, case.digit);
+        const source = try std.fmt.allocPrint(allocator, "{s}{s}を表示\n", .{ case.prefix, digits });
+        defer allocator.free(source);
+        var result = try parse(allocator, source, "radix-boundary.nako3");
+        defer result.deinit();
+        try std.testing.expect(result.succeeded());
+        const value = result.root.?.children[0].children[0].number_value.?;
+        if (case.expected) |expected| {
+            try std.testing.expectEqual(expected, value);
+        } else {
+            try std.testing.expect(std.math.isInf(value));
+        }
+    }
+}
+
+test "基数リテラルの先頭ゼロを除いて変換する" {
+    const allocator = std.testing.allocator;
+    const zeros = try allocator.alloc(u8, 500_000);
+    defer allocator.free(zeros);
+    @memset(zeros, '0');
+    const source = try std.fmt.allocPrint(allocator, "0x{s}1を表示\n", .{zeros});
+    defer allocator.free(source);
+    var result = try parse(allocator, source, "radix-leading-zeros.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    try std.testing.expectEqual(@as(f64, 1), result.root.?.children[0].children[0].number_value.?);
+}
+
+test "基数リテラルの不正な桁と区切りを従来どおり拒否する" {
+    const invalid = [_][]const u8{ "0x\n", "0b2\n", "0o8\n", "0x_\n", "0b_\n" };
+    for (invalid) |source| {
+        try std.testing.expectError(error.InvalidNumber, parse(std.testing.allocator, source, "invalid-radix.nako3"));
+    }
+}
+
+test "基数リテラルの区切りを従来どおり除去する" {
+    var result = try parse(std.testing.allocator, "0x1_2を表示\n0b1_0を表示\n0o1_0を表示\n", "radix-separator.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const expected = [_]f64{ 18, 2, 8 };
+    for (expected, 0..) |value, index| {
+        try std.testing.expectEqual(value, result.root.?.children[index * 2].children[0].number_value.?);
+    }
+}
+
+test "数値だけの辞書要素を明示キーと両順序で混在させ末尾コンマを受理する" {
+    var result = try parse(std.testing.allocator, "A={10,a:1}\nB={b:2,20}\nC={30,}\n", "numeric-mixed.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const first = result.root.?.children[0].children[0];
+    try std.testing.expectEqualStrings("10", first.children[0].value);
+    try std.testing.expectEqual(ast.Kind.number, first.children[1].kind);
+    try std.testing.expectEqualStrings("a", first.children[2].value);
+    try std.testing.expectEqual(ast.Kind.number, first.children[3].kind);
+    const second = result.root.?.children[2].children[0];
+    try std.testing.expectEqualStrings("b", second.children[0].value);
+    try std.testing.expectEqual(ast.Kind.number, second.children[1].kind);
+    try std.testing.expectEqualStrings("20", second.children[2].value);
+    try std.testing.expectEqual(ast.Kind.number, second.children[3].kind);
+    const third = result.root.?.children[4].children[0];
+    try std.testing.expectEqualStrings("30", third.children[0].value);
+    try std.testing.expectEqual(ast.Kind.number, third.children[1].kind);
+}
+
+test "辞書リテラルの先頭・連続コンマを拒否し末尾コンマを受理する" {
+    const invalid = [_][]const u8{ "A={,10}\n", "A={10,,20}\n", "A={,\n10}\n", "A={10,\n,20}\n" };
+    for (invalid) |source| {
+        var result = try parse(std.testing.allocator, source, "numeric-comma-invalid.nako3");
+        defer result.deinit();
+        try std.testing.expect(!result.succeeded());
+        try std.testing.expectEqualStrings("辞書のキーが必要です", result.diagnostics[0].message);
+    }
+
+    const valid = [_][]const u8{ "A={10,}\n", "A={10,\n20,}\n", "A={a:1,b:2,}\n", "A={\"a\":1,\"b\":2,}\n" };
+    for (valid) |source| {
+        var result = try parse(std.testing.allocator, source, "numeric-comma-valid.nako3");
+        defer result.deinit();
+        try std.testing.expect(result.succeeded());
+    }
+}
+
+test "符号付き・式・数値キーへの値指定を辞書リテラルで拒否する" {
+    const cases = [_]struct { source: []const u8, message: []const u8 }{
+        .{ .source = "A={-10}\n", .message = "辞書のキーが必要です" },
+        .{ .source = "A={+10}\n", .message = "辞書のキーが必要です" },
+        .{ .source = "A={1+2}\n", .message = "辞書のキーが必要です" },
+        .{ .source = "A={1:2}\n", .message = "数値の辞書キーに値を指定できません" },
+    };
+    for (cases) |case| {
+        var result = try parse(std.testing.allocator, case.source, "numeric-invalid.nako3");
+        defer result.deinit();
+        try std.testing.expect(!result.succeeded());
+        try std.testing.expectEqualStrings(case.message, result.diagnostics[0].message);
+    }
+}
+
+test "公式同様に辞書リテラルの数値キーへの値指定を拒否する" {
     var result = try parse(std.testing.allocator, "A={1:2}\n", "numeric-key.nako3");
     defer result.deinit();
     try std.testing.expect(!result.succeeded());

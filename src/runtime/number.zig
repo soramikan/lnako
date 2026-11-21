@@ -1,18 +1,9 @@
 const std = @import("std");
 const string_mod = @import("string.zig");
+const number_text = @import("../number_text.zig");
 
-pub fn toStringAlloc(allocator: std.mem.Allocator, value: f64) ![]u8 {
-    if (std.math.isNan(value)) return allocator.dupe(u8, "NaN");
-    if (value == std.math.inf(f64)) return allocator.dupe(u8, "Infinity");
-    if (value == -std.math.inf(f64)) return allocator.dupe(u8, "-Infinity");
-    if (value == 0) return allocator.dupe(u8, "0");
-    var fixed_output: std.Io.Writer.Allocating = .init(allocator);
-    defer fixed_output.deinit();
-    try fixed_output.writer.print("{d}", .{value});
-    const magnitude = @abs(value);
-    if (magnitude >= 1e21 or magnitude < 1e-6) return fixedToScientific(allocator, fixed_output.written());
-    return allocator.dupe(u8, fixed_output.written());
-}
+/// 実行時の数値文字列化は、辞書リテラルの数値キー正規化と同じ共通実装を使う。
+pub const toStringAlloc = number_text.toStringAlloc;
 
 pub fn parseFloatPrefix(allocator: std.mem.Allocator, source: []const u16) !f64 {
     const units = string_mod.trimWhitespace(source);
@@ -189,39 +180,6 @@ fn digitValue(unit: u16) ?u8 {
     if (unit >= 'a' and unit <= 'z') return @intCast(unit - 'a' + 10);
     if (unit >= 'A' and unit <= 'Z') return @intCast(unit - 'A' + 10);
     return null;
-}
-
-fn fixedToScientific(allocator: std.mem.Allocator, fixed: []const u8) ![]u8 {
-    const negative = fixed.len > 0 and fixed[0] == '-';
-    const digits_start: usize = @intFromBool(negative);
-    const dot = std.mem.indexOfScalarPos(u8, fixed, digits_start, '.') orelse fixed.len;
-    var first_nonzero = digits_start;
-    while (first_nonzero < fixed.len and (fixed[first_nonzero] == '0' or fixed[first_nonzero] == '.')) first_nonzero += 1;
-    if (first_nonzero == fixed.len) return allocator.dupe(u8, "0");
-    const exponent: i64 = if (dot < first_nonzero)
-        -@as(i64, @intCast(first_nonzero - dot))
-    else
-        @as(i64, @intCast(dot - first_nonzero - 1));
-    var significant = try allocator.alloc(u8, fixed.len - first_nonzero);
-    defer allocator.free(significant);
-    var length: usize = 0;
-    for (fixed[first_nonzero..]) |character| if (character != '.') {
-        significant[length] = character;
-        length += 1;
-    };
-    while (length > 1 and significant[length - 1] == '0') length -= 1;
-    var output: std.Io.Writer.Allocating = .init(allocator);
-    errdefer output.deinit();
-    if (negative) try output.writer.writeByte('-');
-    try output.writer.writeByte(significant[0]);
-    if (length > 1) {
-        try output.writer.writeByte('.');
-        try output.writer.writeAll(significant[1..length]);
-    }
-    try output.writer.writeByte('e');
-    if (exponent >= 0) try output.writer.writeByte('+');
-    try output.writer.print("{d}", .{exponent});
-    return output.toOwnedSlice();
 }
 
 test "binary64をJavaScript互換の最短文字列へ変換する" {
