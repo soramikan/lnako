@@ -92,6 +92,10 @@ pub const AotHttpPosixStat = struct {
     kind: std.Io.File.Kind,
     inode: u64,
     device: u64,
+
+    fn matchesRegularFile(self: AotHttpPosixStat, expected: AotHttpPosixStat) bool {
+        return self.kind == .file and self.inode == expected.inode and self.device == expected.device;
+    }
 };
 
 /// POSIXで`name`をsymlink非追従でstatする（open前の副作用のない種別確認）。
@@ -206,7 +210,7 @@ fn aotHttpOpenPosixRegularFileFd(io: std.Io, directory: std.Io.Dir, name: []cons
         const path_fd = std.posix.openat(directory.handle, name, aotHttpPathOpenFlags(), 0) catch |err| return if (aotHttpIsStaticPathMiss(err)) null else err;
         defer (std.Io.File{ .handle = path_fd, .flags = .{ .nonblocking = false } }).close(io);
         const path_stat = try aotHttpPosixFstat(path_fd) orelse return null;
-        if (path_stat.kind != .file) return null;
+        if (!path_stat.matchesRegularFile(pre)) return null;
         const Hooks = struct {
             io: std.Io,
             directory: std.Io.Dir,
@@ -275,7 +279,7 @@ pub fn aotHttpOpenPosixRegularFileFallback(io: std.Io, directory: std.Io.Dir, na
         (std.Io.File{ .handle = fd, .flags = .{ .nonblocking = true } }).close(io);
         return err;
     };
-    if (post == null or post.?.kind != .file or post.?.inode != pre.inode or post.?.device != pre.device) {
+    if (post == null or !post.?.matchesRegularFile(pre)) {
         (std.Io.File{ .handle = fd, .flags = .{ .nonblocking = true } }).close(io);
         return null;
     }
@@ -464,7 +468,6 @@ pub fn aotHttpIsStaticPathMiss(err: anyerror) bool {
         error.SymLinkLoop,
         error.BadPathName,
         error.NameTooLong,
-        error.NetworkNotFound,
         // socket等のopenはENXIO（NoDevice）になる。種別違いとして404。
         error.NoDevice,
         // Darwinはソケットの読み取りopenにEOPNOTSUPPを返し、Zigは
@@ -526,4 +529,21 @@ fn aotHttpValidStaticComponent(component: []const u8) bool {
         if (std.mem.indexOfScalar(u8, component, ':') != null) return false;
     }
     return true;
+}
+
+test "AOT静的配信は事前検査と種別・デバイス・inodeが一致する通常ファイルを受け付ける" {
+    const pre: AotHttpPosixStat = .{ .kind = .file, .device = 1, .inode = 2 };
+    try std.testing.expect(pre.matchesRegularFile(pre));
+
+    var opened = pre;
+    opened.inode += 1;
+    try std.testing.expect(!opened.matchesRegularFile(pre));
+
+    opened = pre;
+    opened.device += 1;
+    try std.testing.expect(!opened.matchesRegularFile(pre));
+
+    opened = pre;
+    opened.kind = .directory;
+    try std.testing.expect(!opened.matchesRegularFile(pre));
 }

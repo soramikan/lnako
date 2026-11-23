@@ -115,21 +115,15 @@ test "AOT HTTP静的配信はファイル、index、404の経路で一時パス�
     };
     defer route.deinit(runtime.allocator);
 
-    const targets = [_][]const u8{
-        "/static/hello.txt",
-        "/static/",
-        "/static/nested/",
-        "/static/empty/",
-        "/static/missing.txt",
+    const cases = [_]struct { target: []const u8, status: []const u8, body: ?[]const u8 }{
+        .{ .target = "/static/hello.txt", .status = "HTTP/1.1 200", .body = "hello" },
+        .{ .target = "/static/", .status = "HTTP/1.1 200", .body = "root" },
+        .{ .target = "/static/nested/", .status = "HTTP/1.1 200", .body = "nested" },
+        .{ .target = "/static/empty/", .status = "HTTP/1.1 404", .body = null },
+        .{ .target = "/static/missing.txt", .status = "HTTP/1.1 404", .body = null },
     };
-    for (targets) |target| {
-        const request_bytes = try std.fmt.allocPrint(runtime.allocator, "GET {s} HTTP/1.1\r\nHost: localhost\r\n\r\n", .{target});
-        defer runtime.allocator.free(request_bytes);
-        var client = try aotHttpTestSendRequest(io, port, request_bytes);
-        defer client.close(io);
-        var request = try aotHttpReceiveRequest(&runtime);
-        defer request.deinit();
-        try aotHttpServeStatic(&runtime, route, aotHttpPathOnly(request.target));
+    for (cases) |case| {
+        try expectAotStaticResponse(io, &runtime, route, port, case.target, case.status, case.body);
         try std.testing.expect(runtime.http_connection == null);
     }
 }
@@ -395,7 +389,7 @@ test "AOT HTTP静的配信は中間ディレクトリのsymlink差し替えと�
             while (!stop.load(.acquire)) {
                 // 戻り値0（成功）だけを数える。失敗を成功として数えない。
                 if (linux.renameat2(linux.AT.FDCWD, dir.ptr, linux.AT.FDCWD, link.ptr, .{ .EXCHANGE = true }) == 0) {
-                    _ = successful.fetchAdd(1, .monotonic);
+                    _ = successful.fetchAdd(1, .release);
                 }
             }
         }
@@ -421,20 +415,24 @@ test "AOT HTTP静的配信は中間ディレクトリのsymlink差し替えと�
     var stop = std.atomic.Value(bool).init(false);
     var successful = std.atomic.Value(u64).init(0);
     const thread = try std.Thread.spawn(.{}, swapper.run, .{ swap_dir, swap_link, &stop, &successful });
-    var joined = false;
-    defer if (!joined) {
+    defer {
         stop.store(true, .release);
         thread.join();
-    };
+    }
 
+    var successful_swaps: u64 = 0;
     var leaks: usize = 0;
     var ok_responses: usize = 0;
     var not_found_responses: usize = 0;
     for (0..400) |_| {
         var client = try aotHttpTestSendRequest(io, port, "GET /static/sub/hello.txt HTTP/1.1\r\nHost: localhost\r\n\r\n");
         defer client.close(io);
+        // 受け付け済みの要求を取り出す間に完了を通知した差し替えだけを数える。
+        // 上限を応答生成より前に取るので、応答後や要求間の更新は加算されない。
+        const swaps_before = successful.load(.acquire);
         var request = try aotHttpReceiveRequest(&runtime);
         defer request.deinit();
+        successful_swaps += successful.load(.acquire) - swaps_before;
         try aotHttpServeStatic(&runtime, route, aotHttpPathOnly(request.target));
         var buffer: [4096]u8 = undefined;
         var reader = client.reader(io, &buffer);
@@ -455,10 +453,6 @@ test "AOT HTTP静的配信は中間ディレクトリのsymlink差し替えと�
             return error.UnexpectedStaticStatus;
         }
     }
-    stop.store(true, .release);
-    thread.join();
-    joined = true;
-    const successful_swaps = successful.load(.monotonic);
     std.debug.print(
         "\n[AOT静的配信TOCTOU回帰] successful_swaps={d} requests=400 200={d} 404={d} docroot外読み出し={d}\n",
         .{ successful_swaps, ok_responses, not_found_responses, leaks },
@@ -702,4 +696,9 @@ test "AOT HTTP静的配信はstatxのTYPE/INO欠落をfail closedにする" {
     try std.testing.expect(aotHttpStatFromStatx(stx) == null);
     stx.mask = .{};
     try std.testing.expect(aotHttpStatFromStatx(stx) == null);
+}
+
+test "AOT HTTP静的配信はネットワーク障害を不存在として扱わない" {
+    try std.testing.expect(!aotHttpIsStaticPathMiss(error.NetworkNotFound));
+    try std.testing.expect(aotHttpIsStaticPathMiss(error.FileNotFound));
 }
