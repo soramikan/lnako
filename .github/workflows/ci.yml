@@ -788,7 +788,7 @@ jobs:
       - name: Build AOT verification compiler
         if: matrix.task != 'support-smoke' && !(matrix.task == 'support-dispatch-coverage' && matrix.os == 'ubuntu-24.04')
         run: zig build
-      # canonical正本（231件）を供給するLinux coverage shardは、正本生成と
+      # canonical正本（232件）を供給するLinux coverage shardは、正本生成と
       # freshnessと同じReleaseSafeでbuildする（Debugとの非一致を構造で排除）。
       - name: Build AOT verification compiler (ReleaseSafe)
         if: matrix.task == 'support-dispatch-coverage' && matrix.os == 'ubuntu-24.04'
@@ -894,7 +894,7 @@ jobs:
           node tools/check_node_current_directory_realpath.mjs
           node tools/check_node_current_directory_errors.mjs
           node tools/check_node_archive_smoke.mjs
-      # canonical正本（231件）のfreshnessはLinux dedicated shardが供給する。
+      # canonical正本（232件）のfreshnessはLinux dedicated shardが供給する。
       # macOS native相乗り・Windows supportは既定の56件のまま維持する。
       - name: Dispatch coverage audit (native fixtures)
         if: matrix.task == 'support-dispatch-coverage' && matrix.os == 'ubuntu-24.04'
