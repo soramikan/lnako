@@ -427,13 +427,13 @@ test "AOT HTTP静的配信は中間ディレクトリのsymlink差し替えと�
     for (0..400) |_| {
         var client = try aotHttpTestSendRequest(io, port, "GET /static/sub/hello.txt HTTP/1.1\r\nHost: localhost\r\n\r\n");
         defer client.close(io);
-        // 受け付け済みの要求を取り出す間に完了を通知した差し替えだけを数える。
-        // 上限を応答生成より前に取るので、応答後や要求間の更新は加算されない。
+        // 要求の取り出しから静的配信までに完了を通知した差し替えを数える。
         const swaps_before = successful.load(.acquire);
         var request = try aotHttpReceiveRequest(&runtime);
         defer request.deinit();
-        successful_swaps += successful.load(.acquire) - swaps_before;
         try aotHttpServeStatic(&runtime, route, aotHttpPathOnly(request.target));
+        // クライアントが応答を読み取る前に集計を締める。
+        successful_swaps += successful.load(.acquire) - swaps_before;
         var buffer: [4096]u8 = undefined;
         var reader = client.reader(io, &buffer);
         const response = try reader.interface.allocRemaining(std.testing.allocator, .limited(64 * 1024));
