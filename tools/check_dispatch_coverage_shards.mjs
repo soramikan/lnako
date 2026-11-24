@@ -15,13 +15,13 @@ const currentSourceManifestSha256 = (await computeSourceManifestSha256(root)).sh
 const auditScriptSha256 = await dispatchCoverageAuditSha256(root);
 const defaultSelection = "plugin-system/system-runtime/standard-plugin/supplemental-plugin command-bearing success fixtures plus the nine node-http callback/Promise/value/Discord/LINE-discontinued fixtures, one HTTP-server dispatch fixture, seven explicit plugin-route fixtures, and native-cut-commands, excluding explicit AOT gaps";
 const fullSelection = "the default command-bearing selection plus the nine node-http callback/Promise/value/Discord/LINE-discontinued fixtures, one HTTP-server dispatch fixture, seven explicit plugin-route fixtures, and all native-cases command-bearing fixtures, excluding explicit error/termination/host gaps";
-// canonical 正本（darwin/arm64・231件）の freshness は Linux dedicated shard が供給する。
+// canonical 正本（darwin/arm64・232件）の freshness は Linux dedicated shard が供給する。
 // macOS native 相乗り・Windows support は既定の56件のまま維持する。
 // platform固有の出力値（OS名/arch行・ホーム/テンポラリパス）は監査側で固定
 // トークンへ正規化されるため、merge結果と正本のbyte比較が跨platformで成立する。
 const platformExpectations = new Map([
   ["darwin-arm64", { selection: defaultSelection, fixtureCount: 56 }],
-  ["linux-x64", { selection: fullSelection, fixtureCount: 231 }],
+  ["linux-x64", { selection: fullSelection, fixtureCount: 232 }],
   ["win32-x64", { selection: defaultSelection, fixtureCount: 56 }],
 ]);
 const files = (await jsonFiles(arguments_.directory)).sort();
@@ -61,19 +61,19 @@ for (const [platform, expectation] of platformExpectations) {
   }
   unions.set(platform, union);
 }
-// macOS・Windows は既定56件で同一集合、Linux の231件がその上位集合であることを確認する。
+// macOS・Windows は既定56件で同一集合、Linux の232件がその上位集合であることを確認する。
 const darwinUnion = unions.get("darwin-arm64");
 const win32Union = unions.get("win32-x64");
 const linuxUnion = unions.get("linux-x64");
 assertSetEqual(win32Union, darwinUnion, "darwin-arm64/win32-x64 dispatch coverage shardのfixture集合");
-assertSubset(darwinUnion, linuxUnion, "darwin-arm64 dispatch coverage shardのfixture集合（linux-x64 231件の部分集合）");
+assertSubset(darwinUnion, linuxUnion, "darwin-arm64 dispatch coverage shardのfixture集合（linux-x64 232件の部分集合）");
 
 const scriptHashes = new Set(artifacts.map((artifact) => artifact.auditScriptSha256));
 if (scriptHashes.size !== 1 || !scriptHashes.has(auditScriptSha256)) {
   throw new Error("dispatch coverage shardが同一の監査scriptから生成されていません");
 }
 
-// Linux 231件 shard を全件実行形へ merge し、canonical 正本と freshnessBytes で照合する。
+// Linux 232件 shard を全件実行形へ merge し、canonical 正本と freshnessBytes で照合する。
 const catalog = JSON.parse(await readFile(resolve(root, "compat/v3.7.24/standard-cnako.json"), "utf8"));
 Object.assign(coverageEnv, {
   root,
@@ -100,7 +100,7 @@ if (freshnessBytes(merged) !== freshnessBytes(canonicalDocument)) {
   );
   throw new Error(`Linux dispatch coverage shardのmerge結果がcanonical正本と一致しません: ${leaves.length === 0 ? "（差分leaf特定不可）" : leaves.join(", ")}\nnode tools/update_current_evidence.mjs で正本を再生成し、コードと証拠を同じコミットにまとめてください。`);
 }
-console.log(`dispatch coverage shard監査: 3正式OS各${expectedShardCount} shard（darwin/win32=56件、linux=231件⊃56件）を重複なく検証し、Linux mergeがcanonical正本と一致しました`);
+console.log(`dispatch coverage shard監査: 3正式OS各${expectedShardCount} shard（darwin/win32=56件、linux=232件⊃56件）を重複なく検証し、Linux mergeがcanonical正本と一致しました`);
 
 function parseArguments() {
   let directory = null;

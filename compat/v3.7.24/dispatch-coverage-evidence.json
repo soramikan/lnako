@@ -10,7 +10,7 @@
     "nativeEntries": 523,
     "nativeUniqueNames": 492,
     "fixtureSelection": "the default command-bearing selection plus the nine node-http callback/Promise/value/Discord/LINE-discontinued fixtures, one HTTP-server dispatch fixture, seven explicit plugin-route fixtures, and all native-cases command-bearing fixtures, excluding explicit error/termination/host gaps",
-    "fixtureCount": 231,
+    "fixtureCount": 232,
     "excludedFixtures": [
       {
         "key": "system-runtime-cases.json/system-runtime-execution-and-debug",
@@ -156,7 +156,7 @@
       "treeHashAlgorithm": "sha256-json-records-v3",
       "treeSha256": "7009b9bc0e96e9dfa3b51ad6a39685abfd4821435b202763b71ac53c6d444e64"
     },
-    "auditScriptSha256": "638403a09d142d5457ddff70d7dee78800d7c15a6c82294ae62b6de7c4cf38ac"
+    "auditScriptSha256": "de08f228156c997895de3ab9f87889014e60c8bfc04c7abd93976b6c09c7df55"
   },
   "coverage": {
     "unambiguousObservedNativeEntries": 429,
@@ -6327,7 +6327,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "f7812d6e7672c3fe7f8731f6fad601dae016d855d19ac53d3513e41b219d415d",
-        "compileManifestSha256": "bfd7400b539690899b6c30342687fe6fcccf9b79184a0fce6c02e41c7a303642"
+        "compileManifestSha256": "8a225ea763ea0f549d8c9ec298ec69d2dc7f2a6446e0f7040681bb1784c24587"
       }
     },
     {
@@ -6407,7 +6407,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "0c0f15785a5242f591d25e117533009244194ff33de9877d061ddf59b7f3f263",
-        "compileManifestSha256": "4608ae538605c7923c80db3d6ab6759960e603d64e742739f6736063cc182643"
+        "compileManifestSha256": "3a3ac6bb3134b356d4b90197f4bd8a34777035d123c293f196db06174ff96f36"
       }
     },
     {
@@ -6494,7 +6494,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "e369c2a63d74e16725bc1c4e69635d85ae3f1a67d204a9a58b7ee0fbd9a7f592",
-        "compileManifestSha256": "42cfb5ace45017e4a6a430eb1b61545635896e7cec71ab62c5037b981c729aad"
+        "compileManifestSha256": "af313a8d1ff344c9b3344ad7f9c0484ad78ff5287b282c88af37bf691d47dcce"
       }
     },
     {
@@ -7950,7 +7950,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "78e726e93f25e9b799bf8ff36bcc9b750a9a9424351f7d0b4572523857fa9375",
-        "compileManifestSha256": "8a52a43321d55da0fa60bada84d57db245f1e2db7fb80a0a0667acfbcd67661f"
+        "compileManifestSha256": "101c763eaa5ef84f7341138bd73a6d84ae4c029a89915778fa79f4c4ea59b71d"
       }
     },
     {
@@ -8304,7 +8304,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "3d2dbcedf2638f538358f197a3750f1e2530ebf12341d51cc18b94851950c85b",
-        "compileManifestSha256": "880acb8ec83e4ccf51f3f46e206944a3bd2bc0a285f088a1586611c69d896a56"
+        "compileManifestSha256": "1a2a40f6b906793986977dabacd9df26d47b028c3a0dec8f308892c595c4bfcd"
       }
     },
     {
@@ -8393,7 +8393,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "535c8807f46f33dfcd4d106e41092ecb40c0ff6a3c70a0fc4f81ad48cae4257f",
-        "compileManifestSha256": "74f8820e7955d42573c8f0fafd75aca9519a051ae0315a0f728e43a45e651e62"
+        "compileManifestSha256": "10cc6f86a4e62b10d53dcb7404499be82b381caf022826889052010c002ed57f"
       }
     },
     {
@@ -8470,7 +8470,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "5ea998c5f99fe3bc378265190134ec9e4e2c7a2ba341ec9a41c6daaf6b91bae6",
-        "compileManifestSha256": "f17da2f274cffd6308c9cfc7068d982863db3a1da24006bf2f85e6216a33b41d"
+        "compileManifestSha256": "765be773b70d39329a27065e4dc6c08fd3168f09faeb242fa411cebe1cedd0d1"
       }
     },
     {
@@ -8574,7 +8574,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "def18395e59a45e40a80f83855a7249e494ecf218dc58b025e7695f1ab7339c9",
-        "compileManifestSha256": "8197ca93111de4720d208a86564e7627d9ac30497cc759f502b890f2af04f569"
+        "compileManifestSha256": "17cd50fd74176ddd3b527a0228d2778583e924126bcf3622ebdd119c5ed31986"
       }
     },
     {
@@ -19071,7 +19071,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "1d281f90a0caeff0870c8652b05794bfe8e12f9385634adf23c5e80130a3dc85",
-        "compileManifestSha256": "5b82510dc772b6b6e4ad70ddc147f387ca5acdd331c25789267c53d3467b39d8"
+        "compileManifestSha256": "c7f2851a9071d2947a1e6d3ba6448edfe46ed0206c3657a3eb64ee58f9a400db"
       }
     },
     {
@@ -19155,7 +19155,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "fab9d66d732da427072e5d12c9a3ed03a2731df03e48331f3e5d14b576028bfe",
-        "compileManifestSha256": "ab39e3dc1a291d2e267324e500be9503dc7b2c1a8180cdaf49d20e966082c4ea"
+        "compileManifestSha256": "3b9a1a2daecc7ed2ce2ee23f000b9bc2bdbcdc451214562449d4d6f369f02361"
       }
     },
     {
@@ -19235,7 +19235,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "0c0f15785a5242f591d25e117533009244194ff33de9877d061ddf59b7f3f263",
-        "compileManifestSha256": "781bbe6df7f35869beb9c0560c0192dea69ff6c380b7b6ad2e7e6613da8eb537"
+        "compileManifestSha256": "5267e7a908040cd6e81bfd1650aba8b4a28d0cfdca4f4d994086993db3fa1a74"
       }
     },
     {
@@ -19315,7 +19315,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "93139dda24e876405408069b69ca3d33200270613b7692f19a60ad6da1c00b58",
-        "compileManifestSha256": "60c80eafc92c9589b7c9bf52025b2a9b00dda7c5d64e945f1680761d877fa32d"
+        "compileManifestSha256": "0d91cb97558e7ac81c572f2fbe8abe71251841d1e9113b5e95fd9c31dbfe380d"
       }
     },
     {
@@ -19412,7 +19412,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "6b8731ef33694c65906d6390d690b61a387fd88ebf1346b0788320edc0f90d5f",
-        "compileManifestSha256": "06f233eda8a3c0b12d469e94db502965f42c3c3df3c485e6f26a5152d687aa2d"
+        "compileManifestSha256": "9b74f863d2fe440ff606fb96fab261366929ea8b9c8159d2c70a312d3b4bf1dd"
       }
     },
     {
@@ -19494,7 +19494,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "243cfc20cf6cba6625fa1f40b87e43b8ff2fb9a2bfbd283f6f4c5335c9d9dbda",
-        "compileManifestSha256": "e2f4df969a3b86fc27f38d4dd8ddc46392b5e4e46dac0fa015db38a3f1db8bb4"
+        "compileManifestSha256": "3084c3850cd81612b6a565622ca82019969d47fddc3f616ba5004740952bfbe7"
       }
     },
     {
@@ -19576,7 +19576,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "243cfc20cf6cba6625fa1f40b87e43b8ff2fb9a2bfbd283f6f4c5335c9d9dbda",
-        "compileManifestSha256": "03de9d619b88259ad50b813a72708447436da847b904bed55b6e6574b123f388"
+        "compileManifestSha256": "d94cbc73947e298887fc9679ec9587cabd9ba0e95d90e303d734b262cf8f65ef"
       }
     },
     {
@@ -19737,7 +19737,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "243cfc20cf6cba6625fa1f40b87e43b8ff2fb9a2bfbd283f6f4c5335c9d9dbda",
-        "compileManifestSha256": "e603e8ced205514fa16985366f9b9fa0539491e11c7887a6e51228c8805382c8"
+        "compileManifestSha256": "f463238c1cac13776c9c11408a482c800111abd5b92220d028b6e86b96cb2003"
       }
     },
     {
@@ -19819,7 +19819,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "460f39e01cb022de9c979368c4fc51c9de9e64b2edfa85ddd17d3a6d2e07334a",
-        "compileManifestSha256": "7b0515a862560437e78e32d8b9caaebe2669b09c08d33d2efca386cc9842b44d"
+        "compileManifestSha256": "19601366305bec77b7363f0822a6910fb56d147e6e2126a9c02dbdb88142d10e"
       }
     },
     {
@@ -25472,6 +25472,87 @@
         "failedDispatchCount": 0,
         "traceSha256": "c9dcd13d74c74dd296cafe8a44246080ee68edc851e0ab9b75578613e744008f",
         "compileManifestSha256": "41742dedb4ddd1c1face146341e771b99f4e3d89785dc55f75b067b3ddff783a"
+      }
+    },
+    {
+      "id": "native-dictionary-numeric-key-boundaries",
+      "file": "native-cases.json",
+      "sourceSha256": "b3b72c96bffa2bf38c5b1ce497859ab134d017814b1c76a50a0258e85271c783",
+      "associatedCommandNames": [
+        "JSON変換",
+        "辞書キー列挙",
+        "表示"
+      ],
+      "associationWithoutDispatch": [],
+      "observedStaticCommandNames": [
+        "JSON変換",
+        "表示",
+        "辞書キー列挙"
+      ],
+      "observedDispatchCommandNames": [
+        "JSON変換",
+        "表示",
+        "辞書キー列挙"
+      ],
+      "dispatchExpectations": [],
+      "officialComparison": {
+        "oracle": "officialSource",
+        "routes": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "selectedOracleEquivalent": true,
+        "officialGeneratedAvailable": true,
+        "officialGeneratedRouteUnavailableReason": null,
+        "officialRoutesEquivalent": true,
+        "officialSourceStderrIncludes": null,
+        "results": {
+          "officialSource": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "e3458620f4be5956bbe0122e86d4ec2909c33fce46ac1422dd997f67ae9d1282",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "officialGenerated": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "e3458620f4be5956bbe0122e86d4ec2909c33fce46ac1422dd997f67ae9d1282",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "lnakoRun": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "e3458620f4be5956bbe0122e86d4ec2909c33fce46ac1422dd997f67ae9d1282",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "lnakoNativeO0": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "e3458620f4be5956bbe0122e86d4ec2909c33fce46ac1422dd997f67ae9d1282",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        }
+      },
+      "interpreter": {
+        "dispatchEventCount": 19,
+        "staticSuccessSiteCount": 12,
+        "expectedFailureSiteCount": 0,
+        "expectedFailureDispatchCount": 0,
+        "staticSiteWithoutAotManifestCount": 0,
+        "traceSha256": "3168c2c15367c6602988435c43e73191ad89b3a330f69cc75fb69096f41988e2"
+      },
+      "aot": {
+        "manifestEntryCount": 12,
+        "dispatchAttemptCount": 19,
+        "dispatchResultCount": 19,
+        "staticSuccessSiteCount": 12,
+        "expectedFailureSiteCount": 0,
+        "expectedFailureDispatchCount": 0,
+        "failedDispatchCount": 0,
+        "traceSha256": "8748d264b962b8dc136e75661947b1b0c3037667044cb3807b3a8aec2838a4e2",
+        "compileManifestSha256": "9cb56b6c5f476365689e58f51a1c04aa306cc21f83ff645b4d7c4da157d76284"
       }
     }
   ],
@@ -45640,6 +45721,294 @@
       "fixtureId": "native-datetime-weekday",
       "file": "native-cases.json",
       "siteId": "0x0000000000000006",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtimeRoutes": [
+        "direct-display"
+      ],
+      "interpreterRoutes": [
+        "interpreter-core"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-dictionary-numeric-key-boundaries",
+      "file": "native-cases.json",
+      "siteId": "0x0000000000000001",
+      "sourceName": "JSON変換",
+      "canonicalOpcode": "json_encode",
+      "opcode": 143,
+      "route": "builtin",
+      "runtimeRoutes": [
+        "builtin"
+      ],
+      "interpreterRoutes": [
+        "plugin_system"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0287",
+      "name": "JSON変換",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-dictionary-numeric-key-boundaries",
+      "file": "native-cases.json",
+      "siteId": "0x0000000000000002",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtimeRoutes": [
+        "direct-display"
+      ],
+      "interpreterRoutes": [
+        "interpreter-core"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-dictionary-numeric-key-boundaries",
+      "file": "native-cases.json",
+      "siteId": "0x0000000000000003",
+      "sourceName": "JSON変換",
+      "canonicalOpcode": "json_encode",
+      "opcode": 143,
+      "route": "builtin",
+      "runtimeRoutes": [
+        "builtin"
+      ],
+      "interpreterRoutes": [
+        "plugin_system"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0287",
+      "name": "JSON変換",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-dictionary-numeric-key-boundaries",
+      "file": "native-cases.json",
+      "siteId": "0x0000000000000004",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtimeRoutes": [
+        "direct-display"
+      ],
+      "interpreterRoutes": [
+        "interpreter-core"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-dictionary-numeric-key-boundaries",
+      "file": "native-cases.json",
+      "siteId": "0x0000000000000005",
+      "sourceName": "JSON変換",
+      "canonicalOpcode": "json_encode",
+      "opcode": 143,
+      "route": "builtin",
+      "runtimeRoutes": [
+        "builtin"
+      ],
+      "interpreterRoutes": [
+        "plugin_system"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0287",
+      "name": "JSON変換",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-dictionary-numeric-key-boundaries",
+      "file": "native-cases.json",
+      "siteId": "0x0000000000000006",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtimeRoutes": [
+        "direct-display"
+      ],
+      "interpreterRoutes": [
+        "interpreter-core"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-dictionary-numeric-key-boundaries",
+      "file": "native-cases.json",
+      "siteId": "0x0000000000000007",
+      "sourceName": "辞書キー列挙",
+      "canonicalOpcode": "dictionary_keys",
+      "opcode": 42,
+      "route": "builtin",
+      "runtimeRoutes": [
+        "builtin"
+      ],
+      "interpreterRoutes": [
+        "plugin_system"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0300",
+      "name": "辞書キー列挙",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-dictionary-numeric-key-boundaries",
+      "file": "native-cases.json",
+      "siteId": "0x0000000000000008",
+      "sourceName": "JSON変換",
+      "canonicalOpcode": "json_encode",
+      "opcode": 143,
+      "route": "builtin",
+      "runtimeRoutes": [
+        "builtin"
+      ],
+      "interpreterRoutes": [
+        "plugin_system"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0287",
+      "name": "JSON変換",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-dictionary-numeric-key-boundaries",
+      "file": "native-cases.json",
+      "siteId": "0x0000000000000009",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtimeRoutes": [
+        "direct-display"
+      ],
+      "interpreterRoutes": [
+        "interpreter-core"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-dictionary-numeric-key-boundaries",
+      "file": "native-cases.json",
+      "siteId": "0x000000000000000a",
+      "sourceName": "JSON変換",
+      "canonicalOpcode": "json_encode",
+      "opcode": 143,
+      "route": "builtin",
+      "runtimeRoutes": [
+        "builtin"
+      ],
+      "interpreterRoutes": [
+        "plugin_system"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0287",
+      "name": "JSON変換",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-dictionary-numeric-key-boundaries",
+      "file": "native-cases.json",
+      "siteId": "0x000000000000000b",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtimeRoutes": [
+        "direct-display"
+      ],
+      "interpreterRoutes": [
+        "interpreter-core"
+      ],
+      "interpreterCount": 8,
+      "aotCount": 8,
+      "result": "success",
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-dictionary-numeric-key-boundaries",
+      "file": "native-cases.json",
+      "siteId": "0x000000000000000c",
       "sourceName": "表示",
       "canonicalOpcode": "display",
       "opcode": 0,
