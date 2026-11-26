@@ -459,9 +459,14 @@ pub const Parser = struct {
             try clearConditionalJosi(self.allocator, first);
             return first;
         }
+        // 公式`yIFCond`は`A`の直後が`func`トークン（既知の命令名）なら、
+        // `A`を引数にした呼出し`B(A)`を作る（`Aが奇数ならば`＝`奇数(A)`）。
+        // 等価比較の試行はその分岐より後なので、直後が既知命令名のときは
+        // `A=奇数`へ落とさず、下の助詞呼出し解決へ進める。
+        const next_is_function = self.at(.identifier) and self.isKnownCommandName(self.peek().value);
         // チェック: `AがBならば` --- 「A = B」のとき。公式`yIFCond`は一度
         // 二番目の値を読み、条件助詞が付かなければ位置を戻して呼出し解決へ進む。
-        if (std.mem.eql(u8, first.josi, "が")) {
+        if (std.mem.eql(u8, first.josi, "が") and !next_is_function) {
             const saved = self.index;
             const second = try expressions.parseExpression(self, 0);
             if (isConditionalJosi(second.josi)) {
