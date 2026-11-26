@@ -91,6 +91,8 @@ test "『引数』の明示宣言は同名ローカルとして再利用し宣�
     try Case.expectDiagnostics("●(Aの)Fとは\n定数 引数=7\n変数[引数,B]=[1,2]\nここまで\n1のF\n", 0, 1);
     // 定数リストへの`引数`適用は定数化され後続の代入を拒否する。
     try Case.expectDiagnostics("●(Aの)Fとは\n定数[引数,B]=[1,2]\n引数=9\nここまで\n1のF\n", 0, 1);
+    // 分割定数宣言より前の代入はまだ定数ではないため拒否しない。
+    try Case.expectDiagnostics("●(Aの)Fとは\n引数=8\n定数[引数,B]=[1,2]\nJSONエンコード([引数,B])を表示。\nここまで\n1のF\n", 0, 0);
     // 入れ子関数の`引数`読み出しは外側の束縛に影響しない。
     try Case.expectDiagnostics("●(Aの)Fとは\n●(Bの)Gとは\n引数を表示\nここまで\n変数 引数=7\nここまで\n5のF\n", 0, 0);
 }

@@ -908,6 +908,43 @@ test "動的評価へ引き継いだ実行時登録命令名に無い呼出し�
     try std.testing.expect(diagnosed);
 }
 
+test "分割定数宣言は宣言位置以降の代入だけを拒否する" {
+    const parser = @import("../frontend/parser.zig");
+    const Case = struct {
+        fn expectAssignments(source: []const u8, expected: usize, expected_line: ?usize) !void {
+            var parsed = try parser.parse(std.testing.allocator, source, "main.nako3");
+            defer parsed.deinit();
+            var program = try analyze(std.testing.allocator, parsed.root.?, "main.nako3");
+            defer program.deinit();
+            var assignments: usize = 0;
+            var first_line: ?usize = null;
+            for (program.diagnostics) |item| {
+                if (item.code != .assign_to_constant) continue;
+                assignments += 1;
+                if (first_line == null) first_line = item.span.line;
+            }
+            try std.testing.expectEqual(expected, assignments);
+            if (expected_line) |line| {
+                try std.testing.expectEqual(line, first_line orelse @as(usize, 0));
+            }
+        }
+    };
+    // 公式convDefLocalVarlistは既存束縛を宣言位置から定数化する。宣言前の
+    // 代入は有効なまま、宣言以後の代入だけを拒否する（0始まりの行番号）。
+    try Case.expectAssignments("A=0\n定数[A,B]=[4,5]\nJSONエンコード([A,B])を表示。\n", 0, null);
+    try Case.expectAssignments("A=0\n定数[A,B]=[4,5]\nA=9\n", 1, 2);
+    // 変数リストによる再代入も定数化後の各名で拒否する。宣言前の行は
+    // 診断せず、再代入の行だけを指す。
+    try Case.expectAssignments("A=0\n定数[A,B]=[4,5]\n変数[A,B]=[1,2]\n", 2, 2);
+    // 可変のままの既存変数への分割再代入は従来どおり成功する。
+    try Case.expectAssignments("A=0\nB=0\n変数[A,B]=[4,5]\nA=9\nJSONエンコード([A,B])を表示。\n", 0, null);
+    // 増減も同じ位置規則で拒否する。
+    try Case.expectAssignments("A=0\n定数[A,B]=[4,5]\nAを1増やす\n", 1, 2);
+    // 関数スコープでも宣言前は成功し、宣言後の増減だけを拒否する。
+    try Case.expectAssignments("●Fとは\nA=0\n定数[A,B]=[4,5]\nJSONエンコード([A,B])を表示。\nここまで\nF\n", 0, null);
+    try Case.expectAssignments("●Fとは\nA=0\n定数[A,B]=[4,5]\nAを1増やす\nここまで\nF\n", 1, 3);
+}
+
 test "package内scopeの依存命令は所有者修飾のdispatch名へ束縛する" {
     const parser = @import("../frontend/parser.zig");
     // 別package scopeで同じaliasを使う推移依存は、ソース上の `util__命令`

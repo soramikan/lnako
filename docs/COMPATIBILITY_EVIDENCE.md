@@ -34,7 +34,7 @@
 | `trace-confirmed-unattested` | 527 |
 | `unverified` | 0 |
 
-fixture coverageは `paired: 523`、`compat-js-only: 4`、その他の状態は0です。fixture inventoryは合計820件、native AOT 449件、Interpreter 381件、QuickJS 9件です。inventoryの分類は重複するため、数値を足してfixture総数にしません。
+fixture coverageは `paired: 523`、`compat-js-only: 4`、その他の状態は0です。fixture inventoryは合計827件、native AOT 449件、Interpreter 388件、QuickJS 9件です。inventoryの分類は重複するため、数値を足してfixture総数にしません。
 ## canonical形とmeasured形
 
 `compat/v3.7.24/` に追跡する証拠は **canonical 形** です。内容クレーム（実行site・trace hash・fixture・公式比較・oracle identity・正規化済みmanifest/出力hash）だけを持ち、揮発するprovenanceは持ちません。`provenance.lnako`（commit・binary/source manifest hash）と `provenance.environment.node` はcanonical形に含めず、`provenance.environment` はcanonical生成環境 `darwin/arm64` のみを宣言します。manifest hashはheaderの絶対 `sourcePath` を、公式比較のstdout/stderr hashは一時path・port・PID・Node版・公式生成eval関数名を正規化してから算出するため、環境や実行のたびに値が変わりません。
