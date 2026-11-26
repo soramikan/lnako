@@ -736,6 +736,37 @@ test "複数引数の裸関数呼出しを「それ」で補完する" {
     try std.testing.expect(found);
 }
 
+test "連文の明示『それ』は暗黙補完のマーカーと重複しない" {
+    const parser = @import("../frontend/parser.zig");
+    const source = "3と5を足して、それに6を足して表示。\n";
+    var parsed = try parser.parse(std.testing.allocator, source, "explicit-sore-chain.nako3");
+    defer parsed.deinit();
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "explicit-sore-chain.nako3");
+    defer analyzed.deinit();
+    try std.testing.expect(analyzed.succeeded());
+    var program = try lowerSingle(std.testing.allocator, parsed.root.?, "explicit-sore-chain", "explicit-sore-chain.nako3", analyzed);
+    defer program.deinit();
+    var add_calls: usize = 0;
+    for (program.nodes) |node| {
+        if (node.kind != .call or !std.mem.eql(u8, node.name, "足")) continue;
+        add_calls += 1;
+        if (add_calls == 1) {
+            try std.testing.expectEqual(@as(usize, 2), node.children.len);
+            try std.testing.expectEqualStrings("3", program.node(node.children[0]).text);
+            try std.testing.expectEqualStrings("5", program.node(node.children[1]).text);
+            continue;
+        }
+        // 2回目は明示の『それに』と『6を』の2引数だけになり、連文マーカーを
+        // 位置引数として先頭へ渡さない（公式と同じ 8+6）。
+        try std.testing.expectEqual(@as(usize, 2), node.children.len);
+        const first = program.node(node.children[0]);
+        try std.testing.expectEqual(Kind.load_global, first.kind);
+        try std.testing.expectEqualStrings("それ", first.name);
+        try std.testing.expectEqualStrings("6", program.node(node.children[1]).text);
+    }
+    try std.testing.expectEqual(@as(usize, 2), add_calls);
+}
+
 test "値位置の組み込み命令語を「それ」補完付きの暗黙呼出しへ下げる" {
     const parser = @import("../frontend/parser.zig");
     const source = "それは「  abc  」\n空白除去して表示\n";
