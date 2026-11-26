@@ -1353,6 +1353,41 @@ test "範囲オブジェクトの繰り返しは一時変数の先頭/末尾参�
     }
 }
 
+test "範囲オブジェクトの前の外側引数を参照の第1引数へ残す" {
+    // Issue #297: 公式yCallFuncは`範囲`の助詞スロット（から/まで）に一致する
+    // 2引数だけをポップする。`Aの`は範囲の引数ではなく、外側の`参照`の
+    // 第1引数として残る（マニュアル範囲.txt:30）。
+    var result = try parse(
+        std.testing.allocator,
+        "A = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]\nAの2から5までの範囲を参照してJSONエンコードして表示\n",
+        "range-reference.nako3",
+    );
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    var reference: ?*ast.Node = null;
+    for (result.root.?.children) |child| {
+        if (child.kind == .block) {
+            for (child.children) |item| {
+                if (item.kind == .function_call and std.mem.eql(u8, item.name, "参照")) reference = item;
+            }
+        }
+    }
+    const call = reference orelse return error.MissingReferenceCall;
+    try std.testing.expectEqual(@as(usize, 2), call.children.len);
+    try std.testing.expectEqual(ast.Kind.word, call.children[0].kind);
+    try std.testing.expectEqualStrings("A", call.children[0].value);
+    try std.testing.expectEqualStrings("の", call.children[0].josi);
+    const range = call.children[1];
+    try std.testing.expectEqual(ast.Kind.function_call, range.kind);
+    try std.testing.expectEqualStrings("範囲", range.name);
+    try std.testing.expectEqualStrings("を", range.josi);
+    try std.testing.expectEqual(@as(usize, 2), range.children.len);
+    try std.testing.expectEqualStrings("2", range.children[0].value);
+    try std.testing.expectEqualStrings("から", range.children[0].josi);
+    try std.testing.expectEqualStrings("5", range.children[1].value);
+    try std.testing.expectEqualStrings("までの", range.children[1].josi);
+}
+
 test "『…』範囲式の繰り返しも一時変数へ展開し変数省略時は『それ』にする" {
     // Issue #117の形: `1…3を繰り返す`・`A…Bを繰り返す`。`…`演算子の範囲
     // function_callも`AからBの範囲`と同じ一時変数展開を受け、ループ変数の
