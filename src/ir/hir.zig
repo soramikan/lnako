@@ -342,13 +342,22 @@ const Lowerer = struct {
         }
         const implicit_function = self.implicitFunction(node);
         const runtime_arguments = self.runtimeArgumentAlignment(node);
+        var runtime_order: ?[]usize = null;
         const completion = try self.argumentCompletionPlan(node);
         var child_ids: []NodeId = undefined;
         if (runtime_arguments) {
             // 実登録される候補が未確定な動的呼出しは、候補ごとの助詞で
             // 並べ替えず、ソース順の実引数と助詞をそのまま保持する。
-            child_ids = try self.allocator.alloc(NodeId, node.children.len);
-            for (node.children, 0..) |child, index| child_ids[index] = try self.lowerNode(child, module_index);
+            // 主候補の固定スロットが確定できる場合は、値の後並べ替えではなく
+            // スロット順で式を一度だけ評価する。
+            runtime_order = try self.runtimeEvaluationOrder(node);
+            if (runtime_order) |order| {
+                child_ids = try self.allocator.alloc(NodeId, order.len);
+                for (order, 0..) |child_index, index| child_ids[index] = try self.lowerNode(node.children[child_index], module_index);
+            } else {
+                child_ids = try self.allocator.alloc(NodeId, node.children.len);
+                for (node.children, 0..) |child, index| child_ids[index] = try self.lowerNode(child, module_index);
+            }
         } else if (completion) |plan| {
             // 公式`yCallFunc`と同じ助詞補完。省略された引数は変数「それ」を渡す。
             child_ids = try self.allocator.alloc(NodeId, plan.operands.len);
@@ -436,7 +445,9 @@ const Lowerer = struct {
         if (runtime_arguments) {
             const josi = try self.allocator.alloc([]const u8, node.children.len);
             const implicit = try self.allocator.alloc(bool, node.children.len);
-            for (node.children, 0..) |child, index| {
+            for (0..node.children.len) |index| {
+                const child_index = if (runtime_order) |order| order[index] else index;
+                const child = node.children[child_index];
                 josi[index] = try self.allocator.dupe(u8, child.josi);
                 implicit[index] = isChainImplicitItNode(child);
             }
@@ -533,6 +544,28 @@ const Lowerer = struct {
         if (node.kind != .word) return false;
         for (self.semantic_program.bindings) |binding| if (binding.node == node) return binding.runtime_alignment;
         return false;
+    }
+
+    /// 実行時割り当て呼出しで式を評価する順序。主候補の固定スロットが
+    /// 確定できる場合だけ、スロット順の実引数添字列を返す。可変長の末尾
+    /// スロットは、リテラルで確定していない限り固定部分から除き、その
+    /// 実引数はソース順で後ろへ残す。
+    fn runtimeEvaluationOrder(self: *Lowerer, node: *ast.Node) !?[]usize {
+        if (node.kind != .word) return null;
+        for (self.semantic_program.bindings) |binding| {
+            if (binding.node != node) continue;
+            if (!binding.runtime_evaluation_order_known) return null;
+            const signature = binding.signature orelse return null;
+            if (signature.slots.len == 0) return null;
+            const slots = try semantic.dynamic_commands.signatureSlots(self.allocator, signature);
+            defer self.allocator.free(slots);
+            const fixed_count = if (signature.variable_final or !signature.variable_known)
+                signature.slots.len - 1
+            else
+                signature.slots.len;
+            return try argument_completion.evaluationOrder(self.allocator, slots[0..fixed_count], node.children);
+        }
+        return null;
     }
 
     /// 組み込み命令へ束縛された`.word`ノードを暗黙呼出しにするか判定する。

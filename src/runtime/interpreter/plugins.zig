@@ -550,7 +550,17 @@ pub fn alignExternalArguments(
     if (arguments.len != argument_josi.len or arguments.len != argument_implicit.len) return null;
     var metadata = (try quickjs.commandJosiMetadata(&self.quickjs_state, self.allocator, target)) orelse return null;
     defer metadata.deinit(self.allocator);
-    if (metadata.slots.len == 0) return null;
+    // 空の助詞表は「0個の確定スロット」であり、メタデータ取得不能とは
+    // 異なる。連文の暗黙マーカーは実引数に数えず、ユーザーが書いた実引数が
+    // 残る場合だけ公式と同じ未解決引数の診断へ戻す。
+    if (metadata.slots.len == 0) {
+        for (argument_implicit) |implicit| {
+            if (implicit) continue;
+            try self.runtime.setFailureMessage("『戻』文の直前に未解決の引数があります。『(式)を戻す』のように式をカッコで括ってください。");
+            return error.UnresolvedArguments;
+        }
+        return try self.allocator.alloc(Value, 0);
+    }
 
     const used = try self.allocator.alloc(bool, arguments.len);
     defer self.allocator.free(used);

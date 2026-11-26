@@ -195,6 +195,9 @@ pub const Binding = struct {
     /// 実行時の登録照合後に助詞割り当てを行う呼出し。実引数は未整列の
     /// まま lowering し、静的な不足・未解決判定を行わない。
     runtime_alignment: bool = false,
+    /// 実行時割り当て呼出しで、式の評価順を主候補の固定スロットから
+    /// 確定できるか。falseならソース順で評価し、値だけを実行時に割り当てる。
+    runtime_evaluation_order_known: bool = false,
 };
 
 pub const FunctionScope = struct {
@@ -973,6 +976,7 @@ pub const Analyzer = struct {
                     binding.dynamic_builtin = true;
                     binding.fallback_names = resolution.fallback_names;
                     binding.runtime_alignment = resolution.runtime_alignment;
+                    binding.runtime_evaluation_order_known = resolution.evaluation_order_known;
                     if (resolution.signature) |signature| binding.signature = try dynamic_commands.cloneSignature(self.allocator, signature);
                     return;
                 }

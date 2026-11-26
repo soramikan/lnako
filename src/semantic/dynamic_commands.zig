@@ -164,6 +164,10 @@ pub const CandidateResolution = struct {
     /// しない場合に真。呼出し側は実引数を未整列のまま実行時へ渡し、
     /// 選択された登録のメタデータで割り当てる。
     runtime_alignment: bool = false,
+    /// 実行時の登録メタデータで助詞割り当てを行う呼出しで、式の評価順を
+    /// 主候補の固定スロットから確定できるか。未確定の別名catch-allが先に
+    /// あっても、後発の実登録候補が確定していればそのレイアウトで評価できる。
+    evaluation_order_known: bool = false,
 };
 
 /// `binds` と同じ優先規則で主配送先 `resolved_name` を決めつつ、主配送先が
@@ -213,25 +217,34 @@ pub fn bindsWithFallbacks(
         }
     }.lessThan);
 
-    // 候補ごとの助詞定義が一致しない、または可変長助詞をリテラルで確定
-    // できない場合は、主候補の呼出し計画を先発候補へ流用できない。実引数を
-    // 未整列のまま実行時へ渡し、実際に登録された候補のメタデータで割り当てる。
+    // 主候補が実行時に登録される保証がない、または可変長助詞をリテラルで
+    // 確定できない場合は、選択された登録のメタデータで実引数を割り当てる。
+    // 未確定の別名catch-allが先にあっても、後発の実登録候補の固定部分は
+    // 静的に分かるため、その有無だけで実行時割り当てを無効にしない。
     var runtime_alignment = primary.exact and !primary.registration_certain;
-    if (primary.exact and primary.signature != null) {
-        if (!primary.signature.?.variable_known) runtime_alignment = true;
-    }
-    var all_esm_signatures = primary.exact and primary.signature != null;
-    for (candidates.items) |entry| {
-        if (!entry.alias.exact or !entry.alias.signature_required or entry.alias.signature == null) {
-            all_esm_signatures = false;
-            continue;
+    if (primary.exact and primary.signature != null and !primary.signature.?.variable_known) runtime_alignment = true;
+    // 評価順は、主候補が確実に登録されるならその固定スロット順でよい。
+    // 登録が不確実なときは、実行時に選ばれ得る全候補の署名が一致する場合だけ
+    // 主候補のレイアウトを再利用できる。異なる候補がある場合はソース順の
+    // まま評価し、値だけを実行時の助詞で割り当てる。
+    var evaluation_order_known = false;
+    if (runtime_alignment and primary.exact and primary.signature != null) {
+        if (primary.registration_certain) {
+            evaluation_order_known = true;
+        } else {
+            evaluation_order_known = true;
+            for (candidates.items) |entry| {
+                if (!entry.alias.exact or entry.alias.signature == null) {
+                    evaluation_order_known = false;
+                    break;
+                }
+                if (!signatureEql(entry.alias.signature.?, primary.signature.?)) {
+                    evaluation_order_known = false;
+                    break;
+                }
+            }
         }
-        if (primary.signature) |primary_signature| {
-            if (!signatureEql(entry.alias.signature.?, primary_signature)) runtime_alignment = true;
-        }
-        if (!entry.alias.signature.?.variable_known) runtime_alignment = true;
     }
-    if (!all_esm_signatures) runtime_alignment = false;
 
     var fallbacks: std.ArrayList([]const u8) = .empty;
     errdefer {
@@ -266,6 +279,7 @@ pub fn bindsWithFallbacks(
         .fallback_names = try fallbacks.toOwnedSlice(allocator),
         .signature = primary.signature,
         .runtime_alignment = runtime_alignment,
+        .evaluation_order_known = evaluation_order_known,
     };
 }
 
@@ -1747,4 +1761,53 @@ test "appendJavaScriptPluginAliases は算出プロパティ名付き修飾子�
     try std.testing.expectEqual(@as(usize, 2), combo_aliases.items.len);
     try std.testing.expectEqualStrings("async", combo_aliases.items[0].source_namespace);
     try std.testing.expectEqualStrings("get", combo_aliases.items[1].source_namespace);
+}
+
+test "bindsWithFallbacks は先発catch-allで実行時メタデータ利用と評価順確定を無効にしない" {
+    const allocator = std.testing.allocator;
+    // 先発の未確定catch-all (default spread) と、後発の実登録可変長命令。
+    // catch-allには静的署名がないが、後発の登録は確実なので、後発の可変長
+    // メタデータを実行時に読む必要を失わない。
+    const aliases = [_]DynamicCommandAlias{
+        .{ .source_namespace = "", .dispatch_namespace = "pkg:a:early.mjs", .import_position = 5, .unqualified = true },
+        .{ .source_namespace = "外部命令", .dispatch_namespace = "pkg:a:late.mjs__外部命令", .import_position = 10, .exact = true, .signature = .{ .slots = &.{&.{ "と", "を" }}, .variable_known = false }, .signature_required = true },
+    };
+    const resolved = (try bindsCallableExact(allocator, false, 0, &aliases, "外部命令", 20)) orelse return error.TestUnexpectedResult;
+    defer {
+        allocator.free(resolved.resolved_name);
+        for (resolved.fallback_names) |name| allocator.free(name);
+        allocator.free(resolved.fallback_names);
+    }
+    try std.testing.expectEqualStrings("pkg:a:late.mjs__外部命令", resolved.resolved_name);
+    try std.testing.expect(resolved.runtime_alignment);
+    try std.testing.expect(resolved.evaluation_order_known);
+
+    // 代替候補の署名が異なる場合は、実行時メタデータで割り当てつつ、
+    // 主候補の固定レイアウトを評価順へ流用しない。
+    const mixed = [_]DynamicCommandAlias{
+        .{ .source_namespace = "外部命令", .dispatch_namespace = "pkg:a:early.mjs__外部命令", .import_position = 5, .exact = true, .signature = .{ .slots = &.{&.{"を"}} }, .signature_required = true },
+        .{ .source_namespace = "", .dispatch_namespace = "pkg:a:early-dyn.mjs", .import_position = 6, .unqualified = true },
+        .{ .source_namespace = "外部命令", .dispatch_namespace = "pkg:a:late.mjs__外部命令", .import_position = 10, .exact = true, .signature = .{ .slots = &.{&.{"に"}} }, .signature_required = true, .registration_certain = false },
+    };
+    const mixed_resolved = (try bindsCallableExact(allocator, false, 0, &mixed, "外部命令", 20)) orelse return error.TestUnexpectedResult;
+    defer {
+        allocator.free(mixed_resolved.resolved_name);
+        for (mixed_resolved.fallback_names) |name| allocator.free(name);
+        allocator.free(mixed_resolved.fallback_names);
+    }
+    try std.testing.expect(mixed_resolved.runtime_alignment);
+    try std.testing.expect(!mixed_resolved.evaluation_order_known);
+
+    // 登録が確実でリテラルの可変長指定が揃う場合は、従来どおり静的計画で足りる。
+    const fixed = [_]DynamicCommandAlias{
+        .{ .source_namespace = "", .dispatch_namespace = "pkg:a:early.mjs", .import_position = 5, .unqualified = true },
+        .{ .source_namespace = "外部命令", .dispatch_namespace = "pkg:a:late.mjs__外部命令", .import_position = 10, .exact = true, .signature = .{ .slots = &.{&.{ "と", "を" }}, .variable_final = true }, .signature_required = true },
+    };
+    const fixed_resolved = (try bindsCallableExact(allocator, false, 0, &fixed, "外部命令", 20)) orelse return error.TestUnexpectedResult;
+    defer {
+        allocator.free(fixed_resolved.resolved_name);
+        for (fixed_resolved.fallback_names) |name| allocator.free(name);
+        allocator.free(fixed_resolved.fallback_names);
+    }
+    try std.testing.expect(!fixed_resolved.runtime_alignment);
 }

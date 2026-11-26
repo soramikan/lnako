@@ -673,6 +673,287 @@ ghost__両方()を表示
     if (failures === 0) console.log("Issue #297 第6回レビュー: 実登録候補と解析境界のInterpreter/AOT一致");
   }
 
+  // Issue #297 第7回レビュー: (1) 空の josi 表を取得済みの0スロットとして扱い、
+  // 連文マーカーを実引数に数えないこと、(2) 実行時に候補を確定する呼出しでも
+  // 固定スロット順に式を一度だけ評価すること、(3) 先発の未確定catch-allが
+  // 後発の実登録可変長命令の実行時メタデータ利用を無効にしないことを固定する。
+  // 公式cnako3は `pkg:` を持たないため、Interpreter/AOTの比較はlnako固有の
+  // 一時プロジェクト内で行い、期待値だけを公式の直接ESM取り込みで確認する。
+  {
+    const reviewRoot = resolve(temporary, "package-review7-297");
+    const app = resolve(reviewRoot, "app");
+    const sandboxHome = resolve(reviewRoot, "home");
+    mkdirSync(sandboxHome, { recursive: true });
+    const write = (relative, data) => {
+      const path = resolve(app, relative);
+      mkdirSync(resolve(path, ".."), { recursive: true });
+      writeFileSync(path, data);
+    };
+    const manifest = `[package]
+name = "package-review7-297"
+version = "0.1.0"
+license = "MIT"
+
+[profiles.compat]
+runtime = "lnako"
+os = "linux"
+cpu = "x86_64"
+abi = "gnu"
+compat-js = true
+
+[dependencies.path]
+zerostaticreal = { path = "packages/zerostaticreal" }
+zerostaticmarkerreal = { path = "packages/zerostaticmarkerreal" }
+zerostaticmarker = { path = "packages/zerostaticmarker" }
+zeroruntimereal = { path = "packages/zeroruntimereal" }
+zeroruntimemarkerreal = { path = "packages/zeroruntimemarkerreal" }
+zeroruntimemarker = { path = "packages/zeroruntimemarker" }
+orderstatic = { path = "packages/orderstatic" }
+orderruntime = { path = "packages/orderruntime" }
+catchearly = { path = "packages/catchearly" }
+catchcontrol = { path = "packages/catchcontrol" }
+`;
+    const packageManifest = (name) => `[package]
+name = "${name}"
+version = "1.0.0"
+license = "MIT"
+
+[[exports]]
+name = "main"
+path = "main.nako3"
+`;
+    const runApp = (args, cwd = app) => spawnSync(executable, args, {
+      ...options,
+      cwd,
+      env: {
+        ...options.env,
+        HOME: sandboxHome,
+        LOCALAPPDATA: sandboxHome,
+        XDG_CACHE_HOME: resolve(sandboxHome, "cache"),
+      },
+    });
+    const runInterpreter = (entry) => runApp(["run", entry, "--compat-js", "--profile", "compat", "--offline"]);
+    const runAot = (entry, name) => {
+      if (process.platform === "win32") return null;
+      const binary = resolve(reviewRoot, `${name}${executableSuffix}`);
+      const build = runApp(["build", entry, "--compat-js", "--backend", "aot", "--profile", "compat", "--offline", "-O0", "-o", binary]);
+      return { build, run: build.status === 0 ? spawnSync(binary, [], {
+        ...options,
+        cwd: app,
+        env: { ...options.env, HOME: sandboxHome, LOCALAPPDATA: sandboxHome, XDG_CACHE_HOME: resolve(sandboxHome, "cache") },
+      }) : build };
+    };
+    const official = (files, source) => {
+      const dir = resolve(reviewRoot, `official-${Math.random().toString(36).slice(2)}`);
+      mkdirSync(dir, { recursive: true });
+      for (const [name, data] of Object.entries(files)) writeFileSync(resolve(dir, name), data);
+      writeFileSync(resolve(dir, "oracle.nako3"), source);
+      return spawnSync(process.execPath, [officialCli, "oracle.nako3"], {
+        ...options,
+        cwd: dir,
+        env: { ...options.env, HOME: sandboxHome, XDG_CACHE_HOME: resolve(sandboxHome, "cache") },
+      });
+    };
+    const unresolved = "『戻』文の直前に未解決の引数があります";
+    const expectDiagnostic = (label, result, text = unresolved) => {
+      if (result.status === 0 || !`${result.stderr ?? ""}`.includes(text)) {
+        failures += 1;
+        console.error(`Issue #297 第7回 ${label}: 診断を返しませんでした ${JSON.stringify(normalize(result))}`);
+      }
+    };
+    const expectInterpreter = (label, entry, stdout) => {
+      const result = runInterpreter(entry);
+      if (result.status !== 0 || normalize(result).stdout !== stdout) {
+        failures += 1;
+        console.error(`Issue #297 第7回 ${label}(Interpreter): ${JSON.stringify(normalize(result))}\n${result.stderr ?? ""}`);
+      }
+    };
+    const expectAotDiagnostic = (label, entry, text = unresolved) => {
+      const result = runAot(entry, `review7-${label}`);
+      if (result == null) return;
+      const observed = result.build.status === 0 ? result.run : result.build;
+      if (observed.status === 0 || !(observed.stderr ?? "").includes(text)) {
+        failures += 1;
+        console.error(`Issue #297 第7回 ${label}(AOT): build=${JSON.stringify(normalize(result.build))} run=${JSON.stringify(normalize(result.run))}`);
+      }
+    };
+    const expectAot = (label, entry, stdout) => {
+      const result = runAot(entry, `review7-${label}`);
+      if (result == null) return;
+      if (result.build.status !== 0 || result.run.status !== 0 || normalize(result.run).stdout !== stdout) {
+        failures += 1;
+        console.error(`Issue #297 第7回 ${label}(AOT): build=${JSON.stringify(normalize(result.build))} run=${JSON.stringify(normalize(result.run))}\n${result.build.stderr ?? ""}`);
+      }
+    };
+
+    write("nako.toml", manifest);
+    for (const name of [
+      "zerostaticreal", "zerostaticmarkerreal", "zerostaticmarker",
+      "zeroruntimereal", "zeroruntimemarkerreal", "zeroruntimemarker",
+      "orderstatic", "orderruntime", "catchearly", "catchcontrol",
+    ]) {
+      write(`packages/${name}/nako.toml`, packageManifest(name));
+      // 依存解決は全packageのexport targetを先に検証するため、各対照の
+      // main.nako3を書き終えるまで有効なプレースホルダを置く。
+      write(`packages/${name}/main.nako3`, "1を戻す。\n");
+    }
+
+    // (1) 空の助詞表。静的経路 (isVariableJosi 省略) と実行時経路 (Boolean(0)) の
+    // 両方で、実引数だけ・マーカーと実引数・マーカーだけを対照する。
+    // 診断対象と非診断対象は同じパッケージに置けない（パッケージ全体が
+    // コンパイルされる）ため、対照ごとに独立したパッケージにする。
+    const zeroCases = [
+      { tail: "real", label: "実引数", body: "3を外部命令で戻る。", diagnostic: true },
+      { tail: "markerreal", label: "連文実引数", body: "「x」と表示して3を外部命令で戻る。", diagnostic: true },
+      { tail: "marker", label: "連文単独", body: "「x」と表示して外部命令で戻る。", diagnostic: false },
+    ];
+    for (const variant of [
+      { base: "zerostatic", label: "空助詞表(静的)", extra: "" },
+      { base: "zeroruntime", label: "空助詞表(実行時)", extra: ", isVariableJosi: Boolean(0)" },
+    ]) {
+      for (const item of zeroCases) {
+        const name = `${variant.base}${item.tail}`;
+        write(`packages/${name}/main.nako3`, `!「./plugin.mjs」を取り込む。\n●試験とは\n  ${item.body}\nここまで\n`);
+        write(`packages/${name}/plugin.mjs`, `export default { 外部命令: { type: "func", josi: [], fn: (...args) => args.length${variant.extra} } };\n`);
+        const entry = `review7-${name}.nako3`;
+        write(entry, `!「pkg:${name}」を取り込む。\n${name}__試験()を表示。\n`);
+        if (item.diagnostic) {
+          expectDiagnostic(`${variant.label}-${item.label}-Interpreter`, runInterpreter(entry));
+          expectAotDiagnostic(`${variant.label}-${item.label}-AOT`, entry);
+        } else {
+          // マーカーだけは診断しない。既存の連文戻り値 undefined は第6回までと
+          // 同じ制約なので、値ではなく「マーカーを実引数として渡さない」ことを固定する。
+          const marker = runInterpreter(entry);
+          if (marker.status !== 0 || !(marker.stderr ?? "").includes("run:") || (marker.stderr ?? "").includes("未解決の引数")) {
+            failures += 1;
+            console.error(`Issue #297 第7回 ${variant.label}-${item.label}(Interpreter): ${JSON.stringify(normalize(marker))}\n${marker.stderr ?? ""}`);
+          }
+          const markerAot = runAot(entry, `review7-${name}`);
+          if (markerAot != null && (markerAot.build.status !== 0 || markerAot.run.status !== 0 || (markerAot.run.stderr ?? "").includes("未解決の引数"))) {
+            failures += 1;
+            console.error(`Issue #297 第7回 ${variant.label}-${item.label}(AOT): build=${JSON.stringify(normalize(markerAot.build))} run=${JSON.stringify(normalize(markerAot.run))}`);
+          }
+        }
+        if (item.tail === "real") {
+          const officialReal = official({ "plugin.mjs": `export default { 外部命令: { type: "func", josi: [], fn: (...args) => args.length${variant.extra} } };\n` }, `!「./plugin.mjs」を取り込む。\n●試験とは\n  3を外部命令で戻る。\nここまで\n試験()を表示。\n`);
+          if (!`${officialReal.stdout ?? ""}${officialReal.stderr ?? ""}`.includes(unresolved)) {
+            failures += 1;
+            console.error(`Issue #297 第7回 ${variant.label}の公式直接ESM拒否: ${JSON.stringify(normalize(officialReal))}`);
+          }
+        }
+      }
+    }
+
+    // (2) 実行時の候補が決まった助詞スロット順に式を一度だけ評価する。
+    // josi [["から"],["を"]] は 乙()→b, 甲()→a の順で評価し、a-b=7。
+    const orderFunctions = `!「./plugin.mjs」を取り込む。
+●甲とは
+ 「a」と表示。
+ 3を戻す。
+ここまで
+●乙とは
+ 「b」と表示。
+ 10を戻す。
+ここまで
+●試験とは
+甲()を乙()から外部命令で戻る。
+ここまで
+●例外甲とは
+ 「a」と表示。
+ 「失敗A」のエラー発生
+ここまで
+●例外乙とは
+ 「b」と表示。
+ 「失敗B」のエラー発生
+ここまで
+●例外試験甲とは
+例外甲()を乙()から外部命令で戻る。
+ここまで
+●例外試験乙とは
+例外甲()を例外乙()から外部命令で戻る。
+ここまで
+`;
+    // 例外の順序対照: 乙が先に評価されるため、乙で例外なら甲は表示されない。
+    const orderExceptions = `●甲とは
+ 「a」と表示。
+ 「失敗A」のエラー発生
+ここまで
+●乙とは
+ 「b」と表示。
+ 10を戻す。
+ここまで
+●試験とは
+甲()を乙()から外部命令で戻る。
+ここまで
+`;
+    const orderExceptionsLate = `●甲とは
+ 「a」と表示。
+ 3を戻す。
+ここまで
+●乙とは
+ 「b」と表示。
+ 「失敗B」のエラー発生
+ここまで
+●試験とは
+甲()を乙()から外部命令で戻る。
+ここまで
+`;
+    for (const variant of [
+      { id: "orderstatic", label: "評価順(静的)", extra: "" },
+      { id: "orderruntime", label: "評価順(実行時)", extra: ", isVariableJosi: Boolean(0)" },
+    ]) {
+      write(`packages/${variant.id}/main.nako3`, orderFunctions);
+      write(`packages/${variant.id}/plugin.mjs`, `export default { 外部命令: { type: "func", josi: [["から"],["を"]], fn: (a, b) => a - b${variant.extra} } };\n`);
+      write(`review7-${variant.id}-value.nako3`, `!「pkg:${variant.id}」を取り込む。\n${variant.id}__試験()を表示。\n`);
+      write(`review7-${variant.id}-exception.nako3`, `!「pkg:${variant.id}」を取り込む。\nエラー監視\n${variant.id}__例外試験甲()を表示。\nエラーならば\n「捕捉:{エラーメッセージ}」を表示。\nここまで\n`);
+      write(`review7-${variant.id}-exception-late.nako3`, `!「pkg:${variant.id}」を取り込む。\nエラー監視\n${variant.id}__例外試験乙()を表示。\nエラーならば\n「捕捉:{エラーメッセージ}」を表示。\nここまで\n`);
+      expectInterpreter(`${variant.label}-正常`, `review7-${variant.id}-value.nako3`, "b\na\n7\n");
+      expectAot(`${variant.label}-正常`, `review7-${variant.id}-value.nako3`, "b\na\n7\n");
+      expectInterpreter(`${variant.label}-先発例外`, `review7-${variant.id}-exception.nako3`, "b\na\n捕捉:失敗A\n");
+      expectAot(`${variant.label}-先発例外`, `review7-${variant.id}-exception.nako3`, "b\na\n捕捉:失敗A\n");
+      expectInterpreter(`${variant.label}-後発例外`, `review7-${variant.id}-exception-late.nako3`, "b\n捕捉:失敗B\n");
+      expectAot(`${variant.label}-後発例外`, `review7-${variant.id}-exception-late.nako3`, "b\n捕捉:失敗B\n");
+    }
+    const officialOrder = official({ "plugin.mjs": `export default { 外部命令: { type: "func", josi: [["から"],["を"]], fn: (a, b) => a - b, isVariableJosi: Boolean(0) } };\n` }, `${orderFunctions}試験()を表示。\n`);
+    if (officialOrder.status !== 0 || normalize(officialOrder).stdout !== "b\na\n7\n") {
+      failures += 1;
+      console.error(`Issue #297 第7回 評価順の公式直接ESM: ${JSON.stringify(normalize(officialOrder))}`);
+    }
+    const officialException = official({ "plugin.mjs": `export default { 外部命令: { type: "func", josi: [["から"],["を"]], fn: (a, b) => a - b, isVariableJosi: Boolean(0) } };\n` }, `!「./plugin.mjs」を取り込む。\n${orderExceptions}エラー監視\n試験()を表示。\nエラーならば\n「捕捉:{エラーメッセージ}」を表示。\nここまで\n`);
+    if (officialException.status !== 0 || normalize(officialException).stdout !== "b\na\n捕捉:失敗A\n") {
+      failures += 1;
+      console.error(`Issue #297 第7回 評価順の公式例外: ${JSON.stringify(normalize(officialException))}`);
+    }
+    const officialExceptionLate = official({ "plugin.mjs": `export default { 外部命令: { type: "func", josi: [["から"],["を"]], fn: (a, b) => a - b, isVariableJosi: Boolean(0) } };\n` }, `!「./plugin.mjs」を取り込む。\n${orderExceptionsLate}エラー監視\n試験()を表示。\nエラーならば\n「捕捉:{エラーメッセージ}」を表示。\nここまで\n`);
+    if (officialExceptionLate.status !== 0 || normalize(officialExceptionLate).stdout !== "b\n捕捉:失敗B\n") {
+      failures += 1;
+      console.error(`Issue #297 第7回 評価順の公式後発例外: ${JSON.stringify(normalize(officialExceptionLate))}`);
+    }
+
+    // (3) 先発の未確定catch-all (default spread) があっても、後発の実登録
+    // 可変長命令のメタデータで 3と5 を割り当てる。後発の実登録が勝つ対照も置く。
+    write("packages/catchearly/main.nako3", `!「./b.mjs」を取り込む。\n!「./plugin.mjs」を取り込む。\n●試験とは\n3と5を外部命令で戻る。\nここまで\n`);
+    write("packages/catchearly/b.mjs", `const p = { 外部無関係: { type: "func", josi: [], fn: () => 3 } };\nexport default { ...p };\n`);
+    write("packages/catchearly/plugin.mjs", `export default { 外部命令: { type: "func", josi: [["と","を"]], fn: (...args) => args.length, isVariableJosi: Boolean(1) } };\n`);
+    write("packages/catchcontrol/main.nako3", `!「./b.mjs」を取り込む。\n!「./plugin.mjs」を取り込む。\n●試験とは\n3と5を外部命令で戻る。\nここまで\n`);
+    write("packages/catchcontrol/b.mjs", `const p = { 外部命令: { type: "func", josi: [["と","を"]], fn: () => 99 } };\nexport default { ...p };\n`);
+    write("packages/catchcontrol/plugin.mjs", `export default { 外部命令: { type: "func", josi: [["と","を"]], fn: (...args) => args.length, isVariableJosi: Boolean(1) } };\n`);
+    for (const name of ["catchearly", "catchcontrol"]) {
+      write(`review7-${name}.nako3`, `!「pkg:${name}」を取り込む。\n${name}__試験()を表示。\n`);
+      expectInterpreter(`${name}`, `review7-${name}.nako3`, "3\n");
+      expectAot(`${name}`, `review7-${name}.nako3`, "3\n");
+    }
+    const officialCatch = official({
+      "b.mjs": `const p = { 外部無関係: { type: "func", josi: [], fn: () => 3 } };\nexport default { ...p };\n`,
+      "plugin.mjs": `export default { 外部命令: { type: "func", josi: [["と","を"]], fn: (...args) => args.length, isVariableJosi: Boolean(1) } };\n`,
+    }, `!「./b.mjs」を取り込む。\n!「./plugin.mjs」を取り込む。\n●試験とは\n3と5を外部命令で戻る。\nここまで\n試験()を表示。\n`);
+    if (officialCatch.status !== 0 || normalize(officialCatch).stdout !== "3\n") {
+      failures += 1;
+      console.error(`Issue #297 第7回 先発catch-allの公式直接ESM: ${JSON.stringify(normalize(officialCatch))}`);
+    }
+    if (failures === 0) console.log("Issue #297 第7回レビュー: 空助詞表・評価順・先発catch-allのInterpreter/AOT一致");
+  }
+
   if (failures > 0) throw new Error(`QuickJS互換モードの公式差分が${failures}件あります`);
   const commandCount = new Set(cases.flatMap((testCase) => testCase.commands)).size;
   console.log(
