@@ -365,5 +365,10 @@
     "source": "回数()\n",
     "code": "undefined_symbol",
     "checkMessage": true
+  },
+  {
+    "id": "semantic-diagnostic-varlist-constant-after-declaration",
+    "source": "A=0\n定数[A,B]=[4,5]\nA=9\n",
+    "code": "assign_to_constant"
   }
 ]

@@ -953,5 +953,9 @@
   {
     "id": "cond-range-inline-statement",
     "source": "もし、30が30から50の範囲内ならば、「30は範囲内」と表示。\nもし、50が30から50の範囲内ならば、「50は範囲内」と表示。\n"
+  },
+  {
+    "id": "varlist-constant-after-assignment",
+    "source": "A=0\n定数[A,B]=[4,5]\nJSONエンコード([A,B])を表示。\n"
   }
 ]

@@ -152,6 +152,11 @@ pub const Symbol = struct {
     /// 作られなかった暗黙宣言。公式は単一パスで名前を確定するため
     /// 解決済みの参照からも見えない。
     shadowed: bool = false,
+    /// 分割定数宣言（`定数[A,B]=...`）が既存の可変束縛を定数化した
+    /// 宣言名の位置。公式convDefLocalVarlistは宣言以後の書き込みだけを
+    /// 拒否するため、解決時の代入検査はこの位置より前の書き込みを許す。
+    /// nullは宣言時から定数だったシンボル（分割宣言以外の定数化）を表す。
+    constant_decl_span: ?ast.Span = null,
     /// 関数内の`引数`束縛（公式`yCallFunc`の実引数配列）。公式は呼出しごとに
     /// 用意するため、ユーザーの同名宣言で二重定義にしない。
     implicit_arguments: bool = false,
@@ -430,8 +435,13 @@ pub const Analyzer = struct {
                         if (self.symbols.items[existing.id].arguments_registered_at == null)
                             self.symbols.items[existing.id].arguments_registered_at = self.stream_order;
                         if (node.is_const) {
-                            self.symbols.items[existing.id].kind = .constant;
-                            self.symbols.items[existing.id].is_mutable = false;
+                            const symbol = &self.symbols.items[existing.id];
+                            // 可変束縛を定数化した最初の分割宣言位置だけを記録する。
+                            // 定数への再宣言自体はこの行で診断済みであり、位置を
+                            // 後ろへ動かすと先行する書き込みの判定まで変わる。
+                            if (symbol.is_mutable) symbol.constant_decl_span = name.span;
+                            symbol.kind = .constant;
+                            symbol.is_mutable = false;
                         }
                         continue;
                     }
@@ -714,7 +724,9 @@ pub const Analyzer = struct {
         // 公式と同様に定数にも許可する（JSのconst要素変更と同じ）。
         // 公式文言: 『定数「名」は既に定義済みなので、値を代入することは
         // できません』（main__ 接頭辞は #1223 で省略）。
-        if ((node.kind == .assignment or node.kind == .increment) and !symbol.is_mutable) {
+        if ((node.kind == .assignment or node.kind == .increment) and !symbol.is_mutable and
+            !self.writeBeforeConstantDeclaration(symbol, module_index, node))
+        {
             const shown = displayQualifiedName(symbol.qualified_name);
             // ユーザー定義関数も公式は『関数『名』に代入できません』で拒否する。
             if (symbol.kind == .function or symbol.kind == .test_function) {
@@ -1184,6 +1196,17 @@ pub const Analyzer = struct {
         const registered = symbol.arguments_registered_at orelse return false;
         const use_order = self.property_assignment_order.get(node) orelse return false;
         return registered < use_order;
+    }
+
+    /// 分割定数宣言がこの書き込みより後にあるか。公式convDefLocalVarlistは
+    /// 既存束縛を宣言位置から読み取り専用にするため、宣言前の代入・増減は
+    /// 定数への再代入として診断しない（`A=0; 定数[A,B]=[4,5]`）。
+    fn writeBeforeConstantDeclaration(self: *Analyzer, symbol: Symbol, module_index: u32, node: *ast.Node) bool {
+        const declared = symbol.constant_decl_span orelse return false;
+        // 位置比較は同一モジュール内の宣言順にだけ適用する。取り込み先の
+        // シンボルを別モジュールから書く場合は従来どおり定数として拒否する。
+        if (symbol.module_index != module_index) return false;
+        return self.positionAfter(symbol.module_index, declared, module_index, node.span);
     }
 
     /// 式内の`引数`参照を使用済みにする。公式convDefLocalVarは名前の登録
