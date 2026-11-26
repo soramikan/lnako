@@ -81,6 +81,60 @@ test "引数定義の『|』区切り助詞候補を1引数へまとめる" {
     try std.testing.expectEqualStrings("が|の|を", function.arguments[0].josi);
 }
 
+test "引数定義の『|』区切り同名候補を初出順の名前ごとに集約する" {
+    // 公式`preDefineFunc`は`(Aに|Bを|Aへ)`をA[に,へ]・B[を]の2引数にし、
+    // Aを2スロットとして扱わない。現行lnakoは名前が変わるたびに確定して
+    // いたため、Aの重複定義になっていた。
+    var result = try parse(std.testing.allocator, "●試験(Aに|Bを|Aへ)\n[A,B]で戻る\nここまで。\n", "josi-interleaved.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const function = try firstFunctionDefinition(result.root.?);
+    try std.testing.expectEqual(@as(usize, 2), function.arguments.len);
+    try std.testing.expectEqualStrings("A", function.arguments[0].name);
+    try std.testing.expectEqualStrings("に|へ", function.arguments[0].josi);
+    try std.testing.expectEqualStrings("B", function.arguments[1].name);
+    try std.testing.expectEqualStrings("を", function.arguments[1].josi);
+}
+
+test "引数定義のカンマ・空白区切りでも同名候補を集約する" {
+    const cases = [_]struct { source: []const u8, josi: []const u8 }{
+        .{ .source = "●試験(Aに|Bを,Aへ)\n[A,B]で戻る\nここまで。\n", .josi = "に|へ" },
+        .{ .source = "●試験(Aに|Aへ Bを)\n[A,B]で戻る\nここまで。\n", .josi = "に|へ" },
+    };
+    for (cases) |case| {
+        var result = try parse(std.testing.allocator, case.source, "josi-separators.nako3");
+        defer result.deinit();
+        try std.testing.expect(result.succeeded());
+        const function = try firstFunctionDefinition(result.root.?);
+        try std.testing.expectEqual(@as(usize, 2), function.arguments.len);
+        try std.testing.expectEqualStrings("A", function.arguments[0].name);
+        try std.testing.expectEqualStrings(case.josi, function.arguments[0].josi);
+        try std.testing.expectEqualStrings("B", function.arguments[1].name);
+        try std.testing.expectEqualStrings("を", function.arguments[1].josi);
+    }
+}
+
+test "助詞なしの出現も同じスロットの候補として集約する" {
+    var result = try parse(std.testing.allocator, "●試験(A,Aを)\nAで戻る\nここまで。\n", "josi-empty-candidate.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const function = try firstFunctionDefinition(result.root.?);
+    try std.testing.expectEqual(@as(usize, 1), function.arguments.len);
+    try std.testing.expectEqualStrings("A", function.arguments[0].name);
+    try std.testing.expectEqualStrings("|を", function.arguments[0].josi);
+}
+
+test "引数定義の重複した助詞候補を保持する" {
+    // 公式は重複した候補もそのまま助詞リストへ積むため、lnakoも脱落させない。
+    var result = try parse(std.testing.allocator, "●試験(Aを|Aを)\nAで戻る\nここまで。\n", "josi-duplicate.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const function = try firstFunctionDefinition(result.root.?);
+    try std.testing.expectEqual(@as(usize, 1), function.arguments.len);
+    try std.testing.expectEqualStrings("A", function.arguments[0].name);
+    try std.testing.expectEqualStrings("を|を", function.arguments[0].josi);
+}
+
 test "助詞はを代入演算子として構文解析する" {
     var result = try parse(std.testing.allocator, "Fはそれ\n", "assignment.nako3");
     defer result.deinit();
@@ -1980,6 +2034,12 @@ fn variableDefinitions(allocator: std.mem.Allocator, root: *ast.Node) ![]const *
     var collected: std.ArrayList(*ast.Node) = .empty;
     for (root.children) |child| if (child.kind == .variable_definition) try collected.append(allocator, child);
     return collected.toOwnedSlice(allocator);
+}
+
+/// 最初の名前付き関数定義を返す（仮引数集約テスト用）。
+fn firstFunctionDefinition(root: *ast.Node) !*ast.Node {
+    for (root.children) |child| if (child.kind == .function_definition) return child;
+    return error.MissingFunctionDefinition;
 }
 
 test "『定める』は定数を生成し匿名関数も右辺に取れる" {

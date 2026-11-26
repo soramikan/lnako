@@ -672,37 +672,55 @@ pub const Parser = struct {
 
     pub fn parseArguments(self: *Parser) ParseFailure![]ast.Argument {
         _ = try self.require(.left_paren, "引数を始める『(』が必要です");
+        // 公式の字句後処理`preDefineFunc`は`|`・カンマ・空白で区切られた
+        // 仮引数名の出現をすべて集め、名前ごとに助詞候補をまとめたうえで
+        // 初出順の1引数として登録する。`(Aに|Bを|Aへ)`はAの候補[に,へ]と
+        // Bの候補[を]になり、Aが2スロットにはならない。
+        //
+        // 候補は名前ごとの可変長リストへ積み、最後に1回だけ`|`区切りへ
+        // 連結する。以前のように候補を追加するたびに累積文字列全体を
+        // コピーすると、同じ名前の候補n個でO(n^2)の領域と時間を要する。
         var arguments: std.ArrayList(ast.Argument) = .empty;
+        var candidates: std.ArrayList(std.ArrayList([]const u8)) = .empty;
+        var slot_by_name: std.StringHashMapUnmanaged(usize) = .empty;
+        // `arguments`と候補の内容は呼出し元のarenaへ残す。エラー時は
+        // 呼出し元がarenaごと破棄するため、ここでは途中結果を解放しない。
+        errdefer slot_by_name.deinit(self.allocator);
         while (!self.at(.right_paren) and !self.at(.eof)) {
-            if (self.at(.comma)) {
+            if (self.at(.comma) or self.at(.pipe)) {
                 _ = self.advance();
                 continue;
             }
             const token = try self.require(.identifier, "引数名が必要です");
-            var name = token.value;
-            var josi = token.josi;
-            var span = token.span;
-            // 公式の字句後処理`preDefineFunc`は、`(Sが|Sの|Sを)`のような
-            // 『|』区切りの助詞候補を同じ引数名の助詞リストへまとめる。
-            // lnakoのASTは引数ごとに助詞を1つ持つため、候補を『|』区切りで
-            // 保持し、呼出し側のスロット照合で分割する。
-            while (self.at(.pipe)) {
-                _ = self.advance();
-                const alternative = try self.require(.identifier, "引数名が必要です");
-                if (std.mem.eql(u8, alternative.value, name)) {
-                    josi = try std.fmt.allocPrint(self.allocator, "{s}|{s}", .{ josi, alternative.josi });
-                } else {
-                    // 候補の名前が変わったら、そこから別の引数として扱う
-                    // （公式も同じ名前ごとに助詞リストを作る）。
-                    try arguments.append(self.allocator, .{ .name = name, .josi = josi, .span = span });
-                    name = alternative.value;
-                    josi = alternative.josi;
-                    span = alternative.span;
-                }
-            }
-            try arguments.append(self.allocator, .{ .name = name, .josi = josi, .span = span });
+            const slot = slot_by_name.get(token.value) orelse blk: {
+                const index = arguments.items.len;
+                try slot_by_name.put(self.allocator, token.value, index);
+                try arguments.append(self.allocator, .{ .name = token.value, .josi = "", .span = token.span });
+                try candidates.append(self.allocator, .empty);
+                break :blk index;
+            };
+            try candidates.items[slot].append(self.allocator, token.josi);
         }
         _ = try self.require(.right_paren, "引数定義を閉じる『)』が必要です");
+        for (arguments.items, 0..) |*argument, slot| {
+            const choices = &candidates.items[slot];
+            var length: usize = if (choices.items.len > 0) choices.items.len - 1 else 0;
+            for (choices.items) |choice| length += choice.len;
+            const josi = try self.allocator.alloc(u8, length);
+            var offset: usize = 0;
+            for (choices.items, 0..) |choice, index| {
+                if (index > 0) {
+                    josi[offset] = '|';
+                    offset += 1;
+                }
+                @memcpy(josi[offset..][0..choice.len], choice);
+                offset += choice.len;
+            }
+            argument.josi = josi;
+            choices.deinit(self.allocator);
+        }
+        slot_by_name.deinit(self.allocator);
+        candidates.deinit(self.allocator);
         return arguments.toOwnedSlice(self.allocator);
     }
 

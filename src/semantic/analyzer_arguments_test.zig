@@ -15,9 +15,26 @@ test "仮引数『引数』と同名宣言の重複診断を保つ" {
             };
             try std.testing.expect(found);
         }
+
+        /// 同名の仮引数は公式`preDefineFunc`が初出順の1スロットへ集約する。
+        /// そのため二重定義にはならず、呼出し時の引数個数不一致として診断する。
+        fn expectAggregatedArgumentCount(source: []const u8) !void {
+            var parsed = try parser.parse(std.testing.allocator, source, "main.nako3");
+            defer parsed.deinit();
+            var analyzed = try analyze(std.testing.allocator, parsed.root.?, "main.nako3");
+            defer analyzed.deinit();
+            var count_mismatch = false;
+            var duplicate = false;
+            for (analyzed.diagnostics) |item| {
+                if (item.code == .invalid_argument_count) count_mismatch = true;
+                if (item.code == .duplicate_symbol) duplicate = true;
+            }
+            try std.testing.expect(count_mismatch);
+            try std.testing.expect(!duplicate);
+        }
     };
-    // 仮引数`引数`の2個目は通常の仮引数と同じく二重定義として診断する。
-    try Case.expectDuplicate("●(引数と引数の)Fとは\n引数を表示\nここまで\nF(1,2)\n");
+    // 同名の仮引数は助詞候補として集約され、2個目のスロットにはならない。
+    try Case.expectAggregatedArgumentCount("●(引数と引数)Fとは\n引数を表示\nここまで\nF(1,2)\n");
     // 明示宣言の特例は最初の1回だけで、2個目の宣言は二重定義として診断する。
     try Case.expectDuplicate("●(Aの)Fとは\n変数 引数=1\n変数 引数=2\n引数を表示\nここまで\n5のF\n");
     // 暗黙の`引数`への代入は定義なので、後続の明示宣言は二重定義になる
