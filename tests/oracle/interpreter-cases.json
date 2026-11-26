@@ -1060,5 +1060,48 @@
   {
     "id": "return-local-function-args-issue297",
     "source": "●(Xを)倍算とは\nX*2で戻る\nここまで\n●呼出とは\n3を倍算で戻る。\nここまで\nJSONエンコード(呼出())を表示。\n"
+  },
+  {
+    "id": "capture-varlist-constant-before-import-short-comment-issue297",
+    "files": {
+      "capture-const-short.nako3": "定数[A,B]=[4,5]\n"
+    },
+    "source": "●呼出とは\nA=0\nF=関数()\nA=8\nここまで\n!「./capture-const-short.nako3」を取り込む。\nF()\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n"
+  },
+  {
+    "id": "capture-varlist-constant-before-import-long-comment-issue297",
+    "files": {
+      "capture-const-long.nako3": "# xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n定数[A,B]=[4,5]\n"
+    },
+    "source": "●呼出とは\nA=0\nF=関数()\nA=8\nここまで\n!「./capture-const-long.nako3」を取り込む。\nF()\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n"
+  },
+  {
+    "id": "capture-varlist-constant-after-import-short-comment-issue297",
+    "files": {
+      "capture-const-short-after.nako3": "定数[A,B]=[4,5]\n"
+    },
+    "source": "●呼出とは\nA=0\n!「./capture-const-short-after.nako3」を取り込む。\nF=関数()\nA=8\nここまで\nF()\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n",
+    "expectedDiagnostic": {
+      "code": "assign_to_constant",
+      "line": 5
+    }
+  },
+  {
+    "id": "capture-varlist-constant-after-import-long-comment-issue297",
+    "files": {
+      "capture-const-long-after.nako3": "# xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n定数[A,B]=[4,5]\n"
+    },
+    "source": "●呼出とは\nA=0\n!「./capture-const-long-after.nako3」を取り込む。\nF=関数()\nA=8\nここまで\nF()\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n",
+    "expectedDiagnostic": {
+      "code": "assign_to_constant",
+      "line": 5
+    }
+  },
+  {
+    "id": "capture-varlist-constant-independent-scope-same-name-issue297",
+    "files": {
+      "capture-const-other-scope.nako3": "A=9\n"
+    },
+    "source": "●定数側とは\n定数[A,B]=[4,5]\n[A,B]で戻る\nここまで\n●書込側とは\n!「./capture-const-other-scope.nako3」を取り込む。\nAで戻る\nここまで\nJSONエンコード(定数側())を表示。\n書込側()を表示。\n"
   }
 ]

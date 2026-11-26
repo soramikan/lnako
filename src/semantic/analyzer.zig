@@ -305,6 +305,10 @@ pub const Analyzer = struct {
     /// 代入・増減ノードの事前宣言走査順位。分割定数宣言との前後を同じ
     /// スコープ内で比較するために使う（取り込み元のバイト位置に依存しない）。
     write_order: std.AutoHashMapUnmanaged(*ast.Node, usize) = .{},
+    /// 関数定義・無名関数ノードの事前宣言走査順位。宣言を捕捉する
+    /// 無名関数では、書き込み位置ではなく関数定義位置を定数宣言の
+    /// 展開位置と比較するために使う。
+    function_definition_order: std.AutoHashMapUnmanaged(*ast.Node, usize) = .{},
     /// 繰り返し本体の内側にある深さ（公式のflagLoop相当）。『続ける』は
     /// この深さが正のときだけ有効で、条件分岐のcase節は繰り返しに数えない。
     loop_depth: usize = 0,
@@ -401,6 +405,11 @@ pub const Analyzer = struct {
     /// （resolveBlock側で mod__F シンボルへ束縛する）。
     fn predeclareBlockEx(self: *Analyzer, node: *ast.Node, module_index: u32, scope: ScopeId, recurse: bool, expansion: bool) anyerror!void {
         self.stream_order += 1;
+        if (node.kind == .function_definition or node.kind == .test_definition or
+            node.kind == .anonymous_function)
+        {
+            try self.function_definition_order.put(self.allocator, node, self.stream_order);
+        }
         if (node.kind == .property_assignment)
             try self.property_assignment_order.put(self.allocator, node, self.stream_order);
         if (node.kind == .assignment or node.kind == .increment)
@@ -1265,10 +1274,16 @@ pub const Analyzer = struct {
         // いても展開後は同じ束縛なので、由来モジュールで先に拒否しない。
         // この順序比較は、取り込み元ファイルの長さで前後が逆転しない。
         if (symbol.constant_decl_scope) |decl_scope| {
-            if (decl_scope == scope) {
-                if (symbol.constant_decl_order) |declared_order| {
+            if (symbol.constant_decl_order) |declared_order| {
+                if (decl_scope == scope) {
                     if (self.write_order.get(node)) |write_order|
                         return write_order < declared_order;
+                } else if (self.capturedFunctionOrder(decl_scope, scope)) |function_order| {
+                    // 宣言を捕捉する無名関数では、公式は関数定義を変換した
+                    // 時点の束縛で書き込みを判定する。書き込み文の実行順や
+                    // 宣言名のファイル内バイト位置ではなく、宣言を展開した
+                    // 位置と関数定義の位置を同じ事前宣言走査順で比較する。
+                    return function_order < declared_order;
                 }
             }
         }
@@ -1278,6 +1293,27 @@ pub const Analyzer = struct {
         if (symbol.module_index != module_index) return false;
         const declared = symbol.constant_decl_span orelse return false;
         return self.positionAfter(symbol.module_index, declared, module_index, node.span);
+    }
+
+    /// `decl_scope`の子孫スコープから書き込むとき、`decl_scope`直下の
+    /// 関数定義（無名関数の捕捉を含む）の事前宣言走査順位を返す。
+    /// `scope`が`decl_scope`の子孫でなければnullを返し、呼び出し側は
+    /// 従来のスコープ・モジュール判定へフォールバックする。
+    fn capturedFunctionOrder(self: *Analyzer, decl_scope: ScopeId, scope: ScopeId) ?usize {
+        var current = scope;
+        var child = scope;
+        while (current != decl_scope) {
+            const parent = self.scopes.items[current].parent orelse return null;
+            child = current;
+            current = parent;
+        }
+        const kind = self.scopes.items[child].kind;
+        if (kind != .function and kind != .anonymous_function) return null;
+        for (self.function_scopes.items) |entry| {
+            if (entry.scope != child) continue;
+            return self.function_definition_order.get(entry.node);
+        }
+        return null;
     }
 
     /// 式内の`引数`参照を使用済みにする。公式convDefLocalVarは名前の登録

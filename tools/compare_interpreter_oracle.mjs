@@ -35,6 +35,23 @@ try {
     const actual = spawnSync(executable, ["run", sourcePath], options);
     const expectedResult = normalize(official);
     const actualResult = normalize(actual);
+    if (testCase.expectedDiagnostic) {
+      // 文法エラーのケースは公式CLIが終了コード0のまま診断をstdoutへ
+      // ANSI付きで出す。終了コードではなく、両経路の診断コードと行が
+      // 一致することを比較する。
+      const expected = testCase.expectedDiagnostic;
+      const officialLine = diagnosticLine(official.stdout, /\((\d+)行目\)/u);
+      const actualLine = diagnosticLine(actual.stderr, /:(\d+):\d+: error\[/u);
+      const officialRejected = officialLine !== null && String(official.stdout).includes("文法エラー");
+      const actualRejected = actual.status !== 0 && String(actual.stderr).includes(`error[${expected.code}]`);
+      if (!officialRejected || !actualRejected || officialLine !== expected.line || actualLine !== expected.line) {
+        failures += 1;
+        console.error(
+          `診断差分 ${testCase.id}:\nofficial=${JSON.stringify({ line: officialLine, output: String(official.stdout) })}\nlnako  =${JSON.stringify({ line: actualLine, stderr: String(actual.stderr) })}`,
+        );
+      }
+      continue;
+    }
     if (official.status !== 0 || actual.status !== 0 || JSON.stringify(expectedResult) !== JSON.stringify(actualResult)) {
       failures += 1;
       console.error(
@@ -76,6 +93,11 @@ function buildLnako() {
   if (retrySanity.status !== 0 || retrySanity.error) {
     throw new Error(`lnakoのcache再構築後も生成compilerを実行できません:\n${describeProcessResult(retrySanity)}`);
   }
+}
+
+function diagnosticLine(output, pattern) {
+  const match = pattern.exec(String(output ?? ""));
+  return match === null ? null : Number(match[1]);
 }
 
 function normalize(result) {

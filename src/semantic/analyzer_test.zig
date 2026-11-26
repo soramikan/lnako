@@ -1209,6 +1209,78 @@ test "関数内取り込みの分割定数宣言は展開済み順序で前後�
     try std.testing.expectEqual(@as(usize, 1), (try run("●Fとは\n定数 A=0\nA=9\nここまで\nF()\n", "A=0\n")).assignments);
 }
 
+test "分割定数を捕捉した匿名関数は宣言の展開位置と関数定義位置で判定する" {
+    const module_graph = @import("module_graph.zig");
+    const Provider = struct {
+        main_source: []const u8,
+        module_source: []const u8,
+
+        fn sourceProvider(self: *@This()) module_graph.SourceProvider {
+            return .{ .context = self, .readFn = read };
+        }
+
+        fn read(context: *anyopaque, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            if (std.mem.endsWith(u8, path, "main.nako3")) return allocator.dupe(u8, self.main_source);
+            if (std.mem.endsWith(u8, path, "定数部.nako3")) return allocator.dupe(u8, self.module_source);
+            return error.FileNotFound;
+        }
+    };
+    const Result = struct { count: usize = 0, line: ?usize = null };
+    const count = struct {
+        fn assignments(main_source: []const u8, module_source: []const u8) !Result {
+            var provider = Provider{ .main_source = main_source, .module_source = module_source };
+            var graph = try module_graph.load(std.testing.allocator, "main.nako3", provider.sourceProvider(), .{});
+            defer graph.deinit();
+            var program = try graph.analyze(std.testing.allocator);
+            defer program.deinit();
+            var result = Result{};
+            for (program.diagnostics) |item| {
+                if (item.code != .assign_to_constant) continue;
+                result.count += 1;
+                if (result.line == null) result.line = item.span.line;
+            }
+            return result;
+        }
+    }.assignments;
+
+    const const_decl = "定数[A,B]=[4,5]\n";
+    const long_const_decl = "# xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n" ++ const_decl;
+    const before_import = "●呼出とは\nA=0\nF=関数()\nA=8\nここまで\n!「./定数部.nako3」を取り込む。\nF()\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n";
+    const after_import = "●呼出とは\nA=0\n!「./定数部.nako3」を取り込む。\nF=関数()\nA=8\nここまで\nF()\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n";
+    // 取り込み前に関数定義があれば、書き込みは宣言前の可変束縛として通る。
+    // 取り込み後に定義された関数は定数化後の束縛を捕捉するため拒否する。
+    // どちらも宣言側コメント量に依存しない。
+    try std.testing.expectEqual(@as(usize, 0), (try count(before_import, const_decl)).count);
+    try std.testing.expectEqual(@as(usize, 0), (try count(before_import, long_const_decl)).count);
+    const after_short = try count(after_import, const_decl);
+    try std.testing.expectEqual(@as(usize, 1), after_short.count);
+    try std.testing.expectEqual(@as(usize, 4), after_short.line.?);
+    const after_long = try count(after_import, long_const_decl);
+    try std.testing.expectEqual(@as(usize, 1), after_long.count);
+    try std.testing.expectEqual(@as(usize, 4), after_long.line.?);
+
+    // 同じファイルへ直接置いた対照も、匿名関数の定義位置で同じ前後になる。
+    const inline_before = "●呼出とは\nA=0\nF=関数()\nA=8\nここまで\n定数[A,B]=[4,5]\nF()\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n";
+    const inline_after = "●呼出とは\nA=0\n定数[A,B]=[4,5]\nF=関数()\nA=8\nここまで\nF()\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n";
+    try std.testing.expectEqual(@as(usize, 0), (try count(inline_before, "")).count);
+    const inline_after_result = try count(inline_after, "");
+    try std.testing.expectEqual(@as(usize, 1), inline_after_result.count);
+    try std.testing.expectEqual(@as(usize, 4), inline_after_result.line.?);
+
+    // 無名関数が複数段でも、宣言スコープ直下の関数定義位置で判定する。
+    const nested_before = "●呼出とは\nA=0\nF=関数()\nG=関数()\nA=8\nここまで\nG()\nここまで\n!「./定数部.nako3」を取り込む。\nF()\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n";
+    const nested_after = "●呼出とは\nA=0\n!「./定数部.nako3」を取り込む。\nF=関数()\nG=関数()\nA=8\nここまで\nG()\nここまで\nF()\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n";
+    try std.testing.expectEqual(@as(usize, 0), (try count(nested_before, const_decl)).count);
+    const nested_after_result = try count(nested_after, const_decl);
+    try std.testing.expectEqual(@as(usize, 1), nested_after_result.count);
+    try std.testing.expectEqual(@as(usize, 5), nested_after_result.line.?);
+
+    // 関係のない別関数の同名変数は独立して書ける。
+    const other_scope = "●定数側とは\n定数[A,B]=[4,5]\n[A,B]で戻る\nここまで\n●書込側とは\n!「./定数部.nako3」を取り込む。\nAを表示\nここまで\nJSONエンコード(定数側())を表示。\n書込側()\n";
+    try std.testing.expectEqual(@as(usize, 0), (try count(other_scope, "A=9\n")).count);
+}
+
 test "package内scopeの依存命令は所有者修飾のdispatch名へ束縛する" {
     const parser = @import("../frontend/parser.zig");
     // 別package scopeで同じaliasを使う推移依存は、ソース上の `util__命令`
