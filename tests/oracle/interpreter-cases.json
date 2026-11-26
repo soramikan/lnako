@@ -978,5 +978,22 @@
   {
     "id": "varlist-constant-after-assignment",
     "source": "A=0\n定数[A,B]=[4,5]\nJSONエンコード([A,B])を表示。\n"
+  },
+  {
+    "id": "return-variable-alone-issue297",
+    "source": "●呼出とは\nV=5\nVで戻る。\nここまで\n呼出()を表示。\n"
+  },
+  {
+    "id": "return-normal-values-issue297",
+    "source": "●Aとは\n2で戻る\nここまで\n●Bとは\n2を戻る\nここまで\n●Cとは\n2を戻す\nここまで\nAを表示\nBを表示\nCを表示\n"
+  },
+  {
+    "id": "return-chained-implicit-marker-issue297",
+    "source": "●呼出とは\nV=5\n「x」と表示してVで戻る。\nここまで\n呼出()を表示。\n"
+  },
+  {
+    "id": "imported-function-return-chained-issue297",
+    "files": {"sol-lib-double.nako3": "●倍算(Xを)\n  X*2で戻る\nここまで\n"},
+    "source": "!「./sol-lib-double.nako3」を取り込む。\n●呼出とは\n  「x」と表示して3を倍算で戻る。\nここまで\n呼出()を表示。\n"
   }
 ]

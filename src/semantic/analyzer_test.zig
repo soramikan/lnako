@@ -662,6 +662,73 @@ test "助詞が正しい呼出しと暗黙『それ』連文は未解決語に�
     }
 }
 
+test "戻る直前の候補が変数・未定義名なら保留した実引数を診断する" {
+    // Issue #297: `2をVで戻る`のVが変数、または未知関数のままなら、
+    // 構文解析で保持した`2を`を黙って捨てず、公式`yReturn`と同じ
+    // 『戻』文の未解決引数にする。連文の暗黙マーカーは実引数ではない。
+    const parser = @import("../frontend/parser.zig");
+    const expected_message = "『戻』文の直前に未解決の引数があります。『(式)を戻す』のように式をカッコで括ってください。";
+    const cases = [_]struct { source: []const u8, line: usize }{
+        .{ .source = "●呼出とは\nV=5\n2をVで戻る。\nここまで\n呼出()を表示。\n", .line = 2 },
+        .{ .source = "●呼出とは\n2を未知関数で戻る。\nここまで\n呼出()を表示。\n", .line = 1 },
+        .{ .source = "●呼出とは\nV=5\n「x」と表示して2をVで戻る。\nここまで\n呼出()を表示。\n", .line = 2 },
+        .{ .source = "!厳しくチェック\n●呼出とは\n2を未知関数で戻る。\nここまで\n呼出()を表示。\n", .line = 2 },
+    };
+    for (cases) |case| {
+        var parsed = try parser.parse(std.testing.allocator, case.source, "main.nako3");
+        defer parsed.deinit();
+        var program = try analyzer.analyzeWithSource(std.testing.allocator, parsed.root.?, "main.nako3", parsed.stream.source.text);
+        defer program.deinit();
+        try std.testing.expect(!program.succeeded());
+        try std.testing.expectEqual(@as(usize, 1), program.diagnostics.len);
+        const found = program.diagnostics[0];
+        // 未解決の実引数と、候補名の未定義変数診断を混同しない。
+        try std.testing.expectEqual(diagnostic.Code.unresolved_word, found.code);
+        try std.testing.expectEqual(case.line, found.span.line);
+        try std.testing.expectEqualStrings(expected_message, found.message);
+    }
+}
+
+test "戻る直前の候補が関数なら実引数を保ち変数だけの戻りは成功する" {
+    const parser = @import("../frontend/parser.zig");
+    const valid = [_][]const u8{
+        // 先行引数のない`Vで戻る`は従来どおり変数値を返す。
+        "●呼出とは\nV=5\nVで戻る。\nここまで\n呼出()を表示。\n",
+        // 従来の普通の戻り値（で・を・戻す）。
+        "●Aとは\n2で戻る\nここまで\n●Bとは\n2を戻る\nここまで\n●Cとは\n2を戻す\nここまで\nAを表示\nBを表示\nCを表示\n",
+        // 連文が挿入した暗黙マーカーだけなら実引数として診断しない。
+        "●呼出とは\nV=5\n「x」と表示してVで戻る。\nここまで\n呼出()を表示。\n",
+        // 変数で始まる文字検索の`Cから`を候補扱いしない。
+        "0から連続検索\n●(Cから)連続検索\n「しんぶんし」でCから「ん」を文字検索。\nC=それ。Cを表示。\nもし、C=0でなければ、\nC=C+1。\nCから連続検索。\nここまで。\nここまで。\n",
+    };
+    for (valid) |source| {
+        var parsed = try parser.parse(std.testing.allocator, source, "main.nako3");
+        defer parsed.deinit();
+        var program = try analyzer.analyzeWithSource(std.testing.allocator, parsed.root.?, "main.nako3", parsed.stream.source.text);
+        defer program.deinit();
+        try std.testing.expect(program.succeeded());
+    }
+}
+
+test "取り込んだ関数を戻り値の候補として実引数付きで呼び出す" {
+    const parser = @import("../frontend/parser.zig");
+    var library = try parser.parse(std.testing.allocator, "●(Xを)倍算とは\nX*2で戻る\nここまで\n", "lib.nako3");
+    defer library.deinit();
+    var main = try parser.parse(std.testing.allocator, "●呼出とは\n「x」と表示して3を倍算で戻る。\nここまで\n呼出()を表示。\n", "main.nako3");
+    defer main.deinit();
+    var program = try analyzeModules(std.testing.allocator, &.{
+        .{ .name = "lib", .path = "lib.nako3", .root = library.root.? },
+        .{ .name = "main", .path = "main.nako3", .root = main.root.?, .marker_rank = 1 },
+    });
+    defer program.deinit();
+    try std.testing.expect(program.succeeded());
+    var imported_calls: usize = 0;
+    for (program.bindings) |binding| {
+        if (binding.kind == .call and std.mem.eql(u8, binding.resolved_name, "lib__倍算")) imported_calls += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 1), imported_calls);
+}
+
 test "package qualified symbolは宣言したimporter以外から解決されない" {
     const parser = @import("../frontend/parser.zig");
     var package = try parser.parse(std.testing.allocator, "値=1\n", "math.nako3");

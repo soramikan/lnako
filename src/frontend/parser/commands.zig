@@ -83,6 +83,9 @@ pub fn resolveCommandName(
             const candidate = try builder.makeNodeWithChildren(self, .word, command, try arguments.toOwnedSlice(self.allocator));
             candidate.value = command.value;
             candidate.end_span = command.span;
+            // 候補が変数・未定義名に解決した場合、保持した実引数を捨てずに
+            // 意味解析で『戻』文の未解決引数として診断する。
+            candidate.pending_return_arguments = true;
             arguments.* = .empty;
             try arguments.*.append(self.allocator, candidate);
             return null;

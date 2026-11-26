@@ -370,5 +370,17 @@
     "id": "semantic-diagnostic-varlist-constant-after-declaration",
     "source": "A=0\n定数[A,B]=[4,5]\nA=9\n",
     "code": "assign_to_constant"
+  },
+  {
+    "id": "semantic-diagnostic-return-pending-variable-issue297",
+    "source": "V=5\n2をVで戻る。\n",
+    "code": "unresolved_word",
+    "checkMessage": true
+  },
+  {
+    "id": "semantic-diagnostic-return-pending-undefined-issue297",
+    "source": "V=5\n2を未知関数で戻る。\n",
+    "code": "unresolved_word",
+    "checkMessage": true
   }
 ]

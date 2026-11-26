@@ -740,12 +740,34 @@ pub const Analyzer = struct {
         try self.bind(node, .declaration, node.name, symbol.qualified_name, symbol.id);
     }
 
+    /// 『戻る』直前の助詞付き候補が関数以外へ解決した場合、構文解析で
+    /// 保持した実引数を黙って捨てず、公式`yReturn`と同じ未解決引数の
+    /// 文法エラーにする。連文が挿入した暗黙の『それ』マーカーは実引数では
+    /// ないため診断しない（`「x」と表示してVで戻る`は従来どおり成功）。
+    fn rejectPendingReturnArguments(self: *Analyzer, node: *ast.Node, module_index: u32) !bool {
+        if (node.kind != .word or !node.pending_return_arguments) return false;
+        var has_real_argument = false;
+        for (node.children) |child| {
+            if (!child.is_implicit_it) {
+                has_real_argument = true;
+                break;
+            }
+        }
+        if (!has_real_argument) return false;
+        try self.addDiagnostic(.unresolved_word, node.span, self.modules.items[module_index].path, "『戻』文の直前に未解決の引数があります。『(式)を戻す』のように式をカッコで括ってください。");
+        return true;
+    }
+
     fn resolveReference(self: *Analyzer, node: *ast.Node, module_index: u32, scope: ScopeId, callable: bool) !void {
         const name = if (callable) node.name else node.value;
         if (name.len == 0) return;
         var pkg_ctx = try package_commands.DeclaredCommandContext.init(self, module_index, node, name, callable);
         if (self.resolveSymbol(module_index, scope, name, node.span)) |symbol| {
             if (try pkg_ctx.checkMatchedSymbol(self, module_index, scope, node, name, callable, symbol)) return;
+            // 候補が関数なら実引数付きの呼出しとして従来どおり解決する。
+            // 変数・定数など関数以外なら、保留した実引数を診断する。
+            if (symbol.kind != .function and symbol.kind != .test_function and
+                try self.rejectPendingReturnArguments(node, module_index)) return;
             const implicit_call = !callable and node.kind == .word and (symbol.kind == .function or symbol.kind == .test_function);
             // 公式はfunc tokenをカンマ直前では値として受理しないため、
             // 読み取り側の添字で関数に解決される裸の単語は『配列アクセスで指定ミス』
@@ -863,6 +885,9 @@ pub const Analyzer = struct {
             try unresolved_words.rejectUndefinedCommand(self, module_index, node, name);
             return;
         }
+        // 未定義名の候補でも、保留した実引数があれば未定義変数ではなく
+        // 『戻』文の未解決引数として診断する（両方を混同しない）。
+        if (try self.rejectPendingReturnArguments(node, module_index)) return;
         if (self.modules.items[module_index].strict) {
             const message = try std.fmt.allocPrint(self.allocator, "未定義の{s}『{s}』です", .{ if (callable) "命令" else "変数", name });
             // 公式`!厳しくチェック`は未定義の変数を`logger.warn`で警告するだけで
