@@ -528,6 +528,7 @@ pub fn functionMayInvokeBridge(function: ir.Function) bool {
         .property_get,
         .element_set,
         .init_array_index,
+        .plugin_registered,
         => return true,
         else => {},
     };

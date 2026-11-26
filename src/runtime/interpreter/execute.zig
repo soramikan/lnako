@@ -495,6 +495,12 @@ fn executeInstructionResolved(
         .try_end => _ = frame.handlers.pop(),
         .exception_pending => result = .{ .boolean = false },
         .exception_take => {},
+        // 動的plugin命令の登録有無。実登録の選択前に評価順を分岐するため、
+        // 呼出しIRCandidatePlanの各候補をこの命令で問い合わせる。
+        .plugin_registered => {
+            const target = try plugins.resolvePluginTarget(self, instruction.name, &.{});
+            result = .{ .boolean = target.kind != .none };
+        },
         .phi => {
             const source = predecessor orelse return error.InvalidPhiPredecessor;
             for (instruction.phi_incoming) |incoming| if (incoming.predecessor == source) {

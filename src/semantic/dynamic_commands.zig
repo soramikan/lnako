@@ -156,14 +156,32 @@ pub fn bindsValueExact(
     return bindsWithFallbacks(allocator, allows_dynamic_commands, allows_from, aliases, name, use_position);
 }
 
+/// 実行時に選択され得る1候補の登録名と助詞シグネチャ。評価順を候補ごとに
+/// 分岐するloweringが、登録の選択と式の評価順を同じ候補へ結び付けるために使う。
+pub const CandidatePlan = struct {
+    name: []const u8,
+    signature: JosiSignature,
+};
+
 pub const CandidateResolution = struct {
     resolved_name: []const u8,
     fallback_names: []const []const u8 = &.{},
     signature: ?JosiSignature = null,
+    /// 実行時に選択され得る候補の登録名とシグネチャ（主候補が先頭）。
+    /// 主候補の登録が不確実で、候補ごとに評価順が異なり得る場合だけ設定する。
+    /// `name`は`resolved_name`/`fallback_names`と同じallocator所有領域を指す。
+    candidate_plans: []const CandidatePlan = &.{},
     /// 実登録される候補が静的には確定できず、候補ごとの助詞定義も一致
     /// しない場合に真。呼出し側は実引数を未整列のまま実行時へ渡し、
     /// 選択された登録のメタデータで割り当てる。
     runtime_alignment: bool = false,
+    /// 実行時の登録メタデータで助詞割り当てを行う呼出しで、式の評価順を
+    /// 主候補の固定スロットから確定できるか。未確定の別名catch-allが先に
+    /// あっても、後発の実登録候補が確定していればそのレイアウトで評価できる。
+    evaluation_order_known: bool = false,
+    /// 実登録が静的に確実で、他に選択され得る候補が無いこと。空の`josi`表
+    /// のような候補固有の解析時判定を、実行時メタデータの不確実性と区別する。
+    single_certain: bool = false,
 };
 
 /// `binds` と同じ優先規則で主配送先 `resolved_name` を決めつつ、主配送先が
@@ -213,25 +231,34 @@ pub fn bindsWithFallbacks(
         }
     }.lessThan);
 
-    // 候補ごとの助詞定義が一致しない、または可変長助詞をリテラルで確定
-    // できない場合は、主候補の呼出し計画を先発候補へ流用できない。実引数を
-    // 未整列のまま実行時へ渡し、実際に登録された候補のメタデータで割り当てる。
+    // 主候補が実行時に登録される保証がない、または可変長助詞をリテラルで
+    // 確定できない場合は、選択された登録のメタデータで実引数を割り当てる。
+    // 未確定の別名catch-allが先にあっても、後発の実登録候補の固定部分は
+    // 静的に分かるため、その有無だけで実行時割り当てを無効にしない。
     var runtime_alignment = primary.exact and !primary.registration_certain;
-    if (primary.exact and primary.signature != null) {
-        if (!primary.signature.?.variable_known) runtime_alignment = true;
-    }
-    var all_esm_signatures = primary.exact and primary.signature != null;
-    for (candidates.items) |entry| {
-        if (!entry.alias.exact or !entry.alias.signature_required or entry.alias.signature == null) {
-            all_esm_signatures = false;
-            continue;
+    if (primary.exact and primary.signature != null and !primary.signature.?.variable_known) runtime_alignment = true;
+    // 評価順は、主候補が確実に登録されるならその固定スロット順でよい。
+    // 登録が不確実なときは、実行時に選ばれ得る全候補の署名が一致する場合だけ
+    // 主候補のレイアウトを再利用できる。異なる候補がある場合はソース順の
+    // まま評価し、値だけを実行時の助詞で割り当てる。
+    var evaluation_order_known = false;
+    if (runtime_alignment and primary.exact and primary.signature != null) {
+        if (primary.registration_certain) {
+            evaluation_order_known = true;
+        } else {
+            evaluation_order_known = true;
+            for (candidates.items) |entry| {
+                if (!entry.alias.exact or entry.alias.signature == null) {
+                    evaluation_order_known = false;
+                    break;
+                }
+                if (!signatureEql(entry.alias.signature.?, primary.signature.?)) {
+                    evaluation_order_known = false;
+                    break;
+                }
+            }
         }
-        if (primary.signature) |primary_signature| {
-            if (!signatureEql(entry.alias.signature.?, primary_signature)) runtime_alignment = true;
-        }
-        if (!entry.alias.signature.?.variable_known) runtime_alignment = true;
     }
-    if (!all_esm_signatures) runtime_alignment = false;
 
     var fallbacks: std.ArrayList([]const u8) = .empty;
     errdefer {
@@ -261,11 +288,74 @@ pub fn bindsWithFallbacks(
             return failure;
         };
     }
+
+    // 実登録が不確実な主候補と、評価順が異なり得る別候補が並ぶ場合だけ、
+    // 候補ごとの計画をloweringへ渡す。パーサの`yCallFunc`と同じ評価順を
+    // 実登録の選択前に固定できないため、各候補の固定スロット表を保持し、
+    // 実登録を確認した分岐の中だけでその候補の式を評価する。
+    var candidate_plans: []const CandidatePlan = &.{};
+    errdefer if (candidate_plans.len > 0) allocator.free(candidate_plans);
+    if (runtime_alignment and primary.exact and primary.signature != null and !primary.registration_certain) {
+        var plans: std.ArrayList(CandidatePlan) = .empty;
+        errdefer plans.deinit(allocator);
+        var all_known = true;
+        var differs = false;
+        try plans.append(allocator, .{ .name = resolved_name, .signature = primary.signature.? });
+        for (fallbacks.items) |fallback_name| {
+            var fallback_signature: ?JosiSignature = null;
+            for (candidates.items) |entry| {
+                const entry_name = try allocDispatchName(allocator, entry.alias, name);
+                defer allocator.free(entry_name);
+                if (std.mem.eql(u8, entry_name, fallback_name)) {
+                    fallback_signature = entry.alias.signature;
+                    break;
+                }
+            }
+            const signature = fallback_signature orelse {
+                all_known = false;
+                break;
+            };
+            if (!signatureEql(signature, primary.signature.?)) differs = true;
+            try plans.append(allocator, .{ .name = fallback_name, .signature = signature });
+        }
+        if (all_known and differs and plans.items.len >= 2) {
+            candidate_plans = try plans.toOwnedSlice(allocator);
+        } else plans.deinit(allocator);
+    }
+
+    // 解析時に候補固有の判定（空の`josi`表など）を行えるのは、実登録が
+    // 確実で、他に選択され得る候補が無い場合だけ。同名でも署名が異なる
+    // 候補が残るなら、実行時の登録選択を待つ。
+    var single_certain = primary.exact and primary.registration_certain;
+    if (single_certain) {
+        for (candidates.items) |entry| {
+            const entry_name = try allocDispatchName(allocator, entry.alias, name);
+            defer allocator.free(entry_name);
+            if (!std.mem.eql(u8, entry_name, resolved_name)) {
+                single_certain = false;
+                break;
+            }
+            if (primary.signature) |primary_signature| {
+                const entry_signature = entry.alias.signature orelse {
+                    single_certain = false;
+                    break;
+                };
+                if (!signatureEql(entry_signature, primary_signature)) {
+                    single_certain = false;
+                    break;
+                }
+            }
+        }
+    }
+
     return .{
         .resolved_name = resolved_name,
         .fallback_names = try fallbacks.toOwnedSlice(allocator),
         .signature = primary.signature,
+        .candidate_plans = candidate_plans,
         .runtime_alignment = runtime_alignment,
+        .evaluation_order_known = evaluation_order_known,
+        .single_certain = single_certain,
     };
 }
 
@@ -293,6 +383,20 @@ pub fn cloneSignature(allocator: std.mem.Allocator, signature: JosiSignature) !J
         slots[index] = copied;
     }
     return .{ .slots = slots, .variable_final = signature.variable_final, .variable_known = signature.variable_known };
+}
+
+/// 候補計画をProgramの生存期間へ深く複製する。`bindsWithFallbacks`が返す
+/// 署名はmodule graphの一時aliasを参照し得るため、Bindingへ保持する前に
+/// ここで登録名とスロット表を複製する。
+pub fn cloneCandidatePlans(allocator: std.mem.Allocator, plans: []const CandidatePlan) ![]const CandidatePlan {
+    const copies = try allocator.alloc(CandidatePlan, plans.len);
+    for (plans, copies) |source, *target| {
+        target.* = .{
+            .name = try allocator.dupe(u8, source.name),
+            .signature = try cloneSignature(allocator, source.signature),
+        };
+    }
+    return copies;
 }
 
 /// `JosiSignature`を`argument_completion.plan`のスロット表へ変換する。
@@ -1473,12 +1577,19 @@ test "appendJavaScriptPluginAliases は関数内addPluginObjectの登録を確�
     defer {
         for (resolved.fallback_names) |name| allocator.free(name);
         allocator.free(resolved.fallback_names);
+        if (resolved.candidate_plans.len > 0) allocator.free(resolved.candidate_plans);
         allocator.free(resolved.resolved_name);
     }
     try std.testing.expect(resolved.runtime_alignment);
     try std.testing.expectEqualStrings("pkg:b.mjs__外部命令", resolved.resolved_name);
     try std.testing.expectEqual(@as(usize, 1), resolved.fallback_names.len);
     try std.testing.expectEqualStrings("pkg:a.mjs__外部命令", resolved.fallback_names[0]);
+    // 後発の実登録が不確実で署名も異なるため、候補ごとの評価計画を持つ。
+    try std.testing.expectEqual(@as(usize, 2), resolved.candidate_plans.len);
+    try std.testing.expectEqualStrings("pkg:b.mjs__外部命令", resolved.candidate_plans[0].name);
+    try std.testing.expectEqualStrings("pkg:a.mjs__外部命令", resolved.candidate_plans[1].name);
+    try std.testing.expectEqualStrings("に", resolved.candidate_plans[0].signature.slots[0][0]);
+    try std.testing.expectEqualStrings("を", resolved.candidate_plans[1].signature.slots[0][0]);
 }
 
 test "bindsCallableExact はcatch-allや非関数exactを呼出し候補にしない" {
@@ -1806,4 +1917,87 @@ test "appendJavaScriptPluginAliases は算出プロパティ名付き修飾子�
     try std.testing.expectEqual(@as(usize, 2), combo_aliases.items.len);
     try std.testing.expectEqualStrings("async", combo_aliases.items[0].source_namespace);
     try std.testing.expectEqualStrings("get", combo_aliases.items[1].source_namespace);
+}
+
+test "bindsWithFallbacks は先発catch-allで実行時メタデータ利用と評価順確定を無効にしない" {
+    const allocator = std.testing.allocator;
+    // 先発の未確定catch-all (default spread) と、後発の実登録可変長命令。
+    // catch-allには静的署名がないが、後発の登録は確実なので、後発の可変長
+    // メタデータを実行時に読む必要を失わない。
+    const aliases = [_]DynamicCommandAlias{
+        .{ .source_namespace = "", .dispatch_namespace = "pkg:a:early.mjs", .import_position = 5, .unqualified = true },
+        .{ .source_namespace = "外部命令", .dispatch_namespace = "pkg:a:late.mjs__外部命令", .import_position = 10, .exact = true, .signature = .{ .slots = &.{&.{ "と", "を" }}, .variable_known = false }, .signature_required = true },
+    };
+    const resolved = (try bindsCallableExact(allocator, false, 0, &aliases, "外部命令", 20)) orelse return error.TestUnexpectedResult;
+    defer {
+        allocator.free(resolved.resolved_name);
+        for (resolved.fallback_names) |name| allocator.free(name);
+        allocator.free(resolved.fallback_names);
+    }
+    try std.testing.expectEqualStrings("pkg:a:late.mjs__外部命令", resolved.resolved_name);
+    try std.testing.expect(resolved.runtime_alignment);
+    try std.testing.expect(resolved.evaluation_order_known);
+
+    // 代替候補の署名が異なる場合は、実行時メタデータで割り当てつつ、
+    // 主候補の固定レイアウトを評価順へ流用しない。
+    const mixed = [_]DynamicCommandAlias{
+        .{ .source_namespace = "外部命令", .dispatch_namespace = "pkg:a:early.mjs__外部命令", .import_position = 5, .exact = true, .signature = .{ .slots = &.{&.{"を"}} }, .signature_required = true },
+        .{ .source_namespace = "", .dispatch_namespace = "pkg:a:early-dyn.mjs", .import_position = 6, .unqualified = true },
+        .{ .source_namespace = "外部命令", .dispatch_namespace = "pkg:a:late.mjs__外部命令", .import_position = 10, .exact = true, .signature = .{ .slots = &.{&.{"に"}} }, .signature_required = true, .registration_certain = false },
+    };
+    const mixed_resolved = (try bindsCallableExact(allocator, false, 0, &mixed, "外部命令", 20)) orelse return error.TestUnexpectedResult;
+    defer {
+        allocator.free(mixed_resolved.resolved_name);
+        for (mixed_resolved.fallback_names) |name| allocator.free(name);
+        allocator.free(mixed_resolved.fallback_names);
+    }
+    try std.testing.expect(mixed_resolved.runtime_alignment);
+    try std.testing.expect(!mixed_resolved.evaluation_order_known);
+
+    // 登録が確実でリテラルの可変長指定が揃う場合は、従来どおり静的計画で足りる。
+    const fixed = [_]DynamicCommandAlias{
+        .{ .source_namespace = "", .dispatch_namespace = "pkg:a:early.mjs", .import_position = 5, .unqualified = true },
+        .{ .source_namespace = "外部命令", .dispatch_namespace = "pkg:a:late.mjs__外部命令", .import_position = 10, .exact = true, .signature = .{ .slots = &.{&.{ "と", "を" }}, .variable_final = true }, .signature_required = true },
+    };
+    const fixed_resolved = (try bindsCallableExact(allocator, false, 0, &fixed, "外部命令", 20)) orelse return error.TestUnexpectedResult;
+    defer {
+        allocator.free(fixed_resolved.resolved_name);
+        for (fixed_resolved.fallback_names) |name| allocator.free(name);
+        allocator.free(fixed_resolved.fallback_names);
+    }
+    try std.testing.expect(!fixed_resolved.runtime_alignment);
+}
+
+test "空のjosi表を持つ単一確実候補だけを解析時判定の対象にする" {
+    const allocator = std.testing.allocator;
+    // `josi: []` と式の`isVariableJosi`（Boolean(1)/Boolean(0)）の組合せ。
+    // 可変長の真偽は実行時にしか決まらないが、スロットが0個であることは
+    // 静的に確定しているため、単一確実候補として解析時に扱える。
+    const zero = [_]DynamicCommandAlias{
+        .{ .source_namespace = "外部命令", .dispatch_namespace = "pkg:a:zero.mjs__外部命令", .import_position = 5, .exact = true, .signature = .{ .slots = &.{}, .variable_known = false }, .signature_required = true },
+    };
+    const zero_resolved = (try bindsCallableExact(allocator, false, 0, &zero, "外部命令", 10)) orelse return error.TestUnexpectedResult;
+    defer {
+        allocator.free(zero_resolved.resolved_name);
+        allocator.free(zero_resolved.fallback_names);
+        if (zero_resolved.candidate_plans.len > 0) allocator.free(zero_resolved.candidate_plans);
+    }
+    try std.testing.expect(zero_resolved.runtime_alignment);
+    try std.testing.expect(zero_resolved.single_certain);
+    try std.testing.expectEqual(@as(usize, 0), zero_resolved.signature.?.slots.len);
+
+    // 実行時に登録され得る別候補が残る場合は単一確実候補にしない。
+    const competing = [_]DynamicCommandAlias{
+        .{ .source_namespace = "外部命令", .dispatch_namespace = "pkg:a:zero.mjs__外部命令", .import_position = 5, .exact = true, .signature = .{ .slots = &.{}, .variable_known = false }, .signature_required = true },
+        .{ .source_namespace = "外部命令", .dispatch_namespace = "pkg:a:ghost.mjs__外部命令", .import_position = 7, .exact = true, .signature = .{ .slots = &.{&.{"を"}}, .variable_known = false }, .signature_required = true, .registration_certain = false },
+    };
+    const competing_resolved = (try bindsCallableExact(allocator, false, 0, &competing, "外部命令", 10)) orelse return error.TestUnexpectedResult;
+    defer {
+        allocator.free(competing_resolved.resolved_name);
+        for (competing_resolved.fallback_names) |name| allocator.free(name);
+        allocator.free(competing_resolved.fallback_names);
+        if (competing_resolved.candidate_plans.len > 0) allocator.free(competing_resolved.candidate_plans);
+    }
+    try std.testing.expect(competing_resolved.runtime_alignment);
+    try std.testing.expect(!competing_resolved.single_certain);
 }
