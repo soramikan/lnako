@@ -62,6 +62,13 @@ pub fn resolveCommandName(
     // 例: `1をA[0]に代入`, `1をA$fooに代入`。
     const next_kind = self.peekAhead(1).kind;
     if (next_kind == .left_bracket or next_kind == .at or next_kind == .property) return null;
+    // 公式はfunclistにない語を値としてスタックへ積む。助詞付きの未知語を
+    // 命令へ昇格すると、`「しんぶんし」でCから「ん」を文字検索`の`Cから`の
+    // ような変数引数が未定義関数呼出しになる。連文・条件・コールバック助詞や、
+    // 丁寧表現など命令名の末尾になり得る助詞は従来どおり命令として扱う。
+    if (!self.isKnownCommandName(self.peek().value) and
+        !isJapaneseCommandName(self.peek().value) and
+        isValueParticleJosi(self.peek().josi)) return null;
     // 助詞なし識別子の直後が『(』ならC風呼出しの式。公式`yCallFunc`の括弧呼出しは
     // 括弧内の引数だけを使い、直前のスタックを消費しない（`5をF(1)`は『5を』が
     // 未解決の単語になる）。命令として確定せず式の解析へ委ねる
@@ -182,6 +189,24 @@ pub fn isKnownCommandName(self: *Parser, value: []const u8) bool {
     if (self.isBuiltinCommandName(value)) return true;
     for (self.user_functions) |name| if (std.mem.eql(u8, name, value)) return true;
     return false;
+}
+
+/// 助詞付きでも命令として解決する文法上の命令名。これらは
+/// `parseJapaneseCommand`などが助詞とは別に構文を判定する。
+fn isJapaneseCommandName(value: []const u8) bool {
+    const names = [_][]const u8{ "代入", "定", "増", "減", "条件分岐", "実行速度優先", "パフォーマンスモニタ適用" };
+    for (names) |name| if (std.mem.eql(u8, name, value)) return true;
+    return false;
+}
+
+/// 値の後ろに付く助詞か。未知の語にこの助詞が付く場合、公式は命令ではなく
+/// 値をスタックへ積む。連文・条件・コールバック助詞と、命令名の末尾として
+/// 現れる丁寧表現・定義助詞は除外する。
+fn isValueParticleJosi(josi: []const u8) bool {
+    if (josi.len == 0 or isSequenceJosi(josi) or isImplicitCallbackJosi(josi) or isConditionalJosi(josi)) return false;
+    const command_suffixes = [_][]const u8{ "とは", "です", "します", "でした", "である", "こと", "にゃん" };
+    for (command_suffixes) |suffix| if (std.mem.eql(u8, josi, suffix)) return false;
+    return true;
 }
 
 /// 現在位置の識別子が「助詞付きの既知命令名」で、直後にも識別子が続くか。

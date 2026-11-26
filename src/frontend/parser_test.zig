@@ -42,6 +42,45 @@ test "識別子変数を途中の命令と誤認せず複数引数を構文解�
     try std.testing.expectEqualStrings("を", call.children[1].josi);
 }
 
+test "助詞付きの変数を命令名と誤認せず文字検索の3引数を構文解析する" {
+    // 公式はfunclistにない`C`を値として扱う。`Cから`を未定義関数の呼出しに
+    // すると、`「ん」を`が別の呼出しになって文字検索の引数が不足する。
+    var result = try parse(std.testing.allocator, "C=1\n「しんぶんし」でCから「ん」を文字検索。\n", "search.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    var call: ?*ast.Node = null;
+    for (result.root.?.children) |child| {
+        if (child.kind == .function_call and std.mem.eql(u8, child.name, "文字検索")) {
+            call = child;
+            break;
+        }
+    }
+    const search = call orelse return error.MissingSearchCall;
+    try std.testing.expectEqual(@as(usize, 3), search.children.len);
+    try std.testing.expectEqual(ast.Kind.word, search.children[1].kind);
+    try std.testing.expectEqualStrings("C", search.children[1].value);
+    try std.testing.expectEqualStrings("から", search.children[1].josi);
+}
+
+test "引数定義の『|』区切り助詞候補を1引数へまとめる" {
+    // 公式の`preDefineFunc`は`(Sが|Sの|Sを)`を1引数Sの助詞リスト
+    // [が,の,を]として登録する。lnakoはASTの1引数へ『|』区切りで保持する。
+    var result = try parse(std.testing.allocator, "●全角判定(Sが|Sの|Sを)\nSで戻る\nここまで。\n", "josi-alternatives.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    var definition: ?*ast.Node = null;
+    for (result.root.?.children) |child| {
+        if (child.kind == .function_definition) {
+            definition = child;
+            break;
+        }
+    }
+    const function = definition orelse return error.MissingFunctionDefinition;
+    try std.testing.expectEqual(@as(usize, 1), function.arguments.len);
+    try std.testing.expectEqualStrings("S", function.arguments[0].name);
+    try std.testing.expectEqualStrings("が|の|を", function.arguments[0].josi);
+}
+
 test "助詞はを代入演算子として構文解析する" {
     var result = try parse(std.testing.allocator, "Fはそれ\n", "assignment.nako3");
     defer result.deinit();
