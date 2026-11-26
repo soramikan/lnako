@@ -223,13 +223,69 @@ pub fn isChainedBuiltinCommand(self: *Parser, token: Token) bool {
     return self.isBuiltinCommandName(token.value);
 }
 
+/// 公式`yCallFunc`は命令の助詞スロットに一致する引数だけをスタックから
+/// 取り出し、一致しない引数は外側の呼出しへ残す。`範囲`は
+/// `AからBの範囲`（第1引数『から』・第2引数『の|までの』）の2引数を取る。
+/// `Aの2から5までの範囲を参照`では『Aの』を内側の範囲へ渡さず、外側の
+/// 『参照』の第1引数として残す（Issue #297。公式yCallFuncのpopStack相当）。
+const RangeSelection = struct {
+    from: usize,
+    to: usize,
+};
+
+fn selectRangeArguments(arguments: []const *ast.Node) ?RangeSelection {
+    if (arguments.len < 2) return null;
+    var to_index: ?usize = null;
+    var index = arguments.len;
+    while (index > 0) {
+        index -= 1;
+        const josi = arguments[index].josi;
+        if (std.mem.eql(u8, josi, "の") or std.mem.eql(u8, josi, "までの")) {
+            to_index = index;
+            break;
+        }
+    }
+    const to = to_index orelse return null;
+    var from_index: ?usize = null;
+    index = arguments.len;
+    while (index > 0) {
+        index -= 1;
+        if (index == to) continue;
+        if (std.mem.eql(u8, arguments[index].josi, "から")) {
+            from_index = index;
+            break;
+        }
+    }
+    const from = from_index orelse return null;
+    return .{ .from = from, .to = to };
+}
+
 /// 現在位置の助詞付き命令を呼び出し、結果を引数リストへ置き換える。
 /// 置き換えた場合は`true`を返す。
 pub fn callChainedBuiltinCommand(self: *Parser, arguments: *std.ArrayList(*ast.Node)) ParseFailure!bool {
     if (!self.isChainedBuiltinCommand(self.peek())) return false;
     const command = self.advance();
-    const call = try self.makeCommandCall(command, try arguments.toOwnedSlice(self.allocator));
+    const items = try arguments.toOwnedSlice(self.allocator);
+    var call_arguments: []*ast.Node = items;
+    var remaining: []const *ast.Node = &.{};
+    if (std.mem.eql(u8, command.value, "範囲")) {
+        if (selectRangeArguments(items)) |selection| {
+            call_arguments = try self.allocator.alloc(*ast.Node, 2);
+            call_arguments[0] = items[selection.from];
+            call_arguments[1] = items[selection.to];
+            const rest = try self.allocator.alloc(*ast.Node, items.len - 2);
+            var position: usize = 0;
+            for (items, 0..) |item, index| {
+                if (index == selection.from or index == selection.to) continue;
+                rest[position] = item;
+                position += 1;
+            }
+            remaining = rest;
+        }
+    }
+    const call = try self.makeCommandCall(command, call_arguments);
     arguments.* = .empty;
+    try arguments.appendSlice(self.allocator, remaining);
     try arguments.append(self.allocator, call);
     return true;
 }
