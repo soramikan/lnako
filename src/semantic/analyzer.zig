@@ -192,6 +192,9 @@ pub const Binding = struct {
     /// ESM pluginの静的抽出で確定した助詞シグネチャ。呼出し計画の
     /// スロット割り当てと、戻り値候補の未解決引数判定に使う。
     signature: ?dynamic_commands.JosiSignature = null,
+    /// 実行時に選択され得る候補の登録名と助詞シグネチャ。実登録の選択前に
+    /// 評価順を固定できない場合、loweringは候補ごとの分岐でこの計画を使う。
+    candidate_plans: []const dynamic_commands.CandidatePlan = &.{},
     /// 実行時の登録照合後に助詞割り当てを行う呼出し。実引数は未整列の
     /// まま lowering し、静的な不足・未解決判定を行わない。
     runtime_alignment: bool = false,
@@ -971,10 +974,25 @@ pub const Analyzer = struct {
                             }
                         }
                     }
+                    // 単一の確実な候補が空の`josi`表を持つ場合、`isVariableJosi`
+                    // が式（Boolean(0)/Boolean(1)）でもスロット0個は静的に
+                    // 確定している。公式も実行前に『戻』文の未解決引数として
+                    // 拒否し、手前の式を実行しない。連文マーカーだけの呼出しは
+                    // 実引数ではないため、従来の別制約（マーカー単独は診断しない）
+                    // をそのまま残す。
+                    if (has_real_arguments and resolution.single_certain) {
+                        if (resolution.signature) |signature| {
+                            if (signature.slots.len == 0) {
+                                try self.addDiagnostic(.unresolved_word, node.span, self.modules.items[module_index].path, "『戻』文の直前に未解決の引数があります。『(式)を戻す』のように式をカッコで括ってください。");
+                                return;
+                            }
+                        }
+                    }
                     try self.bind(node, .builtin, name, resolution.resolved_name, null);
                     const binding = &self.bindings.items[self.bindings.items.len - 1];
                     binding.dynamic_builtin = true;
                     binding.fallback_names = resolution.fallback_names;
+                    binding.candidate_plans = try dynamic_commands.cloneCandidatePlans(self.allocator, resolution.candidate_plans);
                     binding.runtime_alignment = resolution.runtime_alignment;
                     binding.runtime_evaluation_order_known = resolution.evaluation_order_known;
                     if (resolution.signature) |signature| binding.signature = try dynamic_commands.cloneSignature(self.allocator, signature);
@@ -997,6 +1015,7 @@ pub const Analyzer = struct {
                     const binding = &self.bindings.items[self.bindings.items.len - 1];
                     binding.dynamic_builtin = true;
                     binding.fallback_names = resolution.fallback_names;
+                    binding.candidate_plans = try dynamic_commands.cloneCandidatePlans(self.allocator, resolution.candidate_plans);
                     if (resolution.signature) |signature| binding.signature = try dynamic_commands.cloneSignature(self.allocator, signature);
                     return;
                 }

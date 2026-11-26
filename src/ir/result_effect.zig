@@ -80,6 +80,7 @@ fn readsIncomingResult(program: ir.Program, instruction: ir.Instruction, summari
         .iterator_begin,
         .iterator_next,
         .iterator_has_next,
+        .plugin_registered,
         => true,
         else => false,
     };

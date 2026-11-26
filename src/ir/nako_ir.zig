@@ -67,6 +67,9 @@ pub const Opcode = enum {
     try_end,
     exception_pending,
     exception_take,
+    /// 動的plugin命令名が実行時に登録済みかを問い合わせる。`name`が対象。
+    /// 実登録の選択前に候補ごとの評価計画へ分岐するloweringだけがemitする。
+    plugin_registered,
     speed_mode_begin,
     speed_mode_end,
     performance_monitor_begin,

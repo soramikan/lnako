@@ -175,6 +175,19 @@ pub fn writeInstruction(emitter: *Emitter, function: ir.Function, locals: []cons
             try emitter.output.writer.print("  call void @lnako_aot_exception_take(ptr @lnako.global.{d})", .{error_index});
             try emitter.debugSuffix(instruction.span, scope);
         },
+        .plugin_registered => {
+            const id = result orelse return error.MissingInstructionResult;
+            const list_index = emitter.pluginFallbackIndex(instruction.name, instruction.fallback_names) orelse return error.MissingNativePluginName;
+            const default_is_esm: u1 = @intFromBool(shared.isEsmPluginCommandName(emitter.program, instruction.name));
+            try emitter.output.writer.print("  %plugin.registered.i32.{d} = call i32 @lnako_aot_plugin_registered(ptr @lnako.plugin.fallback.{d}, i64 {d}, i1 {d})", .{
+                id, list_index, 1 + instruction.fallback_names.len, default_is_esm,
+            });
+            try emitter.debugSuffix(instruction.span, scope);
+            try emitter.output.writer.print("  %plugin.registered.bits.{d} = zext i32 %plugin.registered.i32.{d} to i64", .{ id, id });
+            try emitter.debugSuffix(instruction.span, scope);
+            try emitter.output.writer.print("  %v{d} = insertvalue %lnako.Value {{ i8 2, i64 0 }}, i64 %plugin.registered.bits.{d}, 1", .{ id, id });
+            try emitter.debugSuffix(instruction.span, scope);
+        },
         .phi => {
             try emitter.output.writer.print("  %v{d} = phi %lnako.Value ", .{result orelse return error.MissingInstructionResult});
             for (instruction.phi_incoming, 0..) |incoming, index| {

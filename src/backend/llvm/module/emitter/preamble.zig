@@ -173,6 +173,7 @@ pub fn emitPreamble(emitter: *Emitter) !void {
         try writer.writeAll(
             "%lnako.AotPluginCandidate = type { ptr, i64 }\n" ++
                 "declare void @lnako_aot_plugin_fallback_call(ptr, ptr, i64, ptr, i64, i64, i1)\n" ++
+                "declare i32 @lnako_aot_plugin_registered(ptr, i64, i1)\n" ++
                 "declare void @lnako_aot_plugin_function_new_fallback(ptr, ptr, i64, i1)\n\n",
         );
     }
@@ -214,6 +215,9 @@ pub fn collectModuleData(emitter: *Emitter) !void {
             }
             if (instruction.opcode == .exception_take and emitter.globalIndex("エラーメッセージ") == null) {
                 try emitter.appendGlobal("エラーメッセージ");
+            }
+            if (instruction.opcode == .plugin_registered) {
+                try emitter.ensurePluginFallbackList(instruction.name, instruction.fallback_names);
             }
             if (instruction.opcode == .call and instruction.direct_callee == null) {
                 if (isNativePluginCall(emitter.program, function, instruction)) {

@@ -156,10 +156,21 @@ pub fn bindsValueExact(
     return bindsWithFallbacks(allocator, allows_dynamic_commands, allows_from, aliases, name, use_position);
 }
 
+/// 実行時に選択され得る1候補の登録名と助詞シグネチャ。評価順を候補ごとに
+/// 分岐するloweringが、登録の選択と式の評価順を同じ候補へ結び付けるために使う。
+pub const CandidatePlan = struct {
+    name: []const u8,
+    signature: JosiSignature,
+};
+
 pub const CandidateResolution = struct {
     resolved_name: []const u8,
     fallback_names: []const []const u8 = &.{},
     signature: ?JosiSignature = null,
+    /// 実行時に選択され得る候補の登録名とシグネチャ（主候補が先頭）。
+    /// 主候補の登録が不確実で、候補ごとに評価順が異なり得る場合だけ設定する。
+    /// `name`は`resolved_name`/`fallback_names`と同じallocator所有領域を指す。
+    candidate_plans: []const CandidatePlan = &.{},
     /// 実登録される候補が静的には確定できず、候補ごとの助詞定義も一致
     /// しない場合に真。呼出し側は実引数を未整列のまま実行時へ渡し、
     /// 選択された登録のメタデータで割り当てる。
@@ -168,6 +179,9 @@ pub const CandidateResolution = struct {
     /// 主候補の固定スロットから確定できるか。未確定の別名catch-allが先に
     /// あっても、後発の実登録候補が確定していればそのレイアウトで評価できる。
     evaluation_order_known: bool = false,
+    /// 実登録が静的に確実で、他に選択され得る候補が無いこと。空の`josi`表
+    /// のような候補固有の解析時判定を、実行時メタデータの不確実性と区別する。
+    single_certain: bool = false,
 };
 
 /// `binds` と同じ優先規則で主配送先 `resolved_name` を決めつつ、主配送先が
@@ -274,12 +288,74 @@ pub fn bindsWithFallbacks(
             return failure;
         };
     }
+
+    // 実登録が不確実な主候補と、評価順が異なり得る別候補が並ぶ場合だけ、
+    // 候補ごとの計画をloweringへ渡す。パーサの`yCallFunc`と同じ評価順を
+    // 実登録の選択前に固定できないため、各候補の固定スロット表を保持し、
+    // 実登録を確認した分岐の中だけでその候補の式を評価する。
+    var candidate_plans: []const CandidatePlan = &.{};
+    errdefer if (candidate_plans.len > 0) allocator.free(candidate_plans);
+    if (runtime_alignment and primary.exact and primary.signature != null and !primary.registration_certain) {
+        var plans: std.ArrayList(CandidatePlan) = .empty;
+        errdefer plans.deinit(allocator);
+        var all_known = true;
+        var differs = false;
+        try plans.append(allocator, .{ .name = resolved_name, .signature = primary.signature.? });
+        for (fallbacks.items) |fallback_name| {
+            var fallback_signature: ?JosiSignature = null;
+            for (candidates.items) |entry| {
+                const entry_name = try allocDispatchName(allocator, entry.alias, name);
+                defer allocator.free(entry_name);
+                if (std.mem.eql(u8, entry_name, fallback_name)) {
+                    fallback_signature = entry.alias.signature;
+                    break;
+                }
+            }
+            const signature = fallback_signature orelse {
+                all_known = false;
+                break;
+            };
+            if (!signatureEql(signature, primary.signature.?)) differs = true;
+            try plans.append(allocator, .{ .name = fallback_name, .signature = signature });
+        }
+        if (all_known and differs and plans.items.len >= 2) {
+            candidate_plans = try plans.toOwnedSlice(allocator);
+        } else plans.deinit(allocator);
+    }
+
+    // 解析時に候補固有の判定（空の`josi`表など）を行えるのは、実登録が
+    // 確実で、他に選択され得る候補が無い場合だけ。同名でも署名が異なる
+    // 候補が残るなら、実行時の登録選択を待つ。
+    var single_certain = primary.exact and primary.registration_certain;
+    if (single_certain) {
+        for (candidates.items) |entry| {
+            const entry_name = try allocDispatchName(allocator, entry.alias, name);
+            defer allocator.free(entry_name);
+            if (!std.mem.eql(u8, entry_name, resolved_name)) {
+                single_certain = false;
+                break;
+            }
+            if (primary.signature) |primary_signature| {
+                const entry_signature = entry.alias.signature orelse {
+                    single_certain = false;
+                    break;
+                };
+                if (!signatureEql(entry_signature, primary_signature)) {
+                    single_certain = false;
+                    break;
+                }
+            }
+        }
+    }
+
     return .{
         .resolved_name = resolved_name,
         .fallback_names = try fallbacks.toOwnedSlice(allocator),
         .signature = primary.signature,
+        .candidate_plans = candidate_plans,
         .runtime_alignment = runtime_alignment,
         .evaluation_order_known = evaluation_order_known,
+        .single_certain = single_certain,
     };
 }
 
@@ -307,6 +383,20 @@ pub fn cloneSignature(allocator: std.mem.Allocator, signature: JosiSignature) !J
         slots[index] = copied;
     }
     return .{ .slots = slots, .variable_final = signature.variable_final, .variable_known = signature.variable_known };
+}
+
+/// 候補計画をProgramの生存期間へ深く複製する。`bindsWithFallbacks`が返す
+/// 署名はmodule graphの一時aliasを参照し得るため、Bindingへ保持する前に
+/// ここで登録名とスロット表を複製する。
+pub fn cloneCandidatePlans(allocator: std.mem.Allocator, plans: []const CandidatePlan) ![]const CandidatePlan {
+    const copies = try allocator.alloc(CandidatePlan, plans.len);
+    for (plans, copies) |source, *target| {
+        target.* = .{
+            .name = try allocator.dupe(u8, source.name),
+            .signature = try cloneSignature(allocator, source.signature),
+        };
+    }
+    return copies;
 }
 
 /// `JosiSignature`を`argument_completion.plan`のスロット表へ変換する。
@@ -1428,12 +1518,19 @@ test "appendJavaScriptPluginAliases は関数内addPluginObjectの登録を確�
     defer {
         for (resolved.fallback_names) |name| allocator.free(name);
         allocator.free(resolved.fallback_names);
+        if (resolved.candidate_plans.len > 0) allocator.free(resolved.candidate_plans);
         allocator.free(resolved.resolved_name);
     }
     try std.testing.expect(resolved.runtime_alignment);
     try std.testing.expectEqualStrings("pkg:b.mjs__外部命令", resolved.resolved_name);
     try std.testing.expectEqual(@as(usize, 1), resolved.fallback_names.len);
     try std.testing.expectEqualStrings("pkg:a.mjs__外部命令", resolved.fallback_names[0]);
+    // 後発の実登録が不確実で署名も異なるため、候補ごとの評価計画を持つ。
+    try std.testing.expectEqual(@as(usize, 2), resolved.candidate_plans.len);
+    try std.testing.expectEqualStrings("pkg:b.mjs__外部命令", resolved.candidate_plans[0].name);
+    try std.testing.expectEqualStrings("pkg:a.mjs__外部命令", resolved.candidate_plans[1].name);
+    try std.testing.expectEqualStrings("に", resolved.candidate_plans[0].signature.slots[0][0]);
+    try std.testing.expectEqualStrings("を", resolved.candidate_plans[1].signature.slots[0][0]);
 }
 
 test "bindsCallableExact はcatch-allや非関数exactを呼出し候補にしない" {
@@ -1810,4 +1907,38 @@ test "bindsWithFallbacks は先発catch-allで実行時メタデータ利用と�
         allocator.free(fixed_resolved.fallback_names);
     }
     try std.testing.expect(!fixed_resolved.runtime_alignment);
+}
+
+test "空のjosi表を持つ単一確実候補だけを解析時判定の対象にする" {
+    const allocator = std.testing.allocator;
+    // `josi: []` と式の`isVariableJosi`（Boolean(1)/Boolean(0)）の組合せ。
+    // 可変長の真偽は実行時にしか決まらないが、スロットが0個であることは
+    // 静的に確定しているため、単一確実候補として解析時に扱える。
+    const zero = [_]DynamicCommandAlias{
+        .{ .source_namespace = "外部命令", .dispatch_namespace = "pkg:a:zero.mjs__外部命令", .import_position = 5, .exact = true, .signature = .{ .slots = &.{}, .variable_known = false }, .signature_required = true },
+    };
+    const zero_resolved = (try bindsCallableExact(allocator, false, 0, &zero, "外部命令", 10)) orelse return error.TestUnexpectedResult;
+    defer {
+        allocator.free(zero_resolved.resolved_name);
+        allocator.free(zero_resolved.fallback_names);
+        if (zero_resolved.candidate_plans.len > 0) allocator.free(zero_resolved.candidate_plans);
+    }
+    try std.testing.expect(zero_resolved.runtime_alignment);
+    try std.testing.expect(zero_resolved.single_certain);
+    try std.testing.expectEqual(@as(usize, 0), zero_resolved.signature.?.slots.len);
+
+    // 実行時に登録され得る別候補が残る場合は単一確実候補にしない。
+    const competing = [_]DynamicCommandAlias{
+        .{ .source_namespace = "外部命令", .dispatch_namespace = "pkg:a:zero.mjs__外部命令", .import_position = 5, .exact = true, .signature = .{ .slots = &.{}, .variable_known = false }, .signature_required = true },
+        .{ .source_namespace = "外部命令", .dispatch_namespace = "pkg:a:ghost.mjs__外部命令", .import_position = 7, .exact = true, .signature = .{ .slots = &.{&.{"を"}}, .variable_known = false }, .signature_required = true, .registration_certain = false },
+    };
+    const competing_resolved = (try bindsCallableExact(allocator, false, 0, &competing, "外部命令", 10)) orelse return error.TestUnexpectedResult;
+    defer {
+        allocator.free(competing_resolved.resolved_name);
+        for (competing_resolved.fallback_names) |name| allocator.free(name);
+        allocator.free(competing_resolved.fallback_names);
+        if (competing_resolved.candidate_plans.len > 0) allocator.free(competing_resolved.candidate_plans);
+    }
+    try std.testing.expect(competing_resolved.runtime_alignment);
+    try std.testing.expect(!competing_resolved.single_certain);
 }

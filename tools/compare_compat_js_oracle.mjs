@@ -708,6 +708,11 @@ zerostaticmarker = { path = "packages/zerostaticmarker" }
 zeroruntimereal = { path = "packages/zeroruntimereal" }
 zeroruntimemarkerreal = { path = "packages/zeroruntimemarkerreal" }
 zeroruntimemarker = { path = "packages/zeroruntimemarker" }
+zerovariablereal = { path = "packages/zerovariablereal" }
+zerovariablemarkerreal = { path = "packages/zerovariablemarkerreal" }
+zerovariablemarker = { path = "packages/zerovariablemarker" }
+orderghost = { path = "packages/orderghost" }
+orderboth = { path = "packages/orderboth" }
 orderstatic = { path = "packages/orderstatic" }
 orderruntime = { path = "packages/orderruntime" }
 catchearly = { path = "packages/catchearly" }
@@ -755,10 +760,12 @@ path = "main.nako3"
       });
     };
     const unresolved = "『戻』文の直前に未解決の引数があります";
+    // 空の助詞表は解析時に拒否されるため、手前の式（表示x）を実行しない。
+    // 診断の有無だけでなく、stdoutが空であることも固定する。
     const expectDiagnostic = (label, result, text = unresolved) => {
-      if (result.status === 0 || !`${result.stderr ?? ""}`.includes(text)) {
+      if (result.status === 0 || !`${result.stderr ?? ""}`.includes(text) || (result.stdout ?? "") !== "") {
         failures += 1;
-        console.error(`Issue #297 第7回 ${label}: 診断を返しませんでした ${JSON.stringify(normalize(result))}`);
+        console.error(`Issue #297 第7回 ${label}: 解析診断を返しませんでした ${JSON.stringify(normalize(result))}`);
       }
     };
     const expectInterpreter = (label, entry, stdout) => {
@@ -772,7 +779,7 @@ path = "main.nako3"
       const result = runAot(entry, `review7-${label}`);
       if (result == null) return;
       const observed = result.build.status === 0 ? result.run : result.build;
-      if (observed.status === 0 || !(observed.stderr ?? "").includes(text)) {
+      if (observed.status === 0 || !(observed.stderr ?? "").includes(text) || (observed.stdout ?? "") !== "") {
         failures += 1;
         console.error(`Issue #297 第7回 ${label}(AOT): build=${JSON.stringify(normalize(result.build))} run=${JSON.stringify(normalize(result.run))}`);
       }
@@ -790,6 +797,8 @@ path = "main.nako3"
     for (const name of [
       "zerostaticreal", "zerostaticmarkerreal", "zerostaticmarker",
       "zeroruntimereal", "zeroruntimemarkerreal", "zeroruntimemarker",
+      "zerovariablereal", "zerovariablemarkerreal", "zerovariablemarker",
+      "orderghost", "orderboth",
       "orderstatic", "orderruntime", "catchearly", "catchcontrol",
     ]) {
       write(`packages/${name}/nako.toml`, packageManifest(name));
@@ -810,6 +819,9 @@ path = "main.nako3"
     for (const variant of [
       { base: "zerostatic", label: "空助詞表(静的)", extra: "" },
       { base: "zeroruntime", label: "空助詞表(実行時)", extra: ", isVariableJosi: Boolean(0)" },
+      // `isVariableJosi`が式でも、空の`josi`表は0スロットとして静的に
+      // 確定している。可変長の真偽に依存せず解析時に拒否する。
+      { base: "zerovariable", label: "空助詞表(可変真)", extra: ", isVariableJosi: Boolean(1)" },
     ]) {
       for (const item of zeroCases) {
         const name = `${variant.base}${item.tail}`;
@@ -842,6 +854,85 @@ path = "main.nako3"
           }
         }
       }
+    }
+
+    // (1b) 助詞順の異なる二候補が並ぶ実登録フォールバック。後発が未登録なら
+    // 先発の [["から"],["を"]] 計画、両方が実登録された`pkg:`なら後発の
+    // [["を"],["から"]] 計画で評価する。式は選ばれた経路で一度だけ評価し、
+    // 先に評価する式が例外なら後続の式を実行しない。
+    const orderPackageMain = `!「./plugin.mjs」を取り込む。
+!「./b.mjs」を取り込む。
+●甲とは
+ 「a」と表示。
+ 3を戻す。
+ここまで
+●乙とは
+ 「b」と表示。
+ 10を戻す。
+ここまで
+●例外甲とは
+ 「a」と表示。
+ 「失敗A」のエラー発生
+ここまで
+●例外乙とは
+ 「b」と表示。
+ 「失敗B」のエラー発生
+ここまで
+●試験とは
+甲()を乙()から外部命令で戻る。
+ここまで
+●例外試験甲とは
+例外甲()を乙()から外部命令で戻る。
+ここまで
+●例外試験乙とは
+例外甲()を例外乙()から外部命令で戻る。
+ここまで
+●例外試験後とは
+乙()を例外甲()から外部命令で戻る。
+ここまで
+`;
+    const orderEarlier = 'export default { 外部命令: { type: "func", josi: [["から"],["を"]], fn: (a, b) => a - b } };\n';
+    const orderGhost = `export default {};
+function 未使用() { navigator.nako3.addPluginObject("b", { 外部命令: { type: "func", josi: [["を"],["から"]], fn: (b, a) => a - b + 100 } }); }
+`;
+    const orderLater = 'export default { 外部命令: { type: "func", josi: [["を"],["から"]], fn: (b, a) => a - b + 100 } };\n';
+    for (const variant of [
+      { id: "orderghost", label: "後発未登録", later: orderGhost },
+      { id: "orderboth", label: "両方実登録", later: orderLater },
+    ]) {
+      write(`packages/${variant.id}/main.nako3`, orderPackageMain);
+      write(`packages/${variant.id}/plugin.mjs`, orderEarlier);
+      write(`packages/${variant.id}/b.mjs`, variant.later);
+    }
+    write("review7-orderghost-value.nako3", "!「pkg:orderghost」を取り込む。\norderghost__試験()を表示。\n");
+    write("review7-orderboth-value.nako3", "!「pkg:orderboth」を取り込む。\norderboth__試験()を表示。\n");
+    const writeOrderError = (file, pkg, name) => write(file,
+      `!「pkg:${pkg}」を取り込む。\nエラー監視\n${pkg}__${name}()を表示。\nエラーならば\n「捕捉:{エラーメッセージ}」を表示。\nここまで\n`);
+    writeOrderError("review7-orderghost-exc-a.nako3", "orderghost", "例外試験甲");
+    writeOrderError("review7-orderghost-exc-b.nako3", "orderghost", "例外試験乙");
+    writeOrderError("review7-orderboth-exc-a.nako3", "orderboth", "例外試験甲");
+    writeOrderError("review7-orderboth-exc-after.nako3", "orderboth", "例外試験後");
+    expectInterpreter("後発未登録-評価順", "review7-orderghost-value.nako3", "b\na\n7\n");
+    expectAot("後発未登録-評価順", "review7-orderghost-value.nako3", "b\na\n7\n");
+    expectInterpreter("後発未登録-先発例外", "review7-orderghost-exc-a.nako3", "b\na\n捕捉:失敗A\n");
+    expectAot("後発未登録-先発例外", "review7-orderghost-exc-a.nako3", "b\na\n捕捉:失敗A\n");
+    expectInterpreter("後発未登録-後発例外", "review7-orderghost-exc-b.nako3", "b\n捕捉:失敗B\n");
+    expectAot("後発未登録-後発例外", "review7-orderghost-exc-b.nako3", "b\n捕捉:失敗B\n");
+    expectInterpreter("両方実登録-評価順", "review7-orderboth-value.nako3", "a\nb\n107\n");
+    expectAot("両方実登録-評価順", "review7-orderboth-value.nako3", "a\nb\n107\n");
+    expectInterpreter("両方実登録-先発例外", "review7-orderboth-exc-a.nako3", "a\n捕捉:失敗A\n");
+    expectAot("両方実登録-先発例外", "review7-orderboth-exc-a.nako3", "a\n捕捉:失敗A\n");
+    expectInterpreter("両方実登録-後発例外", "review7-orderboth-exc-after.nako3", "b\na\n捕捉:失敗A\n");
+    expectAot("両方実登録-後発例外", "review7-orderboth-exc-after.nako3", "b\na\n捕捉:失敗A\n");
+    const officialOrderGhost = official({ "plugin.mjs": orderEarlier, "b.mjs": orderGhost }, `${orderPackageMain}試験()を表示。\n`);
+    if (officialOrderGhost.status !== 0 || normalize(officialOrderGhost).stdout !== "b\na\n7\n") {
+      failures += 1;
+      console.error(`Issue #297 第7回 後発未登録の公式直接ESM: ${JSON.stringify(normalize(officialOrderGhost))}`);
+    }
+    const officialOrderGhostException = official({ "plugin.mjs": orderEarlier, "b.mjs": orderGhost }, `${orderPackageMain}エラー監視\n例外試験乙()を表示。\nエラーならば\n「捕捉:{エラーメッセージ}」を表示。\nここまで\n`);
+    if (officialOrderGhostException.status !== 0 || normalize(officialOrderGhostException).stdout !== "b\n捕捉:失敗B\n") {
+      failures += 1;
+      console.error(`Issue #297 第7回 後発未登録の公式例外: ${JSON.stringify(normalize(officialOrderGhostException))}`);
     }
 
     // (2) 実行時の候補が決まった助詞スロット順に式を一度だけ評価する。

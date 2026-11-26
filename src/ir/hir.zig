@@ -53,6 +53,12 @@ pub const Kind = enum {
     performance_monitor,
 };
 
+/// 実行時に選択され得る動的plugin候補の登録名と助詞シグネチャ。
+pub const CandidatePlan = struct {
+    name: []const u8,
+    signature: semantic.dynamic_commands.JosiSignature,
+};
+
 pub const Node = struct {
     id: NodeId,
     kind: Kind,
@@ -83,6 +89,9 @@ pub const Node = struct {
     argument_implicit: []const bool = &.{},
     /// 動的plugin呼出しで主配送先が未登録だった場合に試すフォールバック候補名。
     fallback_names: []const []const u8 = &.{},
+    /// 実登録の選択前に評価順を固定できない呼出しの、候補ごとの助詞計画。
+    /// 主候補が先頭で、`fallback_names`と同じ順に並ぶ。
+    candidate_plans: []const CandidatePlan = &.{},
     /// DNCL互換の配列要素代入で、未初期化変数へ30要素の0配列を自動初期化する。
     check_array_init: bool = false,
     /// 代入系ノードの対象名が意味解析でローカルシンボルへ解決された場合に真。
@@ -441,6 +450,10 @@ const Lowerer = struct {
             .function_call, .word, .function_pointer => try self.bindingFallbackNames(node),
             else => &.{},
         };
+        result.candidate_plans = switch (node.kind) {
+            .function_call, .word => try self.bindingCandidatePlans(node),
+            else => &.{},
+        };
         result.runtime_argument_alignment = runtime_arguments;
         if (runtime_arguments) {
             const josi = try self.allocator.alloc([]const u8, node.children.len);
@@ -515,6 +528,22 @@ const Lowerer = struct {
             for (binding.fallback_names, copies) |item, *slot| slot.* = try self.allocator.dupe(u8, item);
             return copies;
         };
+        return &.{};
+    }
+
+    /// 意味解析が保持する候補ごとの助詞計画をHIRの生存期間へ複製する。
+    fn bindingCandidatePlans(self: *Lowerer, node: *ast.Node) ![]const CandidatePlan {
+        for (self.semantic_program.bindings) |binding| {
+            if (binding.node != node or binding.candidate_plans.len == 0) continue;
+            const plans = try self.allocator.alloc(CandidatePlan, binding.candidate_plans.len);
+            for (binding.candidate_plans, plans) |source, *target| {
+                target.* = .{
+                    .name = try self.allocator.dupe(u8, source.name),
+                    .signature = try semantic.dynamic_commands.cloneSignature(self.allocator, source.signature),
+                };
+            }
+            return plans;
+        }
         return &.{};
     }
 

@@ -1551,3 +1551,198 @@ test "package内の静的抽出が実登録を保証しない場合と依存ESM�
         try testing.expectEqualStrings(case.expected, host.written());
     }
 }
+
+/// パッケージentryをcompileしてInterpreterで実行し、出力をhostへ書く。
+/// 第7回追加テストの各ケースで同じcompile/run設定を共有する。
+fn runPackageEntry(
+    gpa: std.mem.Allocator,
+    io: std.Io,
+    temporary: anytype,
+    app_root: []const u8,
+    package_resolver: anytype,
+    source_name: []const u8,
+    source: []const u8,
+    host: *lnako.runtime.interpreter.BufferHost,
+) !void {
+    const sub_path = try std.fmt.allocPrint(gpa, "{s}.nako3", .{source_name});
+    defer gpa.free(sub_path);
+    try temporary.dir.writeFile(io, .{ .sub_path = sub_path, .data = source });
+    const path = try std.fs.path.join(gpa, &.{ app_root, sub_path });
+    defer gpa.free(path);
+    var stderr: std.Io.Writer.Allocating = .init(gpa);
+    defer stderr.deinit();
+    var program = (try compile_pipeline.compileInput(gpa, io, path, .{
+        .compat_js = true,
+        .package_resolver = package_resolver,
+    }, &stderr.writer)) orelse return error.UnexpectedCompileFailure;
+    defer program.deinit();
+    var runtime = lnako.runtime.value.Runtime.init(gpa);
+    defer runtime.deinit();
+    var interpreter = lnako.runtime.interpreter.Interpreter.init(gpa, &runtime, program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+}
+
+test "Issue #297 第7回追加: 実登録候補ごとの評価順と空josi表の解析時拒否" {
+    if (!lnako.compat.quickjs.available()) return error.SkipZigTest;
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var temporary = test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+
+    const order_main =
+        \\!「./a.mjs」を取り込む。
+        \\!「./b.mjs」を取り込む。
+        \\●甲とは
+        \\ 「a」と表示。
+        \\ 3を戻す。
+        \\ここまで
+        \\●乙とは
+        \\ 「b」と表示。
+        \\ 10を戻す。
+        \\ここまで
+        \\●例外甲とは
+        \\ 「a」と表示。
+        \\ 「失敗A」のエラー発生
+        \\ここまで
+        \\●例外乙とは
+        \\ 「b」と表示。
+        \\ 「失敗B」のエラー発生
+        \\ここまで
+        \\●試験とは
+        \\甲()を乙()から外部命令で戻る。
+        \\ここまで
+        \\●例外試験甲とは
+        \\例外甲()を乙()から外部命令で戻る。
+        \\ここまで
+        \\●例外試験乙とは
+        \\例外甲()を例外乙()から外部命令で戻る。
+        \\ここまで
+        \\
+    ;
+    const earlier_plugin =
+        \\export default { 外部命令: { type: "func", josi: [["から"],["を"]], fn: (a, b) => Number(a) - Number(b) } };
+        \\
+    ;
+    // 後発の登録が呼ばれない関数内にあり、実登録では先発の計画だけが使われる。
+    const ghost_plugin =
+        \\export default {};
+        \\function 未使用() {
+        \\  navigator.nako3.addPluginObject("b", {
+        \\    外部命令: { type: "func", josi: [["を"],["から"]], fn: (b, a) => Number(a) - Number(b) + 100 }
+        \\  });
+        \\}
+        \\
+    ;
+    // 後発が実登録される場合は後発の計画 [["を"],["から"]] が使われる。
+    const later_plugin = "export default { 外部命令: { type: \"func\", josi: [[\"を\"],[\"から\"]], fn: (b, a) => Number(a) - Number(b) + 100 } };\n";
+
+    try temporary.dir.createDirPath(io, "packages/ghostorder");
+    try temporary.dir.writeFile(io, .{ .sub_path = "packages/ghostorder/main.nako3", .data = order_main });
+    try temporary.dir.writeFile(io, .{ .sub_path = "packages/ghostorder/a.mjs", .data = earlier_plugin });
+    try temporary.dir.writeFile(io, .{ .sub_path = "packages/ghostorder/b.mjs", .data = ghost_plugin });
+
+    try temporary.dir.createDirPath(io, "packages/bothorder");
+    try temporary.dir.writeFile(io, .{ .sub_path = "packages/bothorder/main.nako3", .data = order_main });
+    try temporary.dir.writeFile(io, .{ .sub_path = "packages/bothorder/a.mjs", .data = earlier_plugin });
+    try temporary.dir.writeFile(io, .{ .sub_path = "packages/bothorder/b.mjs", .data = later_plugin });
+
+    // 空の`josi`表は、式の`isVariableJosi`（Boolean(0)/Boolean(1)）に
+    // 依存せず、単一の確実な候補なら解析時に実引数を拒否する。
+    const zero_body = "!「./plugin.mjs」を取り込む。\n●試験とは\n 「x」と表示して3を外部命令で戻る。\nここまで\n";
+    const zero_marker = "!「./plugin.mjs」を取り込む。\n●試験とは\n 「x」と表示して外部命令で戻る。\nここまで\n";
+    const zero_variants = [_]struct { name: []const u8, main: []const u8, plugin: []const u8, reject: bool }{
+        .{ .name = "zerostatic", .main = zero_body, .plugin = "export default { 外部命令: { type: \"func\", josi: [], fn: (...args) => args.length } };\n", .reject = true },
+        .{ .name = "zerovar0", .main = zero_body, .plugin = "export default { 外部命令: { type: \"func\", josi: [], fn: (...args) => args.length, isVariableJosi: Boolean(0) } };\n", .reject = true },
+        .{ .name = "zerovar1", .main = zero_body, .plugin = "export default { 外部命令: { type: \"func\", josi: [], fn: (...args) => args.length, isVariableJosi: Boolean(1) } };\n", .reject = true },
+        .{ .name = "zeromarker", .main = zero_marker, .plugin = "export default { 外部命令: { type: \"func\", josi: [], fn: (...args) => args.length, isVariableJosi: Boolean(1) } };\n", .reject = false },
+    };
+    for (zero_variants) |variant| {
+        const dir_sub = try std.fmt.allocPrint(gpa, "packages/{s}", .{variant.name});
+        defer gpa.free(dir_sub);
+        try temporary.dir.createDirPath(io, dir_sub);
+        const main_sub = try std.fmt.allocPrint(gpa, "packages/{s}/main.nako3", .{variant.name});
+        defer gpa.free(main_sub);
+        const plugin_sub = try std.fmt.allocPrint(gpa, "packages/{s}/plugin.mjs", .{variant.name});
+        defer gpa.free(plugin_sub);
+        try temporary.dir.writeFile(io, .{ .sub_path = main_sub, .data = variant.main });
+        try temporary.dir.writeFile(io, .{ .sub_path = plugin_sub, .data = variant.plugin });
+    }
+
+    const app_root = try temporary.dir.realPathFileAlloc(io, ".", gpa);
+    defer gpa.free(app_root);
+    const Resolver = struct {
+        root: []const u8,
+        fn resolve(context: *anyopaque, allocator: std.mem.Allocator, _: []const u8, _: ?[]const u8, specifier: []const u8) !lnako.semantic.module_graph.ResolvedPackageImport {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            const names = [_][]const u8{ "ghostorder", "bothorder", "zerostatic", "zerovar0", "zerovar1", "zeromarker" };
+            inline for (names) |name| {
+                if (std.mem.eql(u8, specifier, "pkg:" ++ name)) {
+                    return .{
+                        .path = try std.fs.path.join(allocator, &.{ self.root, "packages", name, "main.nako3" }),
+                        .canonical_id = try allocator.dupe(u8, "pkg:" ++ name ++ "/main"),
+                        .namespace = name,
+                        .package_owner = try allocator.dupe(u8, "pkg:" ++ name),
+                        .package_root = try std.fs.path.join(allocator, &.{ self.root, "packages", name }),
+                    };
+                }
+            }
+            return error.PackageNotFound;
+        }
+    };
+    var resolver = Resolver{ .root = app_root };
+
+    const resolver_option: lnako.semantic.module_graph.PackageResolver = .{ .context = &resolver, .resolveFn = Resolver.resolve };
+
+    var host = lnako.runtime.interpreter.BufferHost{ .allocator = gpa };
+    defer host.deinit();
+    try runPackageEntry(gpa, io, &temporary, app_root, resolver_option, "ghost-value", "!「pkg:ghostorder」を取り込む。\nghostorder__試験()を表示。\n", &host);
+    try testing.expectEqualStrings("b\na\n7\n", host.written());
+    host.output.clearRetainingCapacity();
+    try runPackageEntry(gpa, io, &temporary, app_root, resolver_option, "ghost-first", "!「pkg:ghostorder」を取り込む。\nエラー監視\nghostorder__例外試験甲()を表示。\nエラーならば\n「捕捉:{エラーメッセージ}」を表示。\nここまで\n", &host);
+    try testing.expectEqualStrings("b\na\n捕捉:失敗A\n", host.written());
+    host.output.clearRetainingCapacity();
+    try runPackageEntry(gpa, io, &temporary, app_root, resolver_option, "ghost-second", "!「pkg:ghostorder」を取り込む。\nエラー監視\nghostorder__例外試験乙()を表示。\nエラーならば\n「捕捉:{エラーメッセージ}」を表示。\nここまで\n", &host);
+    try testing.expectEqualStrings("b\n捕捉:失敗B\n", host.written());
+    host.output.clearRetainingCapacity();
+
+    try runPackageEntry(gpa, io, &temporary, app_root, resolver_option, "both-value", "!「pkg:bothorder」を取り込む。\nbothorder__試験()を表示。\n", &host);
+    try testing.expectEqualStrings("a\nb\n107\n", host.written());
+    host.output.clearRetainingCapacity();
+    try runPackageEntry(gpa, io, &temporary, app_root, resolver_option, "both-first", "!「pkg:bothorder」を取り込む。\nエラー監視\nbothorder__例外試験甲()を表示。\nエラーならば\n「捕捉:{エラーメッセージ}」を表示。\nここまで\n", &host);
+    try testing.expectEqualStrings("a\n捕捉:失敗A\n", host.written());
+    host.output.clearRetainingCapacity();
+
+    for (zero_variants) |variant| {
+        const zero_source = try std.fmt.allocPrint(gpa, "!「pkg:{s}」を取り込む。\n{s}__試験()を表示。\n", .{ variant.name, variant.name });
+        defer gpa.free(zero_source);
+        const sub_path = try std.fmt.allocPrint(gpa, "zero-{s}.nako3", .{variant.name});
+        defer gpa.free(sub_path);
+        try temporary.dir.writeFile(io, .{ .sub_path = sub_path, .data = zero_source });
+        const path = try std.fs.path.join(gpa, &.{ app_root, sub_path });
+        defer gpa.free(path);
+        var stderr: std.Io.Writer.Allocating = .init(gpa);
+        defer stderr.deinit();
+        const program = try compile_pipeline.compileInput(gpa, io, path, .{
+            .compat_js = true,
+            .package_resolver = .{ .context = &resolver, .resolveFn = Resolver.resolve },
+        }, &stderr.writer);
+        if (variant.reject) {
+            try testing.expect(program == null);
+            try testing.expect(std.mem.indexOf(u8, stderr.written(), "『戻』文の直前に未解決の引数があります") != null);
+        } else {
+            var compiled = program orelse return error.UnexpectedCompileFailure;
+            defer compiled.deinit();
+            var runtime = lnako.runtime.value.Runtime.init(gpa);
+            defer runtime.deinit();
+            var marker_host = lnako.runtime.interpreter.BufferHost{ .allocator = gpa };
+            defer marker_host.deinit();
+            var interpreter = lnako.runtime.interpreter.Interpreter.init(gpa, &runtime, compiled, marker_host.host());
+            defer interpreter.deinit();
+            _ = try interpreter.run();
+            // 連文マーカー単独は実引数として数えず、既存の別制約のまま
+            // ダミー値を渡さない（先頭の表示だけを固定する）。
+            try testing.expect(std.mem.startsWith(u8, marker_host.written(), "x\n"));
+        }
+    }
+}

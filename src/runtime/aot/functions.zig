@@ -386,6 +386,20 @@ pub export fn lnako_aot_plugin_fallback_call_josi(
     success = runtime.failure_epoch == start_epoch;
 }
 
+/// 1候補のplugin命令が実行時に登録済みかを返す。候補ごとの評価順を
+/// 実登録の確認前に固定しないloweringが、計画選択の分岐条件に使う。
+pub export fn lnako_aot_plugin_registered(
+    candidates: ?[*]const state.PluginCandidate,
+    candidate_count: usize,
+    default_is_esm: bool,
+) callconv(.c) i32 {
+    const runtime = if (state.active_runtime) |*active| active else return 0;
+    const candidate_slice = if (candidates) |pointer| pointer[0..candidate_count] else return 0;
+    if (candidate_slice.len == 0) return 0;
+    const resolved = state.resolvePluginFallback(runtime, candidate_slice, default_is_esm) catch return 0;
+    return if (resolved.found) 1 else 0;
+}
+
 pub export fn lnako_aot_function_new(out: *state.Value, callback: state.FunctionCallback, arity: usize, captures: ?[*]const state.Value, capture_count: usize) callconv(.c) void {
     out.* = .{};
     const runtime = if (state.active_runtime) |*value| value else return;
