@@ -1,3 +1,4 @@
+import { mkdirSync, writeFileSync, existsSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -157,6 +158,181 @@ try {
   if (invalidEmit.status !== 2 || invalidEmit.error != null || !(invalidEmit.stderr ?? "").includes("--emit exeだけ")) {
     failures += 1;
     console.error(`QuickJS互換の不正emitを拒否しませんでした: ${JSON.stringify(normalize(invalidEmit))}`);
+  }
+
+  // Issue #297: ローカルパス依存パッケージ内のESM plugin命令を、戻り値の
+  // 助詞呼出し（`3を外部倍算で戻る`）としてInterpreterとAOTの双方で実行する。
+  // 公式cnako3は`pkg:`ローカルパス依存を持たないlnako独自機能のため、この
+  // ブロックは公式fixtures・公式比較へ混入させず、一時プロジェクトで
+  // Interpreter/AOTの実行結果と拒否診断だけを検証する。
+  {
+    const packageRoot = resolve(temporary, "package-calls-297");
+    const app = resolve(packageRoot, "app");
+    const reject = resolve(packageRoot, "reject");
+    const sandboxHome = resolve(packageRoot, "home");
+    mkdirSync(resolve(app, "packages/owned"), { recursive: true });
+    mkdirSync(resolve(reject, "packages/badpkg"), { recursive: true });
+    mkdirSync(sandboxHome, { recursive: true });
+
+    const manifest = `[package]
+name = "package-calls-297"
+version = "0.1.0"
+license = "MIT"
+
+[profiles.compat]
+runtime = "lnako"
+os = "linux"
+cpu = "x86_64"
+abi = "gnu"
+compat-js = true
+
+[dependencies.path]
+owned = { path = "packages/owned" }
+`;
+    const rejectManifest = manifest.replace('owned = { path = "packages/owned" }', 'badpkg = { path = "packages/badpkg" }');
+    const ownedManifest = `[package]
+name = "owned"
+version = "1.0.0"
+license = "MIT"
+
+[[exports]]
+name = "main"
+path = "main.nako3"
+`;
+    const plugin = `export default {
+  外部倍算: { type: "func", josi: [["を"]], fn: (value) => Number(value) * 2 },
+  外部定数: { type: "const", value: 8 },
+};
+`;
+    const ownedMain = `!「./plugin.mjs」を取り込む。
+●試験とは
+  3を外部倍算で戻る。
+ここまで
+●C風とは
+  外部倍算(3)を戻る。
+ここまで
+●定数値とは
+  「x」と表示して外部定数を戻る。
+ここまで
+`;
+    const main = `!「pkg:owned」を取り込む
+●束縛値とは
+  N=5
+  Nで戻る。
+ここまで
+●改行値とは
+  改行で戻る。
+ここまで
+owned__試験()を表示
+owned__C風()を表示
+owned__定数値()を表示
+束縛値()を表示
+改行値()を表示
+`;
+    const badManifest = `[package]
+name = "badpkg"
+version = "1.0.0"
+license = "MIT"
+
+[[exports]]
+name = "main"
+path = "main.nako3"
+`;
+    const badMain = `!「./plugin.mjs」を取り込む。
+●定数呼出とは
+  3を外部定数で戻る。
+ここまで
+`;
+    const rejectMain = `!「pkg:badpkg」を取り込む
+badpkg__定数呼出()を表示
+`;
+
+    writeFileSync(resolve(app, "nako.toml"), manifest);
+    writeFileSync(resolve(app, "main.nako3"), main);
+    writeFileSync(resolve(app, "packages/owned/nako.toml"), ownedManifest);
+    writeFileSync(resolve(app, "packages/owned/main.nako3"), ownedMain);
+    writeFileSync(resolve(app, "packages/owned/plugin.mjs"), plugin);
+    writeFileSync(resolve(reject, "nako.toml"), rejectManifest);
+    writeFileSync(resolve(reject, "main.nako3"), rejectMain);
+    writeFileSync(resolve(reject, "packages/badpkg/nako.toml"), badManifest);
+    writeFileSync(resolve(reject, "packages/badpkg/main.nako3"), badMain);
+    writeFileSync(resolve(reject, "packages/badpkg/plugin.mjs"), "export default { 外部定数: { type: 'const', value: 8 } };\n");
+
+    const sandboxOptions = (cwd) => ({
+      ...options,
+      cwd,
+      env: {
+        ...options.env,
+        HOME: sandboxHome,
+        LOCALAPPDATA: sandboxHome,
+        XDG_CACHE_HOME: resolve(sandboxHome, "cache"),
+      },
+    });
+    const expectedPackageStdout = "6\n6\nx\n8\n5\n\n\n";
+    const packageInterpreter = spawnSync(
+      executable,
+      ["run", "main.nako3", "--compat-js", "--profile", "compat", "--offline"],
+      sandboxOptions(app),
+    );
+    if (packageInterpreter.status !== 0 || normalize(packageInterpreter).stdout !== expectedPackageStdout) {
+      failures += 1;
+      console.error(
+        `Issue #297 パッケージ戻り値候補のInterpreter実行差分: ${JSON.stringify(normalize(packageInterpreter))}`,
+      );
+      if (packageInterpreter.stderr) console.error(`Interpreter stderr:\n${packageInterpreter.stderr}`);
+    }
+
+    // Windowsのcompat AOTリンクは既存の未対応境界のため、AOT実行は他OSで固定する。
+    if (process.platform !== "win32") {
+      const packageBinary = resolve(packageRoot, `package-calls-297${executableSuffix}`);
+      const packageBuild = spawnSync(
+        executable,
+        ["build", "main.nako3", "--compat-js", "--backend", "aot", "--profile", "compat", "--offline", "-o", packageBinary, "-O0"],
+        sandboxOptions(app),
+      );
+      const packageAot = packageBuild.status === 0 ? spawnSync(packageBinary, [], sandboxOptions(app)) : packageBuild;
+      if (
+        packageBuild.status !== 0 ||
+        packageAot.status !== 0 ||
+        normalize(packageAot).stdout !== expectedPackageStdout
+      ) {
+        failures += 1;
+        console.error(
+          `Issue #297 パッケージ戻り値候補のAOT実行差分: build=${JSON.stringify(normalize(packageBuild))} aot=${JSON.stringify(normalize(packageAot))}`,
+        );
+        if (packageBuild.stderr) console.error(`AOT build stderr:\n${packageBuild.stderr}`);
+      }
+    }
+
+    const rejectInterpreter = spawnSync(
+      executable,
+      ["run", "main.nako3", "--compat-js", "--profile", "compat", "--offline"],
+      sandboxOptions(reject),
+    );
+    const rejectDiagnostic = "『戻』文の直前に未解決の引数があります";
+    if (rejectInterpreter.status === 0 || !(rejectInterpreter.stderr ?? "").includes(rejectDiagnostic)) {
+      failures += 1;
+      console.error(
+        `Issue #297 パッケージ定数への保留引数をInterpreterが拒否しませんでした: ${JSON.stringify(normalize(rejectInterpreter))}`,
+      );
+    }
+    if (process.platform !== "win32") {
+      const rejectBinary = resolve(packageRoot, `package-calls-297-reject${executableSuffix}`);
+      const rejectBuild = spawnSync(
+        executable,
+        ["build", "main.nako3", "--compat-js", "--backend", "aot", "--profile", "compat", "--offline", "-o", rejectBinary, "-O0"],
+        sandboxOptions(reject),
+      );
+      if (rejectBuild.status === 0 || !(rejectBuild.stderr ?? "").includes(rejectDiagnostic) || existsSync(rejectBinary)) {
+        failures += 1;
+        console.error(
+          `Issue #297 パッケージ定数への保留引数をAOTが拒否しませんでした: ${JSON.stringify(normalize(rejectBuild))}`,
+        );
+      }
+    }
+    if (failures === 0) {
+      console.log("Issue #297 パッケージ戻り値候補: Interpreter/AOTの関数呼出しと定数の保留引数拒否が一致");
+    }
   }
 
   if (failures > 0) throw new Error(`QuickJS互換モードの公式差分が${failures}件あります`);

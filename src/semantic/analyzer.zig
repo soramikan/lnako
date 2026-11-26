@@ -771,16 +771,18 @@ pub const Analyzer = struct {
     /// ないため診断しない（`「x」と表示してVで戻る`は従来どおり成功）。
     fn rejectPendingReturnArguments(self: *Analyzer, node: *ast.Node, module_index: u32) !bool {
         if (node.kind != .word or !node.pending_return_arguments) return false;
-        var has_real_argument = false;
-        for (node.children) |child| {
-            if (!child.is_implicit_it) {
-                has_real_argument = true;
-                break;
-            }
-        }
-        if (!has_real_argument) return false;
+        if (!hasRealPendingArguments(node)) return false;
         try self.addDiagnostic(.unresolved_word, node.span, self.modules.items[module_index].path, "『戻』文の直前に未解決の引数があります。『(式)を戻す』のように式をカッコで括ってください。");
         return true;
+    }
+
+    /// 戻り値候補が保持する実引数を持つか。連文が挿入した暗黙の『それ』は
+    /// 実引数ではないため数えない。
+    fn hasRealPendingArguments(node: *ast.Node) bool {
+        for (node.children) |child| {
+            if (!child.is_implicit_it) return true;
+        }
+        return false;
     }
 
     /// 組み込み名が実命令として呼出せるか。`改行`・`それ`・`母艦パス`のような
@@ -907,13 +909,39 @@ pub const Analyzer = struct {
             return;
         }
         // 静的に読み取れる動的命令（package/ESM pluginのalias）は、`.word`
-        // の戻り値候補でも実引数付き呼出しとして従来どおり束縛する。任意名を
-        // 受理するcatch-allは読み取れた命令ではないため候補にしない。
+        // の戻り値候補でも束縛する。実引数がある候補は、関数と確認できる
+        // 完全一致aliasだけを呼出しとして受理し、任意名を受理するcatch-allや
+        // 非関数entryでは実引数を消費しない。
+        // 実引数を持たない`.word`がESM pluginの定数entryと完全一致するなら、
+        // 従来どおり値として読む（dispatch名のグローバルへ束縛する）。関数
+        // entryやcatch-allは値参照として消費しない。
+        const value_word_candidate = node.kind == .word and !callable and !node.pending_return_arguments;
+        if (value_word_candidate) {
+            const module_input = self.inputs[module_index];
+            if (try dynamic_commands.bindsValueExact(self.allocator, module_input.allows_dynamic_commands, module_input.allows_dynamic_commands_from, module_input.dynamic_command_aliases, name, node.span.start)) |resolution| {
+                try self.bind(node, .builtin, name, resolution.resolved_name, null);
+                const binding = &self.bindings.items[self.bindings.items.len - 1];
+                binding.dynamic_builtin = true;
+                binding.fallback_names = resolution.fallback_names;
+                return;
+            }
+        }
         const pending_word_candidate = node.kind == .word and node.pending_return_arguments;
         if (callable or pending_word_candidate) {
             const module_input = self.inputs[module_index];
             const allow_dynamic_commands = module_input.allows_dynamic_commands and !pending_word_candidate;
-            if (try dynamic_commands.bindsWithFallbacks(self.allocator, allow_dynamic_commands, module_input.allows_dynamic_commands_from, module_input.dynamic_command_aliases, name, node.span.start)) |resolution| {
+            // 実引数を持つ戻り値候補は、静的に呼出し可能と確認できる完全一致
+            // aliasだけを呼出しとして消費する。catch-allやESMの`type: "const"`は
+            // 呼出し先を確定できないため、ここでは束縛せず未解決引数の診断へ戻す。
+            if (pending_word_candidate and hasRealPendingArguments(node)) {
+                if (try dynamic_commands.bindsCallableExact(self.allocator, allow_dynamic_commands, module_input.allows_dynamic_commands_from, module_input.dynamic_command_aliases, name, node.span.start)) |resolution| {
+                    try self.bind(node, .builtin, name, resolution.resolved_name, null);
+                    const binding = &self.bindings.items[self.bindings.items.len - 1];
+                    binding.dynamic_builtin = true;
+                    binding.fallback_names = resolution.fallback_names;
+                    return;
+                }
+            } else if (try dynamic_commands.bindsWithFallbacks(self.allocator, allow_dynamic_commands, module_input.allows_dynamic_commands_from, module_input.dynamic_command_aliases, name, node.span.start)) |resolution| {
                 try self.bind(node, .builtin, name, resolution.resolved_name, null);
                 const binding = &self.bindings.items[self.bindings.items.len - 1];
                 binding.dynamic_builtin = true;
