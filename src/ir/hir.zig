@@ -342,7 +342,13 @@ const Lowerer = struct {
             for (plan.operands, 0..) |operand, index| {
                 child_ids[index] = switch (operand) {
                     .provided => |argument| try self.lowerNode(node.children[argument], module_index),
-                    .implicit_it => try self.implicitItNode(node.span),
+                    // 連文が積んだ実在の『それ』マーカーがあれば、その束縛を
+                    // 再利用する（公式の省略引数は関数ローカルの『それ』）。
+                    // マーカーが無い場合だけ新しい読み出しを作る。
+                    .implicit_it => if (self.chainImplicitIt(node)) |marker|
+                        try self.lowerNode(marker, module_index)
+                    else
+                        try self.implicitItNode(node.span),
                 };
             }
         } else {
@@ -477,16 +483,25 @@ const Lowerer = struct {
         return &.{};
     }
 
-    /// 動的命令へ束縛された戻り値候補を、実引数付きの呼出しとしてlowering
-    /// するか。意味解析は非関数entryやcatch-allをここへ束縛しないため、
-    /// 実引数がある候補だけを呼出しにすれば値を読む経路へ落ちない。
+    /// 動的命令へ束縛された戻り値候補を、呼出しとしてloweringするか。
+    /// 意味解析がESMの静的な助詞シグネチャを確定した候補は、実引数が
+    /// 省略されていても`それ`補完の呼出しにする。シグネチャを持たない
+    /// 候補は、native pluginの実行時登録名など呼出し可能と確認済みの
+    /// aliasに限られるため、従来どおり実引数がある場合だけ呼び出す。
     fn pendingDynamicCall(self: Lowerer, node: *ast.Node) bool {
         if (node.kind != .word or !node.pending_return_arguments) return false;
         if (!self.bindingIsDynamicBuiltin(node)) return false;
+        if (self.dynamicSignature(node) != null) return true;
         for (node.children) |child| {
             if (!child.is_implicit_it) return true;
         }
         return false;
+    }
+
+    /// このノードへ意味解析が付けたESM pluginの助詞シグネチャを返す。
+    fn dynamicSignature(self: Lowerer, node: *ast.Node) ?semantic.dynamic_commands.JosiSignature {
+        for (self.semantic_program.bindings) |binding| if (binding.node == node) return binding.signature;
+        return null;
     }
 
     /// 組み込み命令へ束縛された`.word`ノードを暗黙呼出しにするか判定する。
@@ -533,6 +548,14 @@ const Lowerer = struct {
                     const slots = try argument_completion.builtinSlots(self.allocator, spec);
                     return argument_completion.plan(self.allocator, slots, node.children, spec.is_variable);
                 }
+                if (self.dynamicSignature(node)) |signature| {
+                    // ESM pluginの宣言助詞へ実引数を割り当て、連文の暗黙
+                    // マーカーは実引数に数えない。スロットが無い関数は引数を
+                    // 取らないため、空の呼出し計画を返す。
+                    if (signature.slots.len == 0) return .{ .operands = &.{}, .provided = 0, .missing = 0 };
+                    const slots = try semantic.dynamic_commands.signatureSlots(self.allocator, signature);
+                    return argument_completion.plan(self.allocator, slots, node.children, signature.variable_final);
+                }
                 const symbol = self.callableSymbol(node) orelse return null;
                 const slots = try argument_completion.parameterSlots(self.allocator, symbol.parameter_josi);
                 if (slots.len == 0) return null;
@@ -540,6 +563,16 @@ const Lowerer = struct {
             },
             else => return null,
         }
+    }
+
+    /// 連文が引数列へ挿入した暗黙の『それ』マーカーを返す。
+    fn chainImplicitIt(self: Lowerer, node: *ast.Node) ?*ast.Node {
+        _ = self;
+        for (node.children) |child| {
+            if (child.is_implicit_it and child.kind == .word and
+                std.mem.eql(u8, child.value, "それ") and child.josi.len == 0) return child;
+        }
+        return null;
     }
 
     /// 省略引数へ補完する変数「それ」の読み出しノードを作る。

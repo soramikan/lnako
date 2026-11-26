@@ -160,18 +160,17 @@ try {
     console.error(`QuickJS互換の不正emitを拒否しませんでした: ${JSON.stringify(normalize(invalidEmit))}`);
   }
 
-  // Issue #297: ローカルパス依存パッケージ内のESM plugin命令を、戻り値の
-  // 助詞呼出し（`3を外部倍算で戻る`）としてInterpreterとAOTの双方で実行する。
-  // 公式cnako3は`pkg:`ローカルパス依存を持たないlnako独自機能のため、この
-  // ブロックは公式fixtures・公式比較へ混入させず、一時プロジェクトで
-  // Interpreter/AOTの実行結果と拒否診断だけを検証する。
+  // Issue #297: パッケージ内ESMの戻り値候補について、助詞スロットの割り当てと
+  // 静的に確定できないentryの拒否をInterpreter/AOTで検証する。公式cnako3は
+  // `pkg:`ローカルパス依存を持たないlnako独自機能のため、このブロックは公式
+  // fixtures・公式比較へ混入させず、一時プロジェクトで両経路の出力と拒否診断を
+  // 検証する。同じNako構文を公式の直接ESM取り込みでも実行し、期待値を固定する。
   {
     const packageRoot = resolve(temporary, "package-calls-297");
     const app = resolve(packageRoot, "app");
-    const reject = resolve(packageRoot, "reject");
     const sandboxHome = resolve(packageRoot, "home");
     mkdirSync(resolve(app, "packages/owned"), { recursive: true });
-    mkdirSync(resolve(reject, "packages/badpkg"), { recursive: true });
+    mkdirSync(resolve(app, "packages/badpkg"), { recursive: true });
     mkdirSync(sandboxHome, { recursive: true });
 
     const manifest = `[package]
@@ -188,10 +187,10 @@ compat-js = true
 
 [dependencies.path]
 owned = { path = "packages/owned" }
+badpkg = { path = "packages/badpkg" }
 `;
-    const rejectManifest = manifest.replace('owned = { path = "packages/owned" }', 'badpkg = { path = "packages/badpkg" }');
-    const ownedManifest = `[package]
-name = "owned"
+    const packageManifest = (name) => `[package]
+name = "${name}"
 version = "1.0.0"
 license = "MIT"
 
@@ -201,6 +200,7 @@ path = "main.nako3"
 `;
     const plugin = `export default {
   外部倍算: { type: "func", josi: [["を"]], fn: (value) => Number(value) * 2 },
+  外部引算: { type: "func", josi: [["から"],["を"]], fn: (a, b) => Number(a) - Number(b) },
   外部定数: { type: "const", value: 8 },
 };
 `;
@@ -214,6 +214,12 @@ path = "main.nako3"
 ●定数値とは
   「x」と表示して外部定数を戻る。
 ここまで
+●連文とは
+  「x」と表示して3を外部倍算で戻る。
+ここまで
+●引算とは
+  3を10から外部引算で戻る。
+ここまで
 `;
     const main = `!「pkg:owned」を取り込む
 ●束縛値とは
@@ -226,37 +232,49 @@ path = "main.nako3"
 owned__試験()を表示
 owned__C風()を表示
 owned__定数値()を表示
+owned__連文()を表示
+owned__引算()を表示
 束縛値()を表示
 改行値()を表示
 `;
-    const badManifest = `[package]
-name = "badpkg"
-version = "1.0.0"
-license = "MIT"
-
-[[exports]]
-name = "main"
-path = "main.nako3"
+    const badPlugin = `export default {
+  外部定数: { type: "const", value: 8, fn(x) { return x; } },
+  式が型: { type: "func" && "const", value: 8 },
+  上書き: { type: "func", josi: [["を"]], fn: (x) => x },
+  上書き: { type: "const", value: 8 },
+  助詞不明: { type: "func", josi: buildJosi(), fn: (x) => x },
+  外部倍算: { type: "func", josi: [["を"]], fn: (x) => Number(x) * 2 },
+};
 `;
     const badMain = `!「./plugin.mjs」を取り込む。
 ●定数呼出とは
   3を外部定数で戻る。
 ここまで
-`;
-    const rejectMain = `!「pkg:badpkg」を取り込む
-badpkg__定数呼出()を表示
+●式型呼出とは
+  3を式が型で戻る。
+ここまで
+●上書き呼出とは
+  3を上書きで戻る。
+ここまで
+●助詞不明呼出とは
+  3を助詞不明で戻る。
+ここまで
+●誤助詞とは
+  3に外部倍算で戻る。
+ここまで
+●余分とは
+  3を4から外部倍算で戻る。
+ここまで
 `;
 
     writeFileSync(resolve(app, "nako.toml"), manifest);
     writeFileSync(resolve(app, "main.nako3"), main);
-    writeFileSync(resolve(app, "packages/owned/nako.toml"), ownedManifest);
+    writeFileSync(resolve(app, "packages/owned/nako.toml"), packageManifest("owned"));
     writeFileSync(resolve(app, "packages/owned/main.nako3"), ownedMain);
     writeFileSync(resolve(app, "packages/owned/plugin.mjs"), plugin);
-    writeFileSync(resolve(reject, "nako.toml"), rejectManifest);
-    writeFileSync(resolve(reject, "main.nako3"), rejectMain);
-    writeFileSync(resolve(reject, "packages/badpkg/nako.toml"), badManifest);
-    writeFileSync(resolve(reject, "packages/badpkg/main.nako3"), badMain);
-    writeFileSync(resolve(reject, "packages/badpkg/plugin.mjs"), "export default { 外部定数: { type: 'const', value: 8 } };\n");
+    writeFileSync(resolve(app, "packages/badpkg/nako.toml"), packageManifest("badpkg"));
+    writeFileSync(resolve(app, "packages/badpkg/main.nako3"), badMain);
+    writeFileSync(resolve(app, "packages/badpkg/plugin.mjs"), badPlugin);
 
     const sandboxOptions = (cwd) => ({
       ...options,
@@ -268,7 +286,7 @@ badpkg__定数呼出()を表示
         XDG_CACHE_HOME: resolve(sandboxHome, "cache"),
       },
     });
-    const expectedPackageStdout = "6\n6\nx\n8\n5\n\n\n";
+    const expectedPackageStdout = "6\n6\nx\n8\nx\n6\n7\n5\n\n\n";
     const packageInterpreter = spawnSync(
       executable,
       ["run", "main.nako3", "--compat-js", "--profile", "compat", "--offline"],
@@ -304,34 +322,131 @@ badpkg__定数呼出()を表示
       }
     }
 
-    const rejectInterpreter = spawnSync(
-      executable,
-      ["run", "main.nako3", "--compat-js", "--profile", "compat", "--offline"],
-      sandboxOptions(reject),
+    // 公式3.7.24の直接ESM取り込みで、同じ助詞呼出しの期待値を実行して固定する。
+    const officialRoot = resolve(packageRoot, "official-esm");
+    mkdirSync(officialRoot, { recursive: true });
+    writeFileSync(resolve(officialRoot, "plugin.mjs"), plugin);
+    writeFileSync(resolve(officialRoot, "oracle.nako3"), `!「./plugin.mjs」を取り込む。
+●試験とは
+  3を外部倍算で戻る。
+ここまで
+●C風とは
+  外部倍算(3)を戻る。
+ここまで
+●定数値とは
+  「x」と表示して外部定数を戻る。
+ここまで
+●連文とは
+  「x」と表示して3を外部倍算で戻る。
+ここまで
+●引算とは
+  3を10から外部引算で戻る。
+ここまで
+試験()を表示。
+C風()を表示。
+定数値()を表示。
+連文()を表示。
+引算()を表示。
+`);
+    const officialSuccess = spawnSync(
+      process.execPath,
+      [officialCli, "oracle.nako3"],
+      sandboxOptions(officialRoot),
     );
-    const rejectDiagnostic = "『戻』文の直前に未解決の引数があります";
-    if (rejectInterpreter.status === 0 || !(rejectInterpreter.stderr ?? "").includes(rejectDiagnostic)) {
+    const expectedOfficialStdout = "6\n6\nx\n8\nx\n6\n7\n";
+    if (officialSuccess.status !== 0 || normalize(officialSuccess).stdout !== expectedOfficialStdout) {
       failures += 1;
       console.error(
-        `Issue #297 パッケージ定数への保留引数をInterpreterが拒否しませんでした: ${JSON.stringify(normalize(rejectInterpreter))}`,
+        `Issue #297 公式ESM直接取り込みの助詞呼出し差分: ${JSON.stringify(normalize(officialSuccess))}`,
       );
+      if (officialSuccess.stderr) console.error(`公式stderr:\n${officialSuccess.stderr}`);
     }
-    if (process.platform !== "win32") {
-      const rejectBinary = resolve(packageRoot, `package-calls-297-reject${executableSuffix}`);
-      const rejectBuild = spawnSync(
+
+    const diagnosticText = "『戻』文の直前に未解決の引数があります";
+    const rejectCases = [
+      {
+        id: "method-const",
+        call: "badpkg__定数呼出()を表示",
+        officialMain: `!「./plugin.mjs」を取り込む。\n●試験とは\n  3を外部定数で戻る。\nここまで\n試験()を表示。\n`,
+        officialPlugin: `export default { 外部定数: { type: "const", value: 8, fn(x) { return x; } } };\n`,
+      },
+      {
+        id: "computed-type",
+        call: "badpkg__式型呼出()を表示",
+        officialMain: `!「./plugin.mjs」を取り込む。\n●試験とは\n  3を外部定数で戻る。\nここまで\n試験()を表示。\n`,
+        officialPlugin: `export default { 外部定数: { type: "func" && "const", value: 8 } };\n`,
+      },
+      {
+        id: "duplicate-key",
+        call: "badpkg__上書き呼出()を表示",
+        officialMain: `!「./plugin.mjs」を取り込む。\n●試験とは\n  3を外部倍算で戻る。\nここまで\n試験()を表示。\n`,
+        officialPlugin: `export default {\n  外部倍算: { type: "func", josi: [["を"]], fn: (x) => x },\n  外部倍算: { type: "const", value: 8 },\n};\n`,
+      },
+      {
+        id: "wrong-particle",
+        call: "badpkg__誤助詞()を表示",
+        officialMain: `!「./plugin.mjs」を取り込む。\n●試験とは\n  3に外部倍算で戻る。\nここまで\n試験()を表示。\n`,
+        officialPlugin: `export default { 外部倍算: { type: "func", josi: [["を"]], fn: (x) => Number(x) * 2 } };\n`,
+      },
+      {
+        id: "extra-argument",
+        call: "badpkg__余分()を表示",
+        officialMain: `!「./plugin.mjs」を取り込む。\n●試験とは\n  3を4から外部倍算で戻る。\nここまで\n試験()を表示。\n`,
+        officialPlugin: `export default { 外部倍算: { type: "func", josi: [["を"]], fn: (x) => Number(x) * 2 } };\n`,
+      },
+      {
+        id: "unknown-josi",
+        call: "badpkg__助詞不明呼出()を表示",
+        officialMain: null,
+        officialPlugin: null,
+      },
+    ];
+
+    for (const item of rejectCases) {
+      const rejectSource = resolve(app, `reject-${item.id}.nako3`);
+      writeFileSync(rejectSource, `!「pkg:badpkg」を取り込む\n${item.call}\n`);
+      const rejectInterpreter = spawnSync(
         executable,
-        ["build", "main.nako3", "--compat-js", "--backend", "aot", "--profile", "compat", "--offline", "-o", rejectBinary, "-O0"],
-        sandboxOptions(reject),
+        ["run", `reject-${item.id}.nako3`, "--compat-js", "--profile", "compat", "--offline"],
+        sandboxOptions(app),
       );
-      if (rejectBuild.status === 0 || !(rejectBuild.stderr ?? "").includes(rejectDiagnostic) || existsSync(rejectBinary)) {
+      if (rejectInterpreter.status === 0 || !(rejectInterpreter.stderr ?? "").includes(diagnosticText)) {
         failures += 1;
         console.error(
-          `Issue #297 パッケージ定数への保留引数をAOTが拒否しませんでした: ${JSON.stringify(normalize(rejectBuild))}`,
+          `Issue #297 ${item.id}をInterpreterが拒否しませんでした: ${JSON.stringify(normalize(rejectInterpreter))}`,
         );
+      }
+      if (process.platform !== "win32") {
+        const rejectBinary = resolve(packageRoot, `package-calls-297-reject-${item.id}${executableSuffix}`);
+        const rejectBuild = spawnSync(
+          executable,
+          ["build", `reject-${item.id}.nako3`, "--compat-js", "--backend", "aot", "--profile", "compat", "--offline", "-o", rejectBinary, "-O0"],
+          sandboxOptions(app),
+        );
+        if (rejectBuild.status === 0 || !(rejectBuild.stderr ?? "").includes(diagnosticText) || existsSync(rejectBinary)) {
+          failures += 1;
+          console.error(
+            `Issue #297 ${item.id}をAOTが拒否しませんでした: ${JSON.stringify(normalize(rejectBuild))}`,
+          );
+        }
+      }
+      if (item.officialMain != null) {
+        const officialCase = resolve(packageRoot, `official-${item.id}`);
+        mkdirSync(officialCase, { recursive: true });
+        writeFileSync(resolve(officialCase, "plugin.mjs"), item.officialPlugin);
+        writeFileSync(resolve(officialCase, "oracle.nako3"), item.officialMain);
+        const officialRejected = spawnSync(process.execPath, [officialCli, "oracle.nako3"], sandboxOptions(officialCase));
+        const officialOutput = `${officialRejected.stdout ?? ""}${officialRejected.stderr ?? ""}`;
+        if (!officialOutput.includes("未解決の引数")) {
+          failures += 1;
+          console.error(
+            `Issue #297 公式ESM直接取り込みが${item.id}を拒否しませんでした: ${JSON.stringify(normalize(officialRejected))}`,
+          );
+        }
       }
     }
     if (failures === 0) {
-      console.log("Issue #297 パッケージ戻り値候補: Interpreter/AOTの関数呼出しと定数の保留引数拒否が一致");
+      console.log("Issue #297 パッケージ戻り値候補: 公式直接ESMとInterpreter/AOTの助詞割当・拒否診断が一致");
     }
   }
 
