@@ -288,6 +288,28 @@ test "条件助詞付き呼出しのあとの『戻る』は条件文の分岐�
     try std.testing.expectEqualStrings("9\n9\n1\n1\n", host.written());
 }
 
+test "範囲内の条件式で同行の真節を実行する" {
+    // Issue #297: `ならば`の後ろの同行真節が条件呼出しの引数へ吸収されると
+    // 実行されない。条件式は`範囲内(A,B,C)`として評価し、真節を実行する。
+    const source =
+        "もし、30が30から50の範囲内ならば、「30は範囲内」と表示。\n" ++
+        "もし、50が30から50の範囲内ならば、「50は範囲内」と表示。\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("30は範囲内\n50は範囲内\n", host.written());
+}
+
 test "『引数』宣言は同名ローカルとして再利用する" {
     // 公式は本体先頭で`引数`を実引数配列にしてから利用者の宣言を実行する。
     // 宣言は同じローカルを上書きする（二重定義にしない）。

@@ -34,7 +34,7 @@
 | `trace-confirmed-unattested` | 527 |
 | `unverified` | 0 |
 
-fixture coverageは `paired: 523`、`compat-js-only: 4`、その他の状態は0です。fixture inventoryは合計809件、native AOT 445件、Interpreter 374件、QuickJS 9件です。inventoryの分類は重複するため、数値を足してfixture総数にしません。
+fixture coverageは `paired: 523`、`compat-js-only: 4`、その他の状態は0です。fixture inventoryは合計820件、native AOT 449件、Interpreter 381件、QuickJS 9件です。inventoryの分類は重複するため、数値を足してfixture総数にしません。
 ## canonical形とmeasured形
 
 `compat/v3.7.24/` に追跡する証拠は **canonical 形** です。内容クレーム（実行site・trace hash・fixture・公式比較・oracle identity・正規化済みmanifest/出力hash）だけを持ち、揮発するprovenanceは持ちません。`provenance.lnako`（commit・binary/source manifest hash）と `provenance.environment.node` はcanonical形に含めず、`provenance.environment` はcanonical生成環境 `darwin/arm64` のみを宣言します。manifest hashはheaderの絶対 `sourcePath` を、公式比較のstdout/stderr hashは一時path・port・PID・Node版・公式生成eval関数名を正規化してから算出するため、環境や実行のたびに値が変わりません。
@@ -45,7 +45,7 @@ CIやattestation検証が生成する **measured 形** は、現行環境・Node
 
 `dispatch-evidence.json` は `lnako.dispatch-evidence.v2` です。現行artifactはmacOS arm64で生成され、Interpreter trace 950 event、AOT trace 1,900 eventを持ち、公式source・公式生成JavaScript・`lnako run`・LLVM AOT O0の比較結果を記録しています。
 
-`dispatch-coverage-evidence.json` は `lnako.dispatch-coverage.v1` の sampled auditです。231 fixture、4,605 site、unambiguousなnative entry 429（unique name 427）を記録します。これは全527 entryの純LLVM AOT実行証明ではなく、同名命令の曖昧な推定も成功証拠として扱いません。canonical正本は `--include-native` の全件実行形で、CIではLinux dedicated shardが正本生成と同じReleaseSafe buildで全件を実行し、merge結果が正本と照合されます（macOS/Windowsのshardは既定の56件部分集合です）。`OS取得`・`OSアーキテクチャ取得`の単独行やホーム・テンポラリ配下のパスなどplatform固有の出力値は、hash化前に固定トークンへ正規化するため、darwin/arm64生成の正本とLinux mergeを跨platformでbyte比較できます。同一platform内での公式処理系とlnakoの出力一致は、各shard内のroute equivalence検査が別途保証します。
+`dispatch-coverage-evidence.json` は `lnako.dispatch-coverage.v1` の sampled auditです。235 fixture、4,649 site、unambiguousなnative entry 429（unique name 427）を記録します。これは全527 entryの純LLVM AOT実行証明ではなく、同名命令の曖昧な推定も成功証拠として扱いません。canonical正本は `--include-native` の全件実行形で、CIではLinux dedicated shardが正本生成と同じReleaseSafe buildで全件を実行し、merge結果が正本と照合されます（macOS/Windowsのshardは既定の56件部分集合です）。`OS取得`・`OSアーキテクチャ取得`の単独行やホーム・テンポラリ配下のパスなどplatform固有の出力値は、hash化前に固定トークンへ正規化するため、darwin/arm64生成の正本とLinux mergeを跨platformでbyte比較できます。同一platform内での公式処理系とlnakoの出力一致は、各shard内のroute equivalence検査が別途保証します。
 
 global binding、static literal、終了・例外、外部host、公式generated routeの差は、通常の命令siteとは別の証拠namespaceまたはfixture policyで扱います。理由を省略して成功件数だけを増やしません。
 

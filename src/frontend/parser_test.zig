@@ -202,6 +202,61 @@ test "「Aが3以下ならば」を助詞呼出しの条件式へ変換する" {
     try std.testing.expectEqualStrings("", condition.children[1].josi);
 }
 
+test "「AがBからCの範囲内ならば」の同行真節を条件式へ取り込まない" {
+    // Issue #297: 条件末尾の`ならば`を呼出し列の継続として扱うと、同じ行の
+    // 真節（`「30は範囲内」と表示。`）が範囲内の第4引数として吸収され、
+    // `invalid_control_statement`になっていた。条件助詞で呼出しを切る。
+    var result = try parse(std.testing.allocator, "もし、30が30から50の範囲内ならば、「30は範囲内」と表示。\nもし、50が30から50の範囲内ならば、「50は範囲内」と表示。\n", "josi-range-inline.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    var statements: [2]*ast.Node = undefined;
+    var statement_count: usize = 0;
+    for (result.root.?.children) |child| {
+        if (child.kind != .if_statement) continue;
+        if (statement_count < statements.len) statements[statement_count] = child;
+        statement_count += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 2), statement_count);
+    const expected_values = [_][]const u8{ "30", "50" };
+    const expected_messages = [_][]const u8{ "30は範囲内", "50は範囲内" };
+    for (statements, expected_values, expected_messages) |statement, expected_value, expected_message| {
+        try std.testing.expectEqual(ast.Kind.if_statement, statement.kind);
+        const condition = statement.children[0];
+        try std.testing.expectEqual(ast.Kind.function_call, condition.kind);
+        try std.testing.expectEqualStrings("範囲内", condition.name);
+        try std.testing.expectEqualStrings("", condition.josi);
+        try std.testing.expectEqual(@as(usize, 3), condition.children.len);
+        try std.testing.expectEqualStrings(expected_value, condition.children[0].value);
+        try std.testing.expectEqualStrings("30", condition.children[1].value);
+        try std.testing.expectEqualStrings("50", condition.children[2].value);
+        const true_block = statement.children[1];
+        try std.testing.expectEqual(ast.Kind.block, true_block.kind);
+        try std.testing.expectEqual(@as(usize, 1), true_block.children.len);
+        const display = true_block.children[0];
+        try std.testing.expectEqual(ast.Kind.function_call, display.kind);
+        try std.testing.expectEqualStrings("表示", display.name);
+        try std.testing.expectEqual(@as(usize, 1), display.children.len);
+        try std.testing.expectEqualStrings(expected_message, display.children[0].value);
+    }
+}
+
+test "条件助詞付き呼出しの同行真節を引数へ続けない" {
+    // 範囲内に限らず、`ならば`付きの呼出し条件は同じ行の真節を吸収しない。
+    var result = try parse(std.testing.allocator, "もし、Aが3以下ならば、「OK」と表示。\n", "josi-call-inline.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const statement = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.if_statement, statement.kind);
+    const condition = statement.children[0];
+    try std.testing.expectEqual(ast.Kind.function_call, condition.kind);
+    try std.testing.expectEqualStrings("以下", condition.name);
+    try std.testing.expectEqual(@as(usize, 2), condition.children.len);
+    const true_block = statement.children[1];
+    try std.testing.expectEqual(ast.Kind.block, true_block.kind);
+    try std.testing.expectEqual(@as(usize, 1), true_block.children.len);
+    try std.testing.expectEqualStrings("表示", true_block.children[0].name);
+}
+
 test "「AがBと等しいならば」を助詞呼出しの条件式へ変換する" {
     var result = try parse(std.testing.allocator, "もし、AがBと等しいならば\nC=1\nここまで\n", "josi-equal-call.nako3");
     defer result.deinit();

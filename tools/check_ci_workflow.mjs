@@ -682,7 +682,7 @@ if (!aotCompilerArtifactScript.includes('"lnako.aot-compiler-artifact.v1"') ||
     !workflow.includes("node --test tools/setup_llvm_test.mjs tools/collect_ci_metrics_test.mjs tools/aot_compiler_artifact_test.mjs")) {
   throw new Error("AOT compiler artifactのmetadata照合または単体テストが不完全です");
 }
-// canonical正本（232件）のfreshnessは正本生成と同じReleaseSafeで測るため、
+// canonical正本（235件）のfreshnessは正本生成と同じReleaseSafeで測るため、
 // それを供給するLinux coverage shardのbuildもReleaseSafeでなければならない。
 const linuxCoverageBuildBlock = aotStep("Build AOT verification compiler (ReleaseSafe)");
 if (!linuxCoverageBuildBlock || !linuxCoverageBuildBlock.includes("if: matrix.task == 'support-dispatch-coverage' && matrix.os == 'ubuntu-24.04'") ||
@@ -776,7 +776,7 @@ for (const [name, task] of smokeStepConditions) {
   const block = aotStep(name);
   if (!block || !block.includes(`if: matrix.task == '${task}'`)) throw new Error(`${name}のsupport条件がありません`);
 }
-// canonical正本（232件）のfreshnessはLinux dedicated shardのみが供給する。
+// canonical正本（235件）のfreshnessはLinux dedicated shardのみが供給する。
 // Linuxのcoverage shardにだけ--include-nativeがあり、他OSには無いことを確認する。
 const linuxCoverageBlock = aotStep("Dispatch coverage audit (native fixtures)");
 if (!linuxCoverageBlock || !linuxCoverageBlock.includes("if: matrix.task == 'support-dispatch-coverage' && matrix.os == 'ubuntu-24.04'") ||
@@ -918,7 +918,7 @@ if (!coverageVerificationJob || !coverageVerificationJob.includes("if: always() 
     !dispatchCoverageShardsScript.includes("mergeCoverageShards") ||
     !dispatchCoverageShardsScript.includes("freshnessBytes") ||
     !dispatchCoverageShardsScript.includes("diffLeafPaths") ||
-    !dispatchCoverageShardsScript.includes("fixtureCount: 232") ||
+    !dispatchCoverageShardsScript.includes("fixtureCount: 235") ||
     !dispatchCoverageShardsScript.includes("fixtureCount: 56") ||
     !dispatchCoverageScript.includes("const weightedFixtures = fixtures") ||
     !dispatchCoverageScript.includes(".sort((left, right) => right.weight - left.weight || left.index - right.index)") ||
