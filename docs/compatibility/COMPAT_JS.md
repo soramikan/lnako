@@ -47,9 +47,9 @@ compat runtime libraryの探索先は通常runtimeと同じく実行ファイル
 Windows x86_64 の compat AOT リンク向けに `src/compat/quickjs_win32_shim.{h,c}`
 を追加し、QuickJS が参照する MinGW 固有の math/stdio/pthread/gettimeofday
 シンボルを MSVC 静的 CRT でも解決できるよう Win32 API 実装へ置き換えています。
-ただし **Windows x86_64 の compat AOT リンクは CI 検証待ち**です。Linux 上の
-`x86_64-windows-gnu` クロスビルドと C ソースのコンパイルは確認できますが、
-Windows x86_64 MSVC 環境でのリンク・実行はまだ検証していません。
+CI は Windows x86_64 でも compat runtime ライブラリをビルドします。
+配布ツールチェーンでの compat AOT 生成物のリンク・実行については、下記の
+[配布アーカイブ](#配布アーカイブ)を参照してください。
 
 通常AOT成果物にQuickJS/compat ABIが混入しないこと、compat AOT成果物が
 QuickJSとESM情報を収録しESM呼出しに成功することは、生成物のシンボルと実行結果で
@@ -339,7 +339,8 @@ project 外 cwd で AOT 実行ファイルだけを実行し、stdout が一致�
 
 配布アーカイブは通常AOT runtime（`liblnako_runtime.a` / `lnako_runtime.lib`）と
 compat AOT runtime（`liblnako_runtime_compat.a` / `lnako_runtime_compat.lib`）の
-両方を `lib/` へ同梱します。展開した配布物でも `--backend aot` が動きます。
+両方を `lib/` へ同梱します。macOS arm64 と Linux x86_64 では、展開した配布物でも
+`build --compat-js --backend aot` を使えます。
 
 Windows x86_64 のcompat AOTリンクは、ZigのMinGW向けにビルドしたQuickJSが
 `__mingw_*` / pthread 系シンボルを参照し、配布LLVM（MSVC向けclang/lld-link）の
