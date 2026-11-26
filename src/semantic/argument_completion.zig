@@ -167,11 +167,25 @@ pub fn builtinSlots(allocator: std.mem.Allocator, entry: builtin_josi.BuiltinJos
 }
 
 /// ユーザー定義関数の仮引数助詞（宣言順）を1スロット1助詞の定義へ変換する。
+/// `(Sが|Sの|Sを)`の助詞候補は`が|の|を`のように『|』区切りで保持される
+/// ため、1スロットの異表記リストへ分割する。
 pub fn parameterSlots(allocator: std.mem.Allocator, parameter_josi: []const []const u8) ![]Slot {
     const slots = try allocator.alloc(Slot, parameter_josi.len);
     for (parameter_josi, 0..) |josi, index| {
-        const alternatives = try allocator.alloc([]const u8, 1);
-        alternatives[0] = josi;
+        var count: usize = 1;
+        for (josi) |character| if (character == '|') {
+            count += 1;
+        };
+        const alternatives = try allocator.alloc([]const u8, count);
+        var start: usize = 0;
+        var position: usize = 0;
+        for (josi, 0..) |character, offset| {
+            if (character != '|') continue;
+            alternatives[position] = josi[start..offset];
+            position += 1;
+            start = offset + 1;
+        }
+        alternatives[position] = josi[start..];
         slots[index] = .{ .josi = alternatives };
     }
     return slots;
@@ -344,4 +358,20 @@ test "アンダースコア始まりの仮引数でも助詞スロットが正�
     try std.testing.expectEqualSlices([]const u8, &.{ "へ", "に" }, image.josi[0..2]);
     try std.testing.expectEqualSlices([]const u8, &.{"と"}, image.josi[2..3]);
     try std.testing.expectEqualSlices([]const u8, &.{"を"}, image.josi[3..4]);
+}
+
+test "仮引数の助詞候補『|』を異表記スロットへ分割する" {
+    const parameter_josi = [_][]const u8{ "が|の|を", "へ" };
+    const slots = try parameterSlots(std.testing.allocator, &parameter_josi);
+    defer {
+        for (slots) |slot| std.testing.allocator.free(slot.josi);
+        std.testing.allocator.free(slots);
+    }
+    try std.testing.expectEqual(@as(usize, 2), slots.len);
+    try std.testing.expectEqual(@as(usize, 3), slots[0].josi.len);
+    try std.testing.expectEqualStrings("が", slots[0].josi[0]);
+    try std.testing.expectEqualStrings("の", slots[0].josi[1]);
+    try std.testing.expectEqualStrings("を", slots[0].josi[2]);
+    try std.testing.expectEqual(@as(usize, 1), slots[1].josi.len);
+    try std.testing.expectEqualStrings("へ", slots[1].josi[0]);
 }

@@ -415,22 +415,26 @@ pub const Analyzer = struct {
             for (node.arguments) |name| {
                 _ = try self.rejectFunctionTarget(name.span, module_index, name.name);
                 // 公式convDefLocalVarlistは分割宣言の二重定義を検査しない
-                // （#1027）。暗黙の`引数`は再利用・重複判定ではなく使用済みの
-                // 記録だけ行い、定数リストでは読み取り専用にする。登録済みの
-                // 定数への適用はcheckVarWritable相当の代入診断になる。
-                if (self.lookupImplicitArguments(scope, name.name)) |symbol| {
-                    if (!symbol.is_mutable) {
-                        const message = try std.fmt.allocPrint(self.allocator, "定数『{s}』は既に定義済みなので、値を代入することはできません。", .{name.name});
-                        try self.addDiagnostic(.assign_to_constant, name.span, self.modules.items[module_index].path, message);
+                // （#1027）。既存の変数・仮引数は再利用し、定数への適用だけ
+                // checkVarWritable相当の代入診断にする。関数名など別種の
+                // シンボルは従来どおり二重定義として扱う。
+                if (self.lookupLexical(scope, name.name)) |existing| {
+                    const reusable = existing.kind == .variable or existing.kind == .constant or
+                        existing.kind == .parameter or existing.kind == .loop_variable or existing.implicit_arguments;
+                    if (reusable) {
+                        if (!existing.is_mutable) {
+                            const message = try std.fmt.allocPrint(self.allocator, "定数『{s}』は既に定義済みなので、値を代入することはできません。", .{name.name});
+                            try self.addDiagnostic(.assign_to_constant, name.span, self.modules.items[module_index].path, message);
+                        }
+                        self.symbols.items[existing.id].explicit_definition = true;
+                        if (self.symbols.items[existing.id].arguments_registered_at == null)
+                            self.symbols.items[existing.id].arguments_registered_at = self.stream_order;
+                        if (node.is_const) {
+                            self.symbols.items[existing.id].kind = .constant;
+                            self.symbols.items[existing.id].is_mutable = false;
+                        }
+                        continue;
                     }
-                    self.symbols.items[symbol.id].explicit_definition = true;
-                    if (self.symbols.items[symbol.id].arguments_registered_at == null)
-                        self.symbols.items[symbol.id].arguments_registered_at = self.stream_order;
-                    if (node.is_const) {
-                        self.symbols.items[symbol.id].kind = .constant;
-                        self.symbols.items[symbol.id].is_mutable = false;
-                    }
-                    continue;
                 }
                 _ = try self.declare(module_index, scope, name.name, if (node.is_const) .constant else .variable, name.span, exportable and node.is_export, !node.is_const, 0, true);
             }

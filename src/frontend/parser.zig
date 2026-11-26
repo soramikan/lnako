@@ -674,7 +674,28 @@ pub const Parser = struct {
                 continue;
             }
             const token = try self.require(.identifier, "引数名が必要です");
-            try arguments.append(self.allocator, .{ .name = token.value, .josi = token.josi, .span = token.span });
+            var name = token.value;
+            var josi = token.josi;
+            var span = token.span;
+            // 公式の字句後処理`preDefineFunc`は、`(Sが|Sの|Sを)`のような
+            // 『|』区切りの助詞候補を同じ引数名の助詞リストへまとめる。
+            // lnakoのASTは引数ごとに助詞を1つ持つため、候補を『|』区切りで
+            // 保持し、呼出し側のスロット照合で分割する。
+            while (self.at(.pipe)) {
+                _ = self.advance();
+                const alternative = try self.require(.identifier, "引数名が必要です");
+                if (std.mem.eql(u8, alternative.value, name)) {
+                    josi = try std.fmt.allocPrint(self.allocator, "{s}|{s}", .{ josi, alternative.josi });
+                } else {
+                    // 候補の名前が変わったら、そこから別の引数として扱う
+                    // （公式も同じ名前ごとに助詞リストを作る）。
+                    try arguments.append(self.allocator, .{ .name = name, .josi = josi, .span = span });
+                    name = alternative.value;
+                    josi = alternative.josi;
+                    span = alternative.span;
+                }
+            }
+            try arguments.append(self.allocator, .{ .name = name, .josi = josi, .span = span });
         }
         _ = try self.require(.right_paren, "引数定義を閉じる『)』が必要です");
         return arguments.toOwnedSlice(self.allocator);

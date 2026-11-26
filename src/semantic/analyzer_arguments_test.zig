@@ -122,3 +122,31 @@ test "厳チェックでも関数内の『引数』は未定義にならない" 
     defer program.deinit();
     try std.testing.expect(program.succeeded());
 }
+
+test "助詞候補を持つ仮引数へが・の・をの各呼出しを解決する" {
+    const parser = @import("../frontend/parser.zig");
+    var parsed = try parser.parse(std.testing.allocator, "●判定(Sが|Sの|Sを)\nSで戻る\nここまで\n「a」が判定して表示。\n「b」の判定して表示。\n「c」を判定して表示。\n", "josi-alternatives-call.nako3");
+    defer parsed.deinit();
+    var program = try analyze(std.testing.allocator, parsed.root.?, "josi-alternatives-call.nako3");
+    defer program.deinit();
+    try std.testing.expect(program.succeeded());
+    var calls: usize = 0;
+    for (program.bindings) |binding| {
+        if (binding.kind == .call and std.mem.eql(u8, binding.resolved_name, "josi-alternatives-call__判定")) calls += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 3), calls);
+}
+
+test "分割代入の再代入は同一スコープの二重定義にしない" {
+    const parser = @import("../frontend/parser.zig");
+    var parsed = try parser.parse(std.testing.allocator, "「2024/01/07」を「/」で区切る。\n年,月,日はそれ。\n年,月,日はそれを配列数値変換。\n", "varlist-reassign.nako3");
+    defer parsed.deinit();
+    var program = try analyze(std.testing.allocator, parsed.root.?, "varlist-reassign.nako3");
+    defer program.deinit();
+    try std.testing.expect(program.succeeded());
+    var duplicates: usize = 0;
+    for (program.diagnostics) |item| {
+        if (item.code == .duplicate_symbol) duplicates += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 0), duplicates);
+}
