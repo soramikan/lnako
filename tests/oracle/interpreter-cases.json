@@ -1040,5 +1040,25 @@
     "id": "varlist-constant-parent-increment-before-import-issue297",
     "files": {"varlist-const-plain-before2.nako3": "A=0\n"},
     "source": "●呼出とは\nA=0\n!「./varlist-const-plain-before2.nako3」を取り込む。\nAを1増やす\n定数[A,B]=[4,5]\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n"
+  },
+  {
+    "id": "return-builtin-value-noargs-issue297",
+    "source": "●呼出とは\n改行で戻る。\nここまで\nJSONエンコード(呼出())を表示。\n"
+  },
+  {
+    "id": "return-builtin-special-value-noargs-issue297",
+    "source": "●呼出とは\nそれで戻る。\nここまで\nJSONエンコード(呼出())を表示。\n"
+  },
+  {
+    "id": "return-builtin-value-implicit-noargs-issue297",
+    "source": "●呼出とは\n「x」と表示して改行で戻る。\nここまで\nJSONエンコード(呼出())を表示。\n"
+  },
+  {
+    "id": "return-builtin-command-args-issue297",
+    "source": "●呼出とは\n2を合計で戻る。\nここまで\nJSONエンコード(呼出())を表示。\n"
+  },
+  {
+    "id": "return-local-function-args-issue297",
+    "source": "●(Xを)倍算とは\nX*2で戻る\nここまで\n●呼出とは\n3を倍算で戻る。\nここまで\nJSONエンコード(呼出())を表示。\n"
   }
 ]

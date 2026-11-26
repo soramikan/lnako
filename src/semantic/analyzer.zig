@@ -774,6 +774,12 @@ pub const Analyzer = struct {
         return true;
     }
 
+    /// 組み込み名が実命令として呼出せるか。`改行`・`それ`・`母艦パス`のような
+    /// システム定数・特殊変数は値であり、命令表（標準・低レイヤー）に無い。
+    fn builtinIsCallable(name: []const u8) bool {
+        return builtin_catalog.findArity(name) != null or low_level_foundation.commandArity(name) != null;
+    }
+
     fn resolveReference(self: *Analyzer, node: *ast.Node, module_index: u32, scope: ScopeId, callable: bool) !void {
         const name = if (callable) node.name else node.value;
         if (name.len == 0) return;
@@ -837,6 +843,11 @@ pub const Analyzer = struct {
         if (self.builtins.get(name) != null) {
             // システム定数を関数として呼ぶ公式エラーを再現する。
             if (try unresolved_words.rejectNonCallableBuiltin(self, module_index, node, name)) return;
+            // 値として解決する組み込み（`改行`・`それ`等）でも、戻る直前に
+            // 保留した実引数があれば捨てずに非関数候補と同じ未解決引数へする。
+            // 実命令は後段の従来の引数照合へ通し、引数なしの戻りは通す。
+            if (!builtinIsCallable(name) and
+                try self.rejectPendingReturnArguments(node, module_index)) return;
             // 組み込み命令も公式のfunc token相当のため同じ規則を適用する
             // （『改行』など命令表に無い名前は変数なので対象外）
             if (node.bare_index_word and !callable and builtin_catalog.findArity(name) != null) {
@@ -886,9 +897,14 @@ pub const Analyzer = struct {
             try self.bind(node, .builtin, name, name, null);
             return;
         }
-        if (callable) {
+        // 静的に読み取れる動的命令（package/ESM pluginのalias）は、`.word`
+        // の戻り値候補でも実引数付き呼出しとして従来どおり束縛する。任意名を
+        // 受理するcatch-allは読み取れた命令ではないため候補にしない。
+        const pending_word_candidate = node.kind == .word and node.pending_return_arguments;
+        if (callable or pending_word_candidate) {
             const module_input = self.inputs[module_index];
-            if (try dynamic_commands.bindsWithFallbacks(self.allocator, module_input.allows_dynamic_commands, module_input.allows_dynamic_commands_from, module_input.dynamic_command_aliases, name, node.span.start)) |resolution| {
+            const allow_dynamic_commands = module_input.allows_dynamic_commands and !pending_word_candidate;
+            if (try dynamic_commands.bindsWithFallbacks(self.allocator, allow_dynamic_commands, module_input.allows_dynamic_commands_from, module_input.dynamic_command_aliases, name, node.span.start)) |resolution| {
                 try self.bind(node, .builtin, name, resolution.resolved_name, null);
                 const binding = &self.bindings.items[self.bindings.items.len - 1];
                 binding.dynamic_builtin = true;

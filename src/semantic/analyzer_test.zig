@@ -662,7 +662,7 @@ test "助詞が正しい呼出しと暗黙『それ』連文は未解決語に�
     }
 }
 
-test "戻る直前の候補が変数・未定義名なら保留した実引数を診断する" {
+test "戻る直前の候補が変数・未定義名・非関数の組み込みなら保留した実引数を診断する" {
     // Issue #297: `2をVで戻る`のVが変数、または未知関数のままなら、
     // 構文解析で保持した`2を`を黙って捨てず、公式`yReturn`と同じ
     // 『戻』文の未解決引数にする。連文の暗黙マーカーは実引数ではない。
@@ -673,6 +673,15 @@ test "戻る直前の候補が変数・未定義名なら保留した実引数�
         .{ .source = "●呼出とは\n2を未知関数で戻る。\nここまで\n呼出()を表示。\n", .line = 1 },
         .{ .source = "●呼出とは\nV=5\n「x」と表示して2をVで戻る。\nここまで\n呼出()を表示。\n", .line = 2 },
         .{ .source = "!厳しくチェック\n●呼出とは\n2を未知関数で戻る。\nここまで\n呼出()を表示。\n", .line = 2 },
+        // 値として解決する組み込み（文字列定数・特殊変数・プラグイン定数）
+        // でも、保留した実引数を黙って捨てない。
+        .{ .source = "2を改行で戻る。\n", .line = 0 },
+        .{ .source = "2をそれで戻る。\n", .line = 0 },
+        .{ .source = "2を母艦パスで戻る。\n", .line = 0 },
+        .{ .source = "2をそで戻る。\n", .line = 0 },
+        .{ .source = "2をエラー内容で戻る。\n", .line = 0 },
+        .{ .source = "「x」と表示して2を改行で戻る。\n", .line = 0 },
+        .{ .source = "●呼出とは\n2を改行で戻る。\nここまで\n呼出()を表示。\n", .line = 1 },
     };
     for (cases) |case| {
         var parsed = try parser.parse(std.testing.allocator, case.source, "main.nako3");
@@ -689,7 +698,7 @@ test "戻る直前の候補が変数・未定義名なら保留した実引数�
     }
 }
 
-test "戻る直前の候補が関数なら実引数を保ち変数だけの戻りは成功する" {
+test "戻る直前の候補が関数・実命令なら実引数を保ち引数なしの戻りは成功する" {
     const parser = @import("../frontend/parser.zig");
     const valid = [_][]const u8{
         // 先行引数のない`Vで戻る`は従来どおり変数値を返す。
@@ -700,6 +709,15 @@ test "戻る直前の候補が関数なら実引数を保ち変数だけの戻�
         "●呼出とは\nV=5\n「x」と表示してVで戻る。\nここまで\n呼出()を表示。\n",
         // 変数で始まる文字検索の`Cから`を候補扱いしない。
         "0から連続検索\n●(Cから)連続検索\n「しんぶんし」でCから「ん」を文字検索。\nC=それ。Cを表示。\nもし、C=0でなければ、\nC=C+1。\nCから連続検索。\nここまで。\nここまで。\n",
+        // 値として解決する組み込みは先行引数がなければ従来どおり値を返す。
+        "●呼出とは\n改行で戻る。\nここまで\n呼出()を表示。\n",
+        "●呼出とは\nそれで戻る。\nここまで\n呼出()を表示。\n",
+        // 組み込みの実命令は実引数を従来の引数照合で消費する。
+        "●呼出とは\n2を合計で戻る。\nここまで\n呼出()を表示。\n",
+        "●呼出とは\n2を表示で戻る。\nここまで\n呼出()を表示。\n",
+        // ローカル関数・テスト関数は候補でも実引数を保持する。
+        "●(Xを)倍算とは\nX*2で戻る\nここまで\n●呼出とは\n3を倍算で戻る。\nここまで\n呼出()を表示。\n",
+        "●テスト:(Xを)倍算とは\nX*2で戻る\nここまで\n●呼出とは\n3を倍算で戻る。\nここまで\n呼出()を表示。\n",
     };
     for (valid) |source| {
         var parsed = try parser.parse(std.testing.allocator, source, "main.nako3");
@@ -727,6 +745,33 @@ test "取り込んだ関数を戻り値の候補として実引数付きで呼�
         if (binding.kind == .call and std.mem.eql(u8, binding.resolved_name, "lib__倍算")) imported_calls += 1;
     }
     try std.testing.expectEqual(@as(usize, 1), imported_calls);
+}
+
+test "静的に読み取れる動的命令を戻り値の候補として実引数付きで呼び出す" {
+    // 戻る直前の`.word`候補がESM plugin等から読み取った命令名なら、
+    // 非関数値として実引数を捨てず、従来どおり動的builtinへ束縛する。
+    const parser = @import("../frontend/parser.zig");
+    const aliases = [_]DynamicCommandAlias{.{
+        .source_namespace = "外部倍算",
+        .dispatch_namespace = "外部倍算",
+        .exact = true,
+    }};
+    var parsed = try parser.parse(std.testing.allocator, "●呼出とは\n3を外部倍算で戻る。\nここまで\n呼出()を表示。\n", "dynamic-return.nako3");
+    defer parsed.deinit();
+    var program = try analyzeModules(std.testing.allocator, &.{.{
+        .name = "dynamic-return",
+        .path = "dynamic-return.nako3",
+        .root = parsed.root.?,
+        .dynamic_command_aliases = &aliases,
+    }});
+    defer program.deinit();
+    try std.testing.expect(program.succeeded());
+    var dynamic_calls: usize = 0;
+    for (program.bindings) |binding| {
+        if (binding.kind == .builtin and binding.dynamic_builtin and
+            std.mem.eql(u8, binding.resolved_name, "外部倍算")) dynamic_calls += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 1), dynamic_calls);
 }
 
 test "package qualified symbolは宣言したimporter以外から解決されない" {

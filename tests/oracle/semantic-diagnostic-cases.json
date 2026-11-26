@@ -382,5 +382,29 @@
     "source": "V=5\n2を未知関数で戻る。\n",
     "code": "unresolved_word",
     "checkMessage": true
+  },
+  {
+    "id": "semantic-diagnostic-return-pending-builtin-lf-issue297",
+    "source": "2を改行で戻る。\n",
+    "code": "unresolved_word",
+    "checkMessage": true
+  },
+  {
+    "id": "semantic-diagnostic-return-pending-builtin-it-issue297",
+    "source": "2をそれで戻る。\n",
+    "code": "unresolved_word",
+    "checkMessage": true
+  },
+  {
+    "id": "semantic-diagnostic-return-pending-builtin-motherpath-issue297",
+    "source": "2を母艦パスで戻る。\n",
+    "code": "unresolved_word",
+    "checkMessage": true
+  },
+  {
+    "id": "semantic-diagnostic-return-pending-builtin-implicit-issue297",
+    "source": "「x」と表示して2を改行で戻る。\n",
+    "code": "unresolved_word",
+    "checkMessage": true
   }
 ]
