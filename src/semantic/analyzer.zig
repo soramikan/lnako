@@ -912,8 +912,11 @@ pub const Analyzer = struct {
         const pending_word_candidate = node.kind == .word and node.pending_return_arguments;
         if (callable or pending_word_candidate) {
             const module_input = self.inputs[module_index];
-            const allow_dynamic_commands = module_input.allows_dynamic_commands and !pending_word_candidate;
-            if (try dynamic_commands.bindsWithFallbacks(self.allocator, allow_dynamic_commands, module_input.allows_dynamic_commands_from, module_input.dynamic_command_aliases, name, node.span.start)) |resolution| {
+            // 直接取り込んだ ESM/native plugin は、取り込み位置以降の未知命令を
+            // 実行時登録へ委ねる。戻る直前の候補も同じ可視範囲で動的命令へ
+            // 束縛し、実引数を既存の call lowering で渡す。取り込み位置より
+            // 前・取り込みなしは `binds` が null を返すため従来どおり診断する。
+            if (try dynamic_commands.bindsWithFallbacks(self.allocator, module_input.allows_dynamic_commands, module_input.allows_dynamic_commands_from, module_input.dynamic_command_aliases, name, node.span.start)) |resolution| {
                 try self.bind(node, .builtin, name, resolution.resolved_name, null);
                 const binding = &self.bindings.items[self.bindings.items.len - 1];
                 binding.dynamic_builtin = true;

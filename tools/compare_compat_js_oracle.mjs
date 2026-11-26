@@ -247,6 +247,61 @@ try {
     }
   }
 
+  // 直接取り込んだ ESM plugin も、取り込み位置以降の戻り値候補を既存の
+  // 動的命令call経路で実行する。package を介さない同じ構成で、公式・
+  // Interpreter・既存 embedded 実行ファイルが6を返すことを固定する。
+  // 直接取り込みの LLVM AOT は起点から `opcode=call` の未対応診断のまま
+  // 据え置き、追加実装しない。
+  {
+    const directRoot = join(temporary, "esm-return-direct");
+    await mkdir(directRoot, { recursive: true });
+    await writeFile(
+      join(directRoot, "plugin.mjs"),
+      'export default { 外部倍算: { type: "func", josi: [["を"]], fn: (value) => Number(value) * 2 } };\n',
+    );
+    const directSource =
+      "!「./plugin.mjs」を取り込む。\n●試験とは\n3を外部倍算で戻る。\nここまで\n試験()を表示。\n";
+    await writeFile(join(directRoot, "main.nako3"), directSource);
+    await writeFile(join(directRoot, "oracle.nako3"), directSource);
+
+    const directOptions = { ...options, cwd: directRoot };
+    const officialDirect = spawnSync(process.execPath, [officialCli, "oracle.nako3"], directOptions);
+    const interpreterDirect = spawnSync(executable, ["run", "main.nako3", "--compat-js"], directOptions);
+    const generatedDirect = join(directRoot, `embedded${executableSuffix}`);
+    const buildDirect = spawnSync(
+      executable,
+      ["build", "main.nako3", "-o", generatedDirect, "--compat-js", "--backend", "embedded"],
+      directOptions,
+    );
+    const embeddedDirect = buildDirect.status === 0 ? spawnSync(generatedDirect, [], directOptions) : buildDirect;
+    const generatedDirectAot = join(directRoot, `native${executableSuffix}`);
+    const buildDirectAot = spawnSync(
+      executable,
+      ["build", "main.nako3", "-o", generatedDirectAot, "--compat-js", "--backend", "aot", "-O0"],
+      directOptions,
+    );
+    if (
+      officialDirect.status !== 0 ||
+      officialDirect.stdout !== "6\n" ||
+      interpreterDirect.status !== 0 ||
+      interpreterDirect.stdout !== "6\n" ||
+      buildDirect.status !== 0 ||
+      embeddedDirect.status !== 0 ||
+      embeddedDirect.stdout !== "6\n" ||
+      buildDirectAot.status === 0 ||
+      !(buildDirectAot.stderr ?? "").includes("UnsupportedInstruction")
+    ) {
+      failures += 1;
+      console.error(
+        `ESM戻り値候補の直接取り込み回帰差分:\nofficial=${JSON.stringify(normalize(officialDirect), null, 2)}\n` +
+          `interpreter=${JSON.stringify(normalize(interpreterDirect), null, 2)}\n` +
+          `embeddedBuild=${JSON.stringify(normalize(buildDirect), null, 2)}\n` +
+          `embedded=${JSON.stringify(normalize(embeddedDirect), null, 2)}\n` +
+          `aotBuild=${JSON.stringify(normalize(buildDirectAot), null, 2)}`,
+      );
+    }
+  }
+
   if (failures > 0) throw new Error(`QuickJS互換モードの公式差分が${failures}件あります`);
   const commandCount = new Set(cases.flatMap((testCase) => testCase.commands)).size;
   console.log(

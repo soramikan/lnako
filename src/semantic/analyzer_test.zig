@@ -774,6 +774,87 @@ test "静的に読み取れる動的命令を戻り値の候補として実引�
     try std.testing.expectEqual(@as(usize, 1), dynamic_calls);
 }
 
+test "直接取り込んだ動的命令を戻り値の候補として実引数付きで呼び出す" {
+    // 直接取り込みは package の exact alias を持たず、取り込み位置以降の
+    // 未知命令を allows_dynamic_commands で実行時登録へ委ねる。戻る直前の
+    // `.word`候補も同じ可視範囲で動的builtinへ束縛し、実引数を保持する。
+    const parser = @import("../frontend/parser.zig");
+    var parsed = try parser.parse(std.testing.allocator, "●呼出とは\n3を外部倍算で戻る。\nここまで\n呼出()を表示。\n", "direct-dynamic-return.nako3");
+    defer parsed.deinit();
+    var program = try analyzeModules(std.testing.allocator, &.{.{
+        .name = "direct-dynamic-return",
+        .path = "direct-dynamic-return.nako3",
+        .root = parsed.root.?,
+        .allows_dynamic_commands = true,
+        .allows_dynamic_commands_from = 0,
+    }});
+    defer program.deinit();
+    try std.testing.expect(program.succeeded());
+    var dynamic_calls: usize = 0;
+    for (program.bindings) |binding| {
+        if (binding.kind == .builtin and binding.dynamic_builtin and
+            std.mem.eql(u8, binding.resolved_name, "外部倍算")) dynamic_calls += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 1), dynamic_calls);
+}
+
+test "取り込み位置より前と取り込みなしの戻り値候補は診断する" {
+    // 直接取り込みの許可は取り込み文の位置以降だけに効く。取り込み前と
+    // 取り込みなしでは、戻る直前の実引数を従来どおり未解決引数にする。
+    const parser = @import("../frontend/parser.zig");
+    const expected_message = "『戻』文の直前に未解決の引数があります。『(式)を戻す』のように式をカッコで括ってください。";
+    const cases = [_]struct { name: []const u8, allows: bool, from: usize }{
+        .{ .name = "before-import", .allows = true, .from = std.math.maxInt(usize) },
+        .{ .name = "no-import", .allows = false, .from = 0 },
+    };
+    for (cases) |case| {
+        var parsed = try parser.parse(std.testing.allocator, "●呼出とは\n3を外部倍算で戻る。\nここまで\n呼出()を表示。\n", case.name);
+        defer parsed.deinit();
+        var program = try analyzeModules(std.testing.allocator, &.{.{
+            .name = case.name,
+            .path = case.name,
+            .root = parsed.root.?,
+            .allows_dynamic_commands = case.allows,
+            .allows_dynamic_commands_from = case.from,
+        }});
+        defer program.deinit();
+        try std.testing.expect(!program.succeeded());
+        try std.testing.expectEqual(@as(usize, 1), program.diagnostics.len);
+        try std.testing.expectEqual(diagnostic.Code.unresolved_word, program.diagnostics[0].code);
+        try std.testing.expectEqualStrings(expected_message, program.diagnostics[0].message);
+    }
+}
+
+test "直接取り込み後でも普通の変数・定数・非関数組み込みの実引数は診断する" {
+    // 動的命令の許可より前に、宣言済みの変数・定数・値として解決する
+    // 組み込みが優先される。これらへ保留した実引数を渡した場合は、従来
+    // どおり『戻』文の未解決引数にする。
+    const parser = @import("../frontend/parser.zig");
+    const expected_message = "『戻』文の直前に未解決の引数があります。『(式)を戻す』のように式をカッコで括ってください。";
+    const cases = [_][]const u8{
+        "V=5\n●呼出とは\n2をVで戻る。\nここまで\n呼出()を表示。\n",
+        "定数 C=5\n●呼出とは\n2をCで戻る。\nここまで\n呼出()を表示。\n",
+        "●呼出とは\n2を改行で戻る。\nここまで\n呼出()を表示。\n",
+        "●呼出とは\n2をそれで戻る。\nここまで\n呼出()を表示。\n",
+    };
+    for (cases) |source| {
+        var parsed = try parser.parse(std.testing.allocator, source, "direct-dynamic-values.nako3");
+        defer parsed.deinit();
+        var program = try analyzeModules(std.testing.allocator, &.{.{
+            .name = "direct-dynamic-values",
+            .path = "direct-dynamic-values.nako3",
+            .root = parsed.root.?,
+            .allows_dynamic_commands = true,
+            .allows_dynamic_commands_from = 0,
+        }});
+        defer program.deinit();
+        try std.testing.expect(!program.succeeded());
+        try std.testing.expectEqual(@as(usize, 1), program.diagnostics.len);
+        try std.testing.expectEqual(diagnostic.Code.unresolved_word, program.diagnostics[0].code);
+        try std.testing.expectEqualStrings(expected_message, program.diagnostics[0].message);
+    }
+}
+
 test "package qualified symbolは宣言したimporter以外から解決されない" {
     const parser = @import("../frontend/parser.zig");
     var package = try parser.parse(std.testing.allocator, "値=1\n", "math.nako3");
