@@ -3313,5 +3313,15 @@
   {
     "id": "native-renbun-explicit-sore-chain-issue297",
     "source": "3と5を足して、それに6を足して表示。\n3と5を足して、6を足して表示。\n10から3を引いて、それから2を引いて表示。\n10から3を引いて、2から引いて表示。\nカウント=0\n●(AとBを)記録足とは\nカウント=カウント+1\nA+Bで戻る\nここまで\n3と5を記録足して、それと6を記録足して表示。\nカウントを表示。\n"
+  },
+  {
+    "id": "native-system-byte-buffer-element-count",
+    "commands": [
+      "ハッシュ値計算",
+      "ランダム配列生成",
+      "LEN",
+      "要素数"
+    ],
+    "source": "B=ハッシュ値計算(\"A\",\"sha256\",undefined)\nLEN(B)を表示。\nAB=B[\"buffer\"]\nLEN(AB)を表示。\nB[\"x\"]=7\nAB[\"x\"]=7\nLEN(B)を表示。\nLEN(AB)を表示。\nC=3のランダム配列生成\nC[\"01\"]=7\n要素数(C)を表示。\n「A😀B」の要素数を表示。\n"
   }
 ]

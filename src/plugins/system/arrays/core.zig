@@ -71,13 +71,21 @@ pub fn arraySearch(source: Value, needle: Value) i64 {
 
 pub fn elementCount(value: Value) usize {
     return switch (value) {
-        .bytes => |bytes| bytes.bytes.len,
+        .bytes => |bytes| byteBufferElementCount(bytes),
         .array => |array| array.len(),
         .dictionary => |dictionary| dictionary.len(),
         .string => |string| string.len(),
         .function, .promise => 0,
         else => 1,
     };
+}
+
+/// 公式の`配列要素数`は`ArrayBuffer`以外のbyte viewだけ添字を`Object.keys`
+/// として数え、全byte kindでownのカスタム列挙可能propertyを加える。
+/// ArrayBuffer自身は数値添字を持たないため、カスタムpropertyだけを数える。
+fn byteBufferElementCount(bytes: *value_mod.ByteBuffer) usize {
+    const indexed_elements = if (bytes.kind == .array_buffer) 0 else bytes.bytes.len;
+    return indexed_elements + bytes.properties.items.len;
 }
 
 pub fn insertOne(runtime: *Runtime, source: Value, index_value: Value, item: Value) !Value {
