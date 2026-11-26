@@ -175,6 +175,56 @@ test "「AがBと等しいならば」を助詞呼出しの条件式へ変換す
     try std.testing.expectEqualStrings("と", condition.children[1].josi);
 }
 
+test "「Aが奇数ならば」を既知命令の条件呼出しへ変換する" {
+    // 公式`yIFCond`は`A`の直後が`func`トークンなら`奇数(A)`を作る。
+    // `A=奇数`の等価比較へ落とすと条件が常に偽になるため、呼出し形状を固定する。
+    var result = try parse(std.testing.allocator, "もし、Aが奇数ならば\nB=1\nここまで\n", "josi-predicate-odd.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const condition = result.root.?.children[0].children[0];
+    try std.testing.expectEqual(ast.Kind.function_call, condition.kind);
+    try std.testing.expectEqualStrings("奇数", condition.name);
+    try std.testing.expectEqualStrings("", condition.josi);
+    try std.testing.expectEqual(@as(usize, 1), condition.children.len);
+    try std.testing.expectEqualStrings("A", condition.children[0].value);
+    try std.testing.expectEqualStrings("が", condition.children[0].josi);
+}
+
+test "「Aが偶数ならば」を既知命令の条件呼出しへ変換する" {
+    var result = try parse(std.testing.allocator, "もし、Aが偶数ならば\nB=1\nここまで\n", "josi-predicate-even.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const condition = result.root.?.children[0].children[0];
+    try std.testing.expectEqual(ast.Kind.function_call, condition.kind);
+    try std.testing.expectEqualStrings("偶数", condition.name);
+    try std.testing.expectEqual(@as(usize, 1), condition.children.len);
+    try std.testing.expectEqualStrings("A", condition.children[0].value);
+}
+
+test "「Aが数列か判定ならば」を正規化済み命令の条件呼出しへ変換する" {
+    var result = try parse(std.testing.allocator, "もし、対象が数列か判定ならば\nB=1\nここまで\n", "josi-predicate-suretu.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const condition = result.root.?.children[0].children[0];
+    try std.testing.expectEqual(ast.Kind.function_call, condition.kind);
+    // 公式の関数名は`数列判定`で、`数列か判定`は字句変換で同じ名前に解決する。
+    try std.testing.expectEqualStrings("数列判定", condition.name);
+    try std.testing.expectEqual(@as(usize, 1), condition.children.len);
+    try std.testing.expectEqualStrings("対象", condition.children[0].value);
+}
+
+test "「Aが奇数でなければ」を既知命令の条件否定へ変換する" {
+    var result = try parse(std.testing.allocator, "もし、Aが奇数でなければ\nB=1\nここまで\n", "josi-predicate-odd-not.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const condition = result.root.?.children[0].children[0];
+    try std.testing.expectEqual(ast.Kind.unary_operator, condition.kind);
+    try std.testing.expectEqualStrings("not", condition.operator);
+    try std.testing.expectEqual(ast.Kind.function_call, condition.children[0].kind);
+    try std.testing.expectEqualStrings("奇数", condition.children[0].name);
+    try std.testing.expectEqualStrings("A", condition.children[0].children[0].value);
+}
+
 test "「DにAが辞書キー存在するならば」を助詞呼出しの条件式へ変換する" {
     var result = try parse(std.testing.allocator, "もし、Dに\"a\"が辞書キー存在するならば\nB=1\nここまで\n", "josi-dict.nako3");
     defer result.deinit();
