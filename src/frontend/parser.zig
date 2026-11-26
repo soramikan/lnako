@@ -519,6 +519,11 @@ pub const Parser = struct {
                 const call = try self.makeCommandCall(command, try stack.toOwnedSlice(self.allocator));
                 stack = .empty;
                 try stack.append(self.allocator, call);
+                // 条件助詞は公式では命令語ではなく独立トークンで、`yIFCond`が
+                // 呼出しの終端として消費する。lnakoは直前の命令語へ付くため、
+                // ここで呼出し列を打ち切り、同じ行の真節を引数として取り込まない
+                // （`もし、Aが30から50の範囲内ならば、「…」と表示。`）。
+                if (isConditionalJosi(command.josi)) break;
                 // 言い切り・連文の助詞はそこで一度切る（公式`yCallFunc`）。
                 // ただし直後に演算子が続くなら、公式`yCall`は呼出し結果へ
                 // `yGetArgOperator`を適用してシーケンスを続ける
