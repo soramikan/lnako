@@ -50,7 +50,6 @@ pub fn findUnsupported(program: ir.Program) ?UnsupportedFeature {
                 .try_end,
                 .exception_pending,
                 .exception_take,
-                .plugin_registered,
                 => true,
                 .const_bigint => true,
                 .destructure_store => destructureSourceSupported(function, instruction),

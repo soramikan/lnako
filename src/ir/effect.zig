@@ -77,13 +77,6 @@ fn markInstruction(summary: *Summary, instruction: ir.Instruction) void {
         },
         .const_string, .const_bigint => summary.may_allocate = true,
         .exception_pending, .exception_take => summary.may_throw = true,
-        // 登録問い合わせはQuickJSの`fn`プロパティ読出しを経由し得るため、
-        // 例外・再入を保守的に立てる。
-        .plugin_registered => {
-            summary.may_allocate = true;
-            summary.may_throw = true;
-            summary.may_reenter = true;
-        },
         else => {},
     }
 }

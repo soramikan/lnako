@@ -737,3 +737,36 @@ test "エラー監視を飛び越す抜ける・続けるはtry_endでhandlerを
         try std.testing.expectEqual(case.unwinds, unwind_total);
     }
 }
+
+test "ESM動的命令の戻り値候補を通常の動的呼出しへloweringする" {
+    // `3を外部倍算で戻る` の候補は、daa0c09c 以降は実引数を保つ`.word`として
+    // 解析される。静的に抽出した完全一致aliasへ束縛できた場合は、値を読む
+    // `load_global`ではなく既存の動的命令呼出し経路（`.call`）へloweringする。
+    const parser = @import("../frontend/parser.zig");
+    const semantic = @import("../semantic/analyzer.zig");
+    const aliases = [_]semantic.DynamicCommandAlias{.{
+        .source_namespace = "外部倍算",
+        .dispatch_namespace = "外部倍算",
+        .exact = true,
+    }};
+    var parsed = try parser.parse(std.testing.allocator, "●呼出とは\n3を外部倍算で戻る。\nここまで\n呼出()を表示。\n", "dynamic-return.nako3");
+    defer parsed.deinit();
+    var analyzed = try semantic.analyzeModules(std.testing.allocator, &.{.{
+        .name = "dynamic-return",
+        .path = "dynamic-return.nako3",
+        .root = parsed.root.?,
+        .dynamic_command_aliases = &aliases,
+    }});
+    defer analyzed.deinit();
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "dynamic-return", "dynamic-return.nako3", analyzed);
+    defer hir_program.deinit();
+    var lowered_call = false;
+    var lowered_load = false;
+    for (hir_program.nodes) |node| {
+        if (!std.mem.eql(u8, node.name, "外部倍算")) continue;
+        if (node.dynamic_call and node.kind == .call) lowered_call = true;
+        if (node.kind == .load_global) lowered_load = true;
+    }
+    try std.testing.expect(lowered_call);
+    try std.testing.expect(!lowered_load);
+}

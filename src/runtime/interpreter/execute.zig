@@ -495,12 +495,6 @@ fn executeInstructionResolved(
         .try_end => _ = frame.handlers.pop(),
         .exception_pending => result = .{ .boolean = false },
         .exception_take => {},
-        // 動的plugin命令の登録有無。実登録の選択前に評価順を分岐するため、
-        // 呼出しIRCandidatePlanの各候補をこの命令で問い合わせる。
-        .plugin_registered => {
-            const target = try plugins.resolvePluginTarget(self, instruction.name, &.{});
-            result = .{ .boolean = target.kind != .none };
-        },
         .phi => {
             const source = predecessor orelse return error.InvalidPhiPredecessor;
             for (instruction.phi_incoming) |incoming| if (incoming.predecessor == source) {
@@ -911,8 +905,6 @@ fn executeCallFallback(
     if (builtin_id == null and !instruction.dynamic_call and packageCommandNameIsBound(self, instruction.name)) return error.NotCallable;
     writes_result.* = !preservesResultVariable(instruction.name);
     const site_id = if (frame.owner_program == &self.root_program) instruction.site_id else null;
-    if (instruction.runtime_argument_alignment)
-        return plugins.callBuiltinWithFallbacksAligned(self, instruction.name, instruction.fallback_names, arguments, instruction.argument_josi, instruction.argument_implicit, site_id);
     if (instruction.fallback_names.len > 0) return plugins.callBuiltinWithFallbacks(self, instruction.name, instruction.fallback_names, arguments, site_id);
     return self.callBuiltinResolved(builtin_id, instruction.name, arguments, site_id);
 }

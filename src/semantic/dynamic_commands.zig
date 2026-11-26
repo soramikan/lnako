@@ -1,16 +1,5 @@
 const std = @import("std");
 const js_scanner = @import("js_scanner.zig");
-const argument_completion = @import("argument_completion.zig");
-
-/// ESM plugin entry の `josi` 配列を、公式`yCallFunc`のスロット表として
-/// 保持する。`slots[slot][alternative]` の文字列で、空文字列は助詞なしを表す。
-pub const JosiSignature = struct {
-    slots: []const []const []const u8,
-    variable_final: bool = false,
-    /// `isVariableJosi` をリテラル真偽値として確定できたか。省略時はJSの
-    /// false と同じだが、式で書かれた場合は実登録メタデータでのみ決まる。
-    variable_known: bool = true,
-};
 
 /// package経由plugin命令のソース上の修飾aliasと、runtime登録名への写像。
 /// ソースは `<source_namespace>__<命令>` で束縛するが、実際のdispatch名は
@@ -38,25 +27,6 @@ pub const DynamicCommandAlias = struct {
     /// 抽出済み無修飾命令名に使用し、`dispatch_namespace` へ直接写像する。
     /// prefix一致や無修飾catch-allへ流さず、未登録名は診断させる。
     exact: bool = false,
-    /// 静的に「関数」と確認できた命令か。ESM plugin の `type: "const"` の
-    /// ような非関数entryを、実引数付きの戻り値候補として呼出しに消費しない
-    /// ために使う。native pluginの実行時登録名など、呼出し可能と分かって
-    /// いるaliasは既定値trueのままにする。
-    callable: bool = true,
-    /// 静的に「値」と確認できた命令か。ESM plugin の `type: "const"` だけを
-    /// 値参照として許可し、型やシグネチャが判定不能なentryはどちらにも
-    /// 確定しない。
-    value: bool = false,
-    /// 呼出しに必要な助詞スロット。nullはシグネチャ判定不能を表す。
-    signature: ?JosiSignature = null,
-    /// ESM plugin の静的抽出由来か。trueなら `signature` が無い関数entryを
-    /// 呼出し可能と推測せず、未解決引数として診断させる。native pluginの
-    /// 実行時登録名など、registryで関数と確認できるaliasはfalseのまま。
-    signature_required: bool = false,
-    /// 抽出元の登録が取り込み時の評価で必ず実行されるか。トップレベルの
-    /// `export default`・`addPluginObject` は真、関数内など未実行になり得る
-    /// 登録は偽。偽の候補の助詞定義を主候補の呼出し計画へ流用しない。
-    registration_certain: bool = true,
 };
 
 /// 動的builtinとして束縛する命令名か判定する。直接取り込んだnative plugin
@@ -122,66 +92,9 @@ pub fn binds(allows_dynamic_commands: bool, allows_from: usize, aliases: []const
     return null;
 }
 
-/// 実引数付きの戻り値候補を、静的に呼出し可能と確認できる完全一致aliasへ
-/// だけ解決する。catch-all（`unqualified`）や、ESMの `type: "const"` の
-/// ような非関数entryは返さない。呼出し側は解決できなかった候補を値として
-/// 消費せず、未解決引数の診断へ戻す。
-pub fn bindsCallableExact(
-    allocator: std.mem.Allocator,
-    allows_dynamic_commands: bool,
-    allows_from: usize,
-    aliases: []const DynamicCommandAlias,
-    name: []const u8,
-    use_position: usize,
-) !?CandidateResolution {
-    const alias = binds(allows_dynamic_commands, allows_from, aliases, name, use_position) orelse return null;
-    if (!alias.exact or !alias.callable) return null;
-    if (alias.signature_required and alias.signature == null) return null;
-    return bindsWithFallbacks(allocator, allows_dynamic_commands, allows_from, aliases, name, use_position);
-}
-
-/// 実引数を持たない値参照を、静的に非関数と確認できる完全一致aliasへ解決
-/// する。ESM pluginの `type: "const"` を通常の値として読む経路に使い、
-/// 呼出し可能な関数entryやcatch-allは返さない。
-pub fn bindsValueExact(
-    allocator: std.mem.Allocator,
-    allows_dynamic_commands: bool,
-    allows_from: usize,
-    aliases: []const DynamicCommandAlias,
-    name: []const u8,
-    use_position: usize,
-) !?CandidateResolution {
-    const alias = binds(allows_dynamic_commands, allows_from, aliases, name, use_position) orelse return null;
-    if (!alias.exact or alias.callable or !alias.value) return null;
-    return bindsWithFallbacks(allocator, allows_dynamic_commands, allows_from, aliases, name, use_position);
-}
-
-/// 実行時に選択され得る1候補の登録名と助詞シグネチャ。評価順を候補ごとに
-/// 分岐するloweringが、登録の選択と式の評価順を同じ候補へ結び付けるために使う。
-pub const CandidatePlan = struct {
-    name: []const u8,
-    signature: JosiSignature,
-};
-
 pub const CandidateResolution = struct {
     resolved_name: []const u8,
     fallback_names: []const []const u8 = &.{},
-    signature: ?JosiSignature = null,
-    /// 実行時に選択され得る候補の登録名とシグネチャ（主候補が先頭）。
-    /// 主候補の登録が不確実で、候補ごとに評価順が異なり得る場合だけ設定する。
-    /// `name`は`resolved_name`/`fallback_names`と同じallocator所有領域を指す。
-    candidate_plans: []const CandidatePlan = &.{},
-    /// 実登録される候補が静的には確定できず、候補ごとの助詞定義も一致
-    /// しない場合に真。呼出し側は実引数を未整列のまま実行時へ渡し、
-    /// 選択された登録のメタデータで割り当てる。
-    runtime_alignment: bool = false,
-    /// 実行時の登録メタデータで助詞割り当てを行う呼出しで、式の評価順を
-    /// 主候補の固定スロットから確定できるか。未確定の別名catch-allが先に
-    /// あっても、後発の実登録候補が確定していればそのレイアウトで評価できる。
-    evaluation_order_known: bool = false,
-    /// 実登録が静的に確実で、他に選択され得る候補が無いこと。空の`josi`表
-    /// のような候補固有の解析時判定を、実行時メタデータの不確実性と区別する。
-    single_certain: bool = false,
 };
 
 /// `binds` と同じ優先規則で主配送先 `resolved_name` を決めつつ、主配送先が
@@ -206,7 +119,7 @@ pub fn bindsWithFallbacks(
     // exact 主候補は静的抽出由来で実登録の保証ではない（呼ばれない関数内の
     // `addPluginObject` 等からも抽出される）ため、unqualified と同じく先発候補を
     // 実行時の登録照合へ渡す。
-    if (!primary.unqualified and !primary.exact) return .{ .resolved_name = resolved_name, .signature = primary.signature };
+    if (!primary.unqualified and !primary.exact) return .{ .resolved_name = resolved_name };
 
     const CandidateEntry = struct {
         alias: DynamicCommandAlias,
@@ -230,35 +143,6 @@ pub fn bindsWithFallbacks(
             return a.index > b.index;
         }
     }.lessThan);
-
-    // 主候補が実行時に登録される保証がない、または可変長助詞をリテラルで
-    // 確定できない場合は、選択された登録のメタデータで実引数を割り当てる。
-    // 未確定の別名catch-allが先にあっても、後発の実登録候補の固定部分は
-    // 静的に分かるため、その有無だけで実行時割り当てを無効にしない。
-    var runtime_alignment = primary.exact and !primary.registration_certain;
-    if (primary.exact and primary.signature != null and !primary.signature.?.variable_known) runtime_alignment = true;
-    // 評価順は、主候補が確実に登録されるならその固定スロット順でよい。
-    // 登録が不確実なときは、実行時に選ばれ得る全候補の署名が一致する場合だけ
-    // 主候補のレイアウトを再利用できる。異なる候補がある場合はソース順の
-    // まま評価し、値だけを実行時の助詞で割り当てる。
-    var evaluation_order_known = false;
-    if (runtime_alignment and primary.exact and primary.signature != null) {
-        if (primary.registration_certain) {
-            evaluation_order_known = true;
-        } else {
-            evaluation_order_known = true;
-            for (candidates.items) |entry| {
-                if (!entry.alias.exact or entry.alias.signature == null) {
-                    evaluation_order_known = false;
-                    break;
-                }
-                if (!signatureEql(entry.alias.signature.?, primary.signature.?)) {
-                    evaluation_order_known = false;
-                    break;
-                }
-            }
-        }
-    }
 
     var fallbacks: std.ArrayList([]const u8) = .empty;
     errdefer {
@@ -288,123 +172,10 @@ pub fn bindsWithFallbacks(
             return failure;
         };
     }
-
-    // 実登録が不確実な主候補と、評価順が異なり得る別候補が並ぶ場合だけ、
-    // 候補ごとの計画をloweringへ渡す。パーサの`yCallFunc`と同じ評価順を
-    // 実登録の選択前に固定できないため、各候補の固定スロット表を保持し、
-    // 実登録を確認した分岐の中だけでその候補の式を評価する。
-    var candidate_plans: []const CandidatePlan = &.{};
-    errdefer if (candidate_plans.len > 0) allocator.free(candidate_plans);
-    if (runtime_alignment and primary.exact and primary.signature != null and !primary.registration_certain) {
-        var plans: std.ArrayList(CandidatePlan) = .empty;
-        errdefer plans.deinit(allocator);
-        var all_known = true;
-        var differs = false;
-        try plans.append(allocator, .{ .name = resolved_name, .signature = primary.signature.? });
-        for (fallbacks.items) |fallback_name| {
-            var fallback_signature: ?JosiSignature = null;
-            for (candidates.items) |entry| {
-                const entry_name = try allocDispatchName(allocator, entry.alias, name);
-                defer allocator.free(entry_name);
-                if (std.mem.eql(u8, entry_name, fallback_name)) {
-                    fallback_signature = entry.alias.signature;
-                    break;
-                }
-            }
-            const signature = fallback_signature orelse {
-                all_known = false;
-                break;
-            };
-            if (!signatureEql(signature, primary.signature.?)) differs = true;
-            try plans.append(allocator, .{ .name = fallback_name, .signature = signature });
-        }
-        if (all_known and differs and plans.items.len >= 2) {
-            candidate_plans = try plans.toOwnedSlice(allocator);
-        } else plans.deinit(allocator);
-    }
-
-    // 解析時に候補固有の判定（空の`josi`表など）を行えるのは、実登録が
-    // 確実で、他に選択され得る候補が無い場合だけ。同名でも署名が異なる
-    // 候補が残るなら、実行時の登録選択を待つ。
-    var single_certain = primary.exact and primary.registration_certain;
-    if (single_certain) {
-        for (candidates.items) |entry| {
-            const entry_name = try allocDispatchName(allocator, entry.alias, name);
-            defer allocator.free(entry_name);
-            if (!std.mem.eql(u8, entry_name, resolved_name)) {
-                single_certain = false;
-                break;
-            }
-            if (primary.signature) |primary_signature| {
-                const entry_signature = entry.alias.signature orelse {
-                    single_certain = false;
-                    break;
-                };
-                if (!signatureEql(entry_signature, primary_signature)) {
-                    single_certain = false;
-                    break;
-                }
-            }
-        }
-    }
-
     return .{
         .resolved_name = resolved_name,
         .fallback_names = try fallbacks.toOwnedSlice(allocator),
-        .signature = primary.signature,
-        .candidate_plans = candidate_plans,
-        .runtime_alignment = runtime_alignment,
-        .evaluation_order_known = evaluation_order_known,
-        .single_certain = single_certain,
     };
-}
-
-/// 2つの助詞シグネチャが同じスロット表・可変長指定か。文字列は内容で比較する。
-fn signatureEql(a: JosiSignature, b: JosiSignature) bool {
-    if (a.variable_final != b.variable_final or a.variable_known != b.variable_known) return false;
-    if (a.slots.len != b.slots.len) return false;
-    for (a.slots, b.slots) |a_slot, b_slot| {
-        if (a_slot.len != b_slot.len) return false;
-        for (a_slot, b_slot) |a_item, b_item| {
-            if (!std.mem.eql(u8, a_item, b_item)) return false;
-        }
-    }
-    return true;
-}
-
-/// 解析中の一時arenaに由来する`JosiSignature`を、Programの生存期間を持つ
-/// allocatorへ深く複製する。BindingはHIR loweringまで保持されるため、
-/// module graphの一時arenaを参照してはならない。
-pub fn cloneSignature(allocator: std.mem.Allocator, signature: JosiSignature) !JosiSignature {
-    const slots = try allocator.alloc([]const []const u8, signature.slots.len);
-    for (signature.slots, 0..) |alternatives, index| {
-        const copied = try allocator.alloc([]const u8, alternatives.len);
-        for (alternatives, 0..) |alternative, alternative_index| copied[alternative_index] = try allocator.dupe(u8, alternative);
-        slots[index] = copied;
-    }
-    return .{ .slots = slots, .variable_final = signature.variable_final, .variable_known = signature.variable_known };
-}
-
-/// 候補計画をProgramの生存期間へ深く複製する。`bindsWithFallbacks`が返す
-/// 署名はmodule graphの一時aliasを参照し得るため、Bindingへ保持する前に
-/// ここで登録名とスロット表を複製する。
-pub fn cloneCandidatePlans(allocator: std.mem.Allocator, plans: []const CandidatePlan) ![]const CandidatePlan {
-    const copies = try allocator.alloc(CandidatePlan, plans.len);
-    for (plans, copies) |source, *target| {
-        target.* = .{
-            .name = try allocator.dupe(u8, source.name),
-            .signature = try cloneSignature(allocator, source.signature),
-        };
-    }
-    return copies;
-}
-
-/// `JosiSignature`を`argument_completion.plan`のスロット表へ変換する。
-/// 返却スライスは`allocator`所有で、各要素はsignatureの文字列を参照する。
-pub fn signatureSlots(allocator: std.mem.Allocator, signature: JosiSignature) ![]argument_completion.Slot {
-    const slots = try allocator.alloc(argument_completion.Slot, signature.slots.len);
-    for (signature.slots, 0..) |alternatives, index| slots[index] = .{ .josi = alternatives };
-    return slots;
 }
 
 fn allocDispatchName(allocator: std.mem.Allocator, alias: DynamicCommandAlias, name: []const u8) ![]const u8 {
@@ -471,7 +242,7 @@ pub fn appendJavaScriptPluginAliases(
             if (expr_start >= items.len) {
                 all_static_complete = false;
             } else if (isPunct(items[expr_start], "{")) {
-                const result = try extractObjectLiteralKeys(allocator, aliases, items, expr_start, dispatch_namespace, import_position, true);
+                const result = try extractObjectLiteralKeys(allocator, aliases, items, expr_start, dispatch_namespace, import_position);
                 if (!result.complete or result.close_brace_index == null or
                     !isExportDefaultExpressionEnd(source, items, result.close_brace_index.?, open_parens))
                     all_static_complete = false;
@@ -479,7 +250,7 @@ pub fn appendJavaScriptPluginAliases(
                 isExportDefaultExpressionEnd(source, items, expr_start, open_parens))
             {
                 if (findVariableObjectInitializer(source, items, index, items[expr_start].text)) |obj_brace| {
-                    const result = try extractObjectLiteralKeys(allocator, aliases, items, obj_brace, dispatch_namespace, import_position, true);
+                    const result = try extractObjectLiteralKeys(allocator, aliases, items, obj_brace, dispatch_namespace, import_position);
                     if (!result.complete or result.close_brace_index == null) all_static_complete = false;
                 } else {
                     all_static_complete = false;
@@ -490,7 +261,7 @@ pub fn appendJavaScriptPluginAliases(
         } else if (isIdent(token, "addPluginObject") and !(index > 0 and isIdent(items[index - 1], "function"))) {
             if (index + 1 < items.len and isPunct(items[index + 1], "(")) {
                 found_plugin_site = true;
-                const ok = try extractAddPluginObjectSecondArg(allocator, aliases, source, items, index + 1, dispatch_namespace, import_position, depth == 0);
+                const ok = try extractAddPluginObjectSecondArg(allocator, aliases, source, items, index + 1, dispatch_namespace, import_position);
                 if (!ok) all_static_complete = false;
             } else {
                 // `const reg = navigator.nako3.addPluginObject`・分割代入・`?.()`・`.call()` などの
@@ -753,7 +524,6 @@ fn extractAddPluginObjectSecondArg(
     open_paren_index: usize,
     dispatch_namespace: []const u8,
     import_position: usize,
-    registration_certain: bool,
 ) !bool {
     var pos = open_paren_index + 1;
     var nested: usize = 0;
@@ -779,7 +549,7 @@ fn extractAddPluginObjectSecondArg(
     const open_parens = expr_start - raw_start;
     if (expr_start >= items.len) return false;
     if (isPunct(items[expr_start], "{")) {
-        const result = try extractObjectLiteralKeys(allocator, aliases, items, expr_start, dispatch_namespace, import_position, registration_certain);
+        const result = try extractObjectLiteralKeys(allocator, aliases, items, expr_start, dispatch_namespace, import_position);
         return result.complete and
             result.close_brace_index != null and
             isCallArgEnd(items, result.close_brace_index.? + 1, open_parens);
@@ -788,7 +558,7 @@ fn extractAddPluginObjectSecondArg(
         isCallArgEnd(items, expr_start + 1, open_parens))
     {
         const obj_brace = findVariableObjectInitializer(source, items, open_paren_index, items[expr_start].text) orelse return false;
-        const result = try extractObjectLiteralKeys(allocator, aliases, items, obj_brace, dispatch_namespace, import_position, registration_certain);
+        const result = try extractObjectLiteralKeys(allocator, aliases, items, obj_brace, dispatch_namespace, import_position);
         return result.complete and result.close_brace_index != null;
     }
     return false;
@@ -798,342 +568,6 @@ fn isPropertyNameTerminator(token: js_scanner.JavaScriptToken) bool {
     return isPunct(token, ":") or isPunct(token, "(") or isPunct(token, ",") or isPunct(token, "}");
 }
 
-/// plugin entryの静的な分類。関数・値・判定不能を混同しない。
-const EntryClass = enum { function, constant, unknown };
-const EntryInfo = struct {
-    class: EntryClass = .unknown,
-    signature: ?JosiSignature = null,
-    /// オブジェクト値の直後の位置（閉じ`}`の次）。プロパティ値として
-    /// 単独で完結しているかの境界確認に使う。
-    end: usize = 0,
-};
-
-/// `key: value` の値が、なでしこ plugin の entry として静的に何に確定するか。
-/// 明示 `type` は entry 全体の最後の値を優先し、メソッド宣言や `fn` 関数式で
-/// 覆さない。関数は呼出し計画に必要な `josi` signature まで確定できた場合だけ
-/// `.function` とし、型やシグネチャが動的な形は `.unknown` にする。
-fn propertyEntryInfo(allocator: std.mem.Allocator, items: []const js_scanner.JavaScriptToken, header_index: usize) !EntryInfo {
-    if (header_index >= items.len) return .{};
-    // メソッド宣言 `key() { ... }`。plugin entryのjosiは宣言できないため
-    // 呼出し計画を確定できず、関数としても値としても扱わない。
-    if (isPunct(items[header_index], "(")) return .{};
-    if (!isPunct(items[header_index], ":")) return .{};
-    const value_start = header_index + 1;
-    if (value_start >= items.len) return .{};
-    const value = items[value_start];
-    if (value.kind == .identifier) {
-        if (std.mem.eql(u8, value.text, "function") or std.mem.eql(u8, value.text, "class")) {
-            return if (std.mem.eql(u8, value.text, "function")) .{ .class = .function } else .{};
-        }
-        if (std.mem.eql(u8, value.text, "async")) {
-            const next = value_start + 1;
-            if (next >= items.len) return .{};
-            if (isIdent(items[next], "function")) return .{ .class = .function };
-            return if (isArrowFunctionAt(items, next)) .{ .class = .function } else .{};
-        }
-        return if (isArrowFunctionAt(items, value_start)) .{ .class = .function } else .{};
-    }
-    if (isPunct(value, "{")) {
-        const info = try objectEntryInfo(allocator, items, value_start);
-        // `{...} && {...}` のようにオブジェクト式がさらに式の一部になる場合、
-        // 先頭のオブジェクトだけを entry 全体と確定しない。
-        if (info.end >= items.len or !(isPunct(items[info.end], ",") or isPunct(items[info.end], "}"))) return .{};
-        return info;
-    }
-    if (isPunct(value, "(")) return if (isArrowFunctionAt(items, value_start)) .{ .class = .function } else .{};
-    return .{};
-}
-
-/// プロパティ値が`"..."`の1個だけで、直後がプロパティ境界になっているか。
-/// `type: "func" && "const"`のように式が続く場合は判定不能としてnullを返す。
-fn exactStringValue(items: []const js_scanner.JavaScriptToken, start: usize) ?[]const u8 {
-    if (start >= items.len or items[start].kind != .string) return null;
-    if (start + 1 >= items.len) return items[start].text;
-    if (isPunct(items[start + 1], ",") or isPunct(items[start + 1], "}")) return items[start].text;
-    return null;
-}
-
-/// 真偽値リテラル1個だけで、直後がプロパティ境界になっているか。
-fn exactBooleanValue(items: []const js_scanner.JavaScriptToken, start: usize) ?bool {
-    if (start >= items.len or items[start].kind != .identifier) return null;
-    const value = if (std.mem.eql(u8, items[start].text, "true"))
-        true
-    else if (std.mem.eql(u8, items[start].text, "false"))
-        false
-    else
-        return null;
-    if (start + 1 < items.len and !isPunct(items[start + 1], ",") and !isPunct(items[start + 1], "}")) return null;
-    return value;
-}
-
-const JosiParse = struct {
-    signature: JosiSignature,
-    end: usize,
-};
-
-/// `[["を"], ["から", "を"]]`形式の`josi`値を読み、外側`]`直後の位置を返す。
-/// 文字列以外・入れ子の式・閉じない配列は判定不能としてnullにする。
-fn parseJosiValue(allocator: std.mem.Allocator, items: []const js_scanner.JavaScriptToken, start: usize) !?JosiParse {
-    if (start >= items.len or !isPunct(items[start], "[")) return null;
-    var slots: std.ArrayList([]const []const u8) = .empty;
-    errdefer {
-        for (slots.items) |slot| allocator.free(slot);
-        slots.deinit(allocator);
-    }
-    var pos = start + 1;
-    if (pos < items.len and isPunct(items[pos], "]")) {
-        return .{ .signature = .{ .slots = try slots.toOwnedSlice(allocator) }, .end = pos + 1 };
-    }
-    while (pos < items.len) {
-        if (!isPunct(items[pos], "[")) return null;
-        pos += 1;
-        var alternatives: std.ArrayList([]const u8) = .empty;
-        errdefer alternatives.deinit(allocator);
-        if (pos < items.len and isPunct(items[pos], "]")) {
-            pos += 1;
-        } else {
-            while (pos < items.len) {
-                if (items[pos].kind != .string) return null;
-                const decoded = (try unescapeSimpleString(allocator, items[pos].text)) orelse return null;
-                try alternatives.append(allocator, decoded);
-                pos += 1;
-                if (pos < items.len and isPunct(items[pos], ",")) {
-                    pos += 1;
-                    continue;
-                }
-                if (pos < items.len and isPunct(items[pos], "]")) {
-                    pos += 1;
-                    break;
-                }
-                return null;
-            }
-        }
-        try slots.append(allocator, try alternatives.toOwnedSlice(allocator));
-        if (pos < items.len and isPunct(items[pos], ",")) {
-            pos += 1;
-            continue;
-        }
-        if (pos < items.len and isPunct(items[pos], "]")) {
-            return .{ .signature = .{ .slots = try slots.toOwnedSlice(allocator) }, .end = pos + 1 };
-        }
-        return null;
-    }
-    return null;
-}
-
-/// plugin entry object `{ type: "func", josi: ..., fn: ... }` の最上位
-/// プロパティだけを走査し、最後に有効な`type`・`josi`・`fn`で分類する。
-/// 入れ子object内の`type`、computed key、spread、式が続く`type`、未知の
-/// `josi`は判定不能として扱う。同名プロパティはJSと同じく後勝ち。
-fn objectEntryInfo(allocator: std.mem.Allocator, items: []const js_scanner.JavaScriptToken, open_brace_index: usize) !EntryInfo {
-    var saw_type = false;
-    var type_class: EntryClass = .unknown;
-    var fn_function = false;
-    var signature: ?JosiSignature = null;
-    var variable_final = false;
-    var variable_known = true;
-    var opaque_entry = false;
-    var close_index: ?usize = null;
-    var pos = open_brace_index + 1;
-    while (pos < items.len) {
-        if (isPunct(items[pos], "}")) {
-            close_index = pos;
-            break;
-        }
-        if (isPunct(items[pos], ",")) {
-            pos += 1;
-            continue;
-        }
-        // spread・算出キーは最終的なプロパティ集合を確定できない。
-        if ((pos + 2 < items.len and isPunct(items[pos], ".") and isPunct(items[pos + 1], ".") and isPunct(items[pos + 2], ".")) or
-            isPunct(items[pos], "["))
-        {
-            opaque_entry = true;
-            pos = skipPropertyRemainder(items, pos);
-            continue;
-        }
-        // `*` または `get`/`set`/`async` 修飾子付きのメソッド。
-        var accessor = false;
-        if (isPunct(items[pos], "*")) {
-            pos += 1;
-            if (pos >= items.len) return .{};
-        } else if (items[pos].kind == .identifier and
-            (std.mem.eql(u8, items[pos].text, "get") or std.mem.eql(u8, items[pos].text, "set") or std.mem.eql(u8, items[pos].text, "async")) and
-            pos + 1 < items.len and !isPropertyNameTerminator(items[pos + 1]))
-        {
-            accessor = std.mem.eql(u8, items[pos].text, "get") or std.mem.eql(u8, items[pos].text, "set");
-            pos += 1;
-            if (pos < items.len and isPunct(items[pos], "*")) pos += 1;
-            if (pos >= items.len) return .{};
-        }
-        if (pos >= items.len or (items[pos].kind != .identifier and items[pos].kind != .string)) return .{};
-        const key_token = items[pos];
-        pos += 1;
-        if (pos >= items.len) return .{};
-        // 引用符付きキーのエスケープは、アクセサ・メソッド・データプロパティ
-        // のどの分岐よりも先に正規化する。単純なエスケープだけを復号し、
-        // `\u0070` のような判定不能な表記は entry 全体を確定しない
-        // （`get "ty\u0070e"` を通常のメソッドとして通過させない）。
-        var decoded_key: ?[]const u8 = null;
-        defer if (decoded_key) |owned| allocator.free(owned);
-        var key = key_token.text;
-        var key_uncertain = false;
-        if (key_token.kind == .string and std.mem.indexOfScalar(u8, key_token.text, '\\') != null) {
-            if (try unescapeSimpleString(allocator, key_token.text)) |decoded| {
-                key = decoded;
-                decoded_key = decoded;
-            } else {
-                key_uncertain = true;
-            }
-        }
-        if (key_uncertain) {
-            opaque_entry = true;
-            pos = skipPropertyRemainder(items, pos);
-            continue;
-        }
-        // アクセサで `type`・`josi`・`fn` 等を再定義すると、後続の値から
-        // 最終的なメタデータを確定できない。先に見た値だけを確定扱いしない。
-        if (accessor and (std.mem.eql(u8, key, "type") or std.mem.eql(u8, key, "josi") or
-            std.mem.eql(u8, key, "fn") or std.mem.eql(u8, key, "isVariableJosi")))
-        {
-            opaque_entry = true;
-            pos = skipPropertyRemainder(items, pos);
-            continue;
-        }
-        if (isPunct(items[pos], "(")) {
-            if (std.mem.eql(u8, key, "fn")) fn_function = true;
-            pos = skipPropertyRemainder(items, pos);
-            continue;
-        }
-        if (!isPunct(items[pos], ":")) return .{};
-        const value_start = pos + 1;
-        if (value_start >= items.len) return .{};
-        if (std.mem.eql(u8, key, "type")) {
-            saw_type = true;
-            if (exactStringValue(items, value_start)) |type_text| {
-                type_class = if (std.mem.eql(u8, type_text, "func"))
-                    .function
-                else if (std.mem.eql(u8, type_text, "const"))
-                    .constant
-                else
-                    .unknown;
-            } else {
-                type_class = .unknown;
-            }
-        } else if (std.mem.eql(u8, key, "fn")) {
-            fn_function = isDirectFunctionValue(items, value_start);
-        } else if (std.mem.eql(u8, key, "josi")) {
-            const parsed = try parseJosiValue(allocator, items, value_start);
-            if (parsed) |josi| {
-                if (josi.end < items.len and (isPunct(items[josi.end], ",") or isPunct(items[josi.end], "}"))) {
-                    signature = josi.signature;
-                } else {
-                    signature = null;
-                }
-            } else {
-                signature = null;
-            }
-        } else if (std.mem.eql(u8, key, "isVariableJosi")) {
-            if (exactBooleanValue(items, value_start)) |value| {
-                variable_final = value;
-            } else {
-                // 式の値は plugin 評価時にしか決まらない。false とみなして
-                // 固定長シグネチャを確定しない。
-                variable_known = false;
-            }
-        }
-        pos = skipPropertyRemainder(items, value_start);
-    }
-    if (opaque_entry or close_index == null) return .{};
-    if (saw_type) {
-        return switch (type_class) {
-            .function => .{ .class = .function, .signature = if (signature) |sig| .{ .slots = sig.slots, .variable_final = variable_final, .variable_known = variable_known } else null, .end = close_index.? + 1 },
-            .constant => .{ .class = .constant, .end = close_index.? + 1 },
-            .unknown => .{},
-        };
-    }
-    if (fn_function) {
-        return .{ .class = .function, .signature = if (signature) |sig| .{ .slots = sig.slots, .variable_final = variable_final, .variable_known = variable_known } else null, .end = close_index.? + 1 };
-    }
-    return .{};
-}
-
-/// scannerは`=>`を`=`と`>`の2 tokenへ分けるため、その並びを確認する。
-fn isArrowPunctuation(items: []const js_scanner.JavaScriptToken, start: usize) bool {
-    return start + 1 < items.len and isPunct(items[start], "=") and isPunct(items[start + 1], ">");
-}
-
-/// `(` ... `)` `=>` または `識別子 =>` のarrow関数か。
-fn isArrowFunctionAt(items: []const js_scanner.JavaScriptToken, start: usize) bool {
-    if (start >= items.len) return false;
-    if (items[start].kind == .identifier) {
-        return isArrowPunctuation(items, start + 1);
-    }
-    if (!isPunct(items[start], "(")) return false;
-    var depth: usize = 0;
-    var pos = start;
-    while (pos < items.len) : (pos += 1) {
-        const token = items[pos];
-        if (isOpenDelim(token)) {
-            depth += 1;
-        } else if (isCloseDelim(token)) {
-            if (depth == 0) return false;
-            depth -= 1;
-            if (depth == 0) return isArrowPunctuation(items, pos + 1);
-        }
-    }
-    return false;
-}
-
-/// 値の先頭が直接の関数式（`function` / arrow / async）か。
-fn isDirectFunctionValue(items: []const js_scanner.JavaScriptToken, start: usize) bool {
-    if (start >= items.len) return false;
-    const value = items[start];
-    if (value.kind == .identifier) {
-        if (std.mem.eql(u8, value.text, "function")) return true;
-        if (std.mem.eql(u8, value.text, "async")) {
-            const next = start + 1;
-            if (next >= items.len) return false;
-            if (isIdent(items[next], "function")) return true;
-            return isArrowFunctionAt(items, next);
-        }
-        return isArrowFunctionAt(items, start);
-    }
-    return isPunct(value, "(") and isArrowFunctionAt(items, start);
-}
-
-/// トップレベルに spread または computed key があれば、後続・先行する
-/// 明示キーの最終値もJSの評価順では確定できない。抽出は続けつつ、全entryを
-/// 判定不能として既知扱いしない。
-fn objectHasOpaqueTopLevelKey(items: []const js_scanner.JavaScriptToken, open_brace_index: usize) bool {
-    var pos = open_brace_index + 1;
-    while (pos < items.len) {
-        if (isPunct(items[pos], "}")) return false;
-        if (isPunct(items[pos], ",")) {
-            pos += 1;
-            continue;
-        }
-        // プロパティ開始位置の spread / computed key だけを見る。値としての
-        // 配列リテラル `key: [1, 2]` は不透明ではない。
-        if ((pos + 2 < items.len and isPunct(items[pos], ".") and isPunct(items[pos + 1], ".") and isPunct(items[pos + 2], ".")) or
-            isPunct(items[pos], "["))
-            return true;
-        var probe = pos;
-        if (isPunct(items[probe], "*")) {
-            probe += 1;
-        } else if (items[probe].kind == .identifier and
-            (std.mem.eql(u8, items[probe].text, "get") or std.mem.eql(u8, items[probe].text, "set") or std.mem.eql(u8, items[probe].text, "async")) and
-            probe + 1 < items.len and !isPropertyNameTerminator(items[probe + 1]))
-        {
-            probe += 1;
-            if (probe < items.len and isPunct(items[probe], "*")) probe += 1;
-        }
-        if (probe < items.len and isPunct(items[probe], "[")) return true;
-        pos = skipPropertyRemainder(items, pos);
-    }
-    return true;
-}
-
 fn extractObjectLiteralKeys(
     allocator: std.mem.Allocator,
     aliases: *std.ArrayList(DynamicCommandAlias),
@@ -1141,10 +575,8 @@ fn extractObjectLiteralKeys(
     open_brace_index: usize,
     dispatch_namespace: []const u8,
     import_position: usize,
-    registration_certain: bool,
 ) !ObjectExtractResult {
     var complete = true;
-    const force_unknown = objectHasOpaqueTopLevelKey(items, open_brace_index);
     var pos = open_brace_index + 1;
     while (pos < items.len) {
         if (isPunct(items[pos], "}")) return .{ .complete = complete, .close_brace_index = pos };
@@ -1186,11 +618,9 @@ fn extractObjectLiteralKeys(
             continue;
         }
         var raw_key: ?[]const u8 = null;
-        var header_index: usize = pos;
         if (items[pos].kind == .identifier or items[pos].kind == .string) {
             const key_token = items[pos];
             pos += 1;
-            header_index = pos;
             const valid_header = if (pos >= items.len)
                 false
             else if (has_modifier)
@@ -1218,40 +648,26 @@ fn extractObjectLiteralKeys(
                 !std.mem.eql(u8, key, "初期化") and
                 std.mem.indexOf(u8, key, "__") == null)
             {
-                const info = if (force_unknown) EntryInfo{} else try propertyEntryInfo(allocator, items, header_index);
                 const dispatch = try std.fmt.allocPrint(allocator, "{s}__{s}", .{ dispatch_namespace, key });
-                const alias = DynamicCommandAlias{
-                    .source_namespace = try allocator.dupe(u8, key),
-                    .dispatch_namespace = dispatch,
-                    .import_position = import_position,
-                    .exact = true,
-                    .callable = info.class == .function and info.signature != null,
-                    .value = info.class == .constant,
-                    .signature = info.signature,
-                    .signature_required = true,
-                    .registration_certain = registration_certain,
-                };
-                // 同じオブジェクト内の同名キーはJSの後勝ち。最後の値だけで
-                // 分類し、先の関数entryを残さない。
-                var replaced = false;
-                for (aliases.items) |*existing| {
+                var duplicate = false;
+                for (aliases.items) |existing| {
                     if (existing.exact and
                         existing.import_position == import_position and
                         std.mem.eql(u8, existing.source_namespace, key) and
                         std.mem.eql(u8, existing.dispatch_namespace, dispatch))
                     {
-                        // 同時点で必ず実行される登録を、未実行になり得る登録で
-                        // 上書きしない（助詞シグネチャの選択元を失わない）。
-                        if (existing.registration_certain and !alias.registration_certain) {
-                            replaced = true;
-                            break;
-                        }
-                        existing.* = alias;
-                        replaced = true;
+                        duplicate = true;
                         break;
                     }
                 }
-                if (!replaced) try aliases.append(allocator, alias);
+                if (!duplicate) {
+                    try aliases.append(allocator, .{
+                        .source_namespace = try allocator.dupe(u8, key),
+                        .dispatch_namespace = dispatch,
+                        .import_position = import_position,
+                        .exact = true,
+                    });
+                }
             }
         }
         pos = skipPropertyRemainder(items, pos);
@@ -1325,291 +741,6 @@ test "appendJavaScriptPluginAliases は export default と addPluginObject か�
     try std.testing.expect(aliases.items[0].exact);
     try std.testing.expectEqualStrings("外部乙", aliases.items[1].source_namespace);
     try std.testing.expectEqualStrings("外部丙", aliases.items[2].source_namespace);
-}
-
-test "appendJavaScriptPluginAliases は type func だけを呼出し可能とし const と型不明は拒否する" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
-    var aliases: std.ArrayList(DynamicCommandAlias) = .empty;
-    const ok = try appendJavaScriptPluginAliases(allocator, &aliases,
-        \\export default {
-        \\  外部倍算: { type: "func", josi: [["を"]], fn: (x) => Number(x) * 2 },
-        \\  外部定数: { type: "const", value: 8 },
-        \\  関数式: { type: "func", josi: [["を"]], fn: function (x) { return x; } },
-        \\  矢印: { type: "func", josi: [["を", "から"]], fn: (x) => x },
-        \\  型不明: buildEntry(),
-        \\  助詞なし関数: { type: "func", fn: (x) => x },
-        \\};
-    , "pkg:test:calls.mjs", 7);
-    try std.testing.expect(ok);
-    try std.testing.expectEqual(@as(usize, 6), aliases.items.len);
-    const expected = [_]struct { name: []const u8, callable: bool }{
-        .{ .name = "外部倍算", .callable = true },
-        .{ .name = "外部定数", .callable = false },
-        .{ .name = "関数式", .callable = true },
-        .{ .name = "矢印", .callable = true },
-        .{ .name = "型不明", .callable = false },
-        .{ .name = "助詞なし関数", .callable = false },
-    };
-    for (expected) |item| {
-        var found = false;
-        for (aliases.items) |alias| {
-            if (!std.mem.eql(u8, alias.source_namespace, item.name)) continue;
-            try std.testing.expectEqual(item.callable, alias.callable);
-            found = true;
-        }
-        try std.testing.expect(found);
-    }
-
-    const callable = (try bindsCallableExact(allocator, false, 0, aliases.items, "外部倍算", 10)) orelse return error.TestUnexpectedResult;
-    try std.testing.expectEqualStrings("pkg:test:calls.mjs__外部倍算", callable.resolved_name);
-    try std.testing.expect((try bindsCallableExact(allocator, false, 0, aliases.items, "外部定数", 10)) == null);
-    try std.testing.expect((try bindsCallableExact(allocator, false, 0, aliases.items, "型不明", 10)) == null);
-    try std.testing.expect((try bindsCallableExact(allocator, false, 0, aliases.items, "catch-allのみ", 10)) == null);
-
-    const value = (try bindsValueExact(allocator, false, 0, aliases.items, "外部定数", 10)) orelse return error.TestUnexpectedResult;
-    try std.testing.expectEqualStrings("pkg:test:calls.mjs__外部定数", value.resolved_name);
-    try std.testing.expect((try bindsValueExact(allocator, false, 0, aliases.items, "外部倍算", 10)) == null);
-    try std.testing.expect((try bindsValueExact(allocator, false, 0, aliases.items, "catch-allのみ", 10)) == null);
-}
-
-test "appendJavaScriptPluginAliases はtype全体・重複キー・不明josiを保守的に分類する" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
-    var aliases: std.ArrayList(DynamicCommandAlias) = .empty;
-    const ok = try appendJavaScriptPluginAliases(allocator, &aliases,
-        \\export default {
-        \\  定数とメソッド: { type: "const", value: 8, fn(x) { return x; } },
-        \\  式が型: { type: "func" && "const", value: 8 },
-        \\  上書き: { type: "func", josi: [["を"]], fn: (x) => x },
-        \\  上書き: { type: "const", value: 8 },
-        \\  逆上書き: { type: "const", value: 8 },
-        \\  逆上書き: { type: "func", josi: [["を", "から"]], fn: (x) => x },
-        \\  展開: { ...base, type: "func", josi: [["を"]], fn: (x) => x },
-        \\  算出: { [key]: 1, type: "func", josi: [["を"]], fn: (x) => x },
-        \\  助詞不明: { type: "func", josi: buildJosi(), fn: (x) => x },
-        \\  メソッド: { fn(x) { return x; } },
-        \\  配列値: { type: "const", value: [1, 2] },
-        \\};
-    , "pkg:test:classify.mjs", 9);
-    try std.testing.expect(ok);
-
-    const Expected = struct { name: []const u8, callable: bool, value: bool };
-    const expected = [_]Expected{
-        .{ .name = "定数とメソッド", .callable = false, .value = true },
-        .{ .name = "式が型", .callable = false, .value = false },
-        .{ .name = "上書き", .callable = false, .value = true },
-        .{ .name = "逆上書き", .callable = true, .value = false },
-        .{ .name = "展開", .callable = false, .value = false },
-        .{ .name = "算出", .callable = false, .value = false },
-        .{ .name = "助詞不明", .callable = false, .value = false },
-        .{ .name = "メソッド", .callable = false, .value = false },
-        .{ .name = "配列値", .callable = false, .value = true },
-    };
-    for (expected) |item| {
-        var found = false;
-        for (aliases.items) |alias| {
-            if (!std.mem.eql(u8, alias.source_namespace, item.name)) continue;
-            try std.testing.expectEqual(item.callable, alias.callable);
-            try std.testing.expectEqual(item.value, alias.value);
-            if (item.callable) try std.testing.expect(alias.signature != null) else try std.testing.expect(alias.signature == null);
-            found = true;
-        }
-        try std.testing.expect(found);
-    }
-    // 重複キーはJSの最終有効値だけを残す。
-    var overwrite_count: usize = 0;
-    for (aliases.items) |alias| {
-        if (std.mem.eql(u8, alias.source_namespace, "上書き")) overwrite_count += 1;
-    }
-    try std.testing.expectEqual(@as(usize, 1), overwrite_count);
-
-    const resolved = (try bindsCallableExact(allocator, false, 0, aliases.items, "逆上書き", 10)) orelse return error.TestUnexpectedResult;
-    defer {
-        for (resolved.fallback_names) |name| allocator.free(name);
-        allocator.free(resolved.fallback_names);
-        allocator.free(resolved.resolved_name);
-    }
-    try std.testing.expect(resolved.signature != null);
-    try std.testing.expectEqual(@as(usize, 2), resolved.signature.?.slots[0].len);
-    try std.testing.expect((try bindsCallableExact(allocator, false, 0, aliases.items, "定数とメソッド", 10)) == null);
-    try std.testing.expect((try bindsValueExact(allocator, false, 0, aliases.items, "定数とメソッド", 10)) != null);
-    try std.testing.expect((try bindsValueExact(allocator, false, 0, aliases.items, "式が型", 10)) == null);
-    try std.testing.expect((try bindsCallableExact(allocator, false, 0, aliases.items, "助詞不明", 10)) == null);
-    try std.testing.expect((try bindsValueExact(allocator, false, 0, aliases.items, "助詞不明", 10)) == null);
-}
-
-test "appendJavaScriptPluginAliases はトップレベルの算出アクセサがあると既知キーを確定しない" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
-    var aliases: std.ArrayList(DynamicCommandAlias) = .empty;
-    const ok = try appendJavaScriptPluginAliases(allocator, &aliases,
-        \\export default {
-        \\  既知: { type: "const", value: 8 },
-        \\  get [key]() { return 1; },
-        \\};
-    , "pkg:test:opaque.mjs", 3);
-    try std.testing.expect(!ok);
-    try std.testing.expectEqual(@as(usize, 1), aliases.items.len);
-    try std.testing.expectEqualStrings("既知", aliases.items[0].source_namespace);
-    try std.testing.expect(!aliases.items[0].callable);
-    try std.testing.expect(!aliases.items[0].value);
-}
-
-test "appendJavaScriptPluginAliases はアクセサ・エスケープキー・複合式のentryを確定しない" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
-    var aliases: std.ArrayList(DynamicCommandAlias) = .empty;
-    const ok = try appendJavaScriptPluginAliases(allocator, &aliases,
-        \\export default {
-        \\  アクセサ上書き: { type: "func", josi: [["を"]], fn: (a) => a * 2, get type() { return "const" }, value: 8 },
-        \\  エスケープキー: { type: "func", josi: [["を"]], fn: (a) => a * 2, "ty\u0070e": "const", value: 8 },
-        \\  複合式: { type: "func", josi: [["を"]], fn: (a) => Number(a) * 2 } && { type: "const", value: 8 },
-        \\  可変長式: { type: "func", josi: [["と", "を"]], fn: (...args) => args.length, isVariableJosi: Boolean(1) },
-        \\  可変長真: { type: "func", josi: [["を"], ["に"]], fn: (a, b) => [a, b], isVariableJosi: true },
-        \\};
-    , "pkg:test:boundary.mjs", 5);
-    try std.testing.expect(ok);
-
-    for (aliases.items) |alias| {
-        if (std.mem.eql(u8, alias.source_namespace, "アクセサ上書き") or
-            std.mem.eql(u8, alias.source_namespace, "エスケープキー") or
-            std.mem.eql(u8, alias.source_namespace, "複合式"))
-        {
-            try std.testing.expect(!alias.callable);
-            try std.testing.expect(!alias.value);
-            try std.testing.expect(alias.signature == null);
-        }
-        if (std.mem.eql(u8, alias.source_namespace, "可変長式")) {
-            try std.testing.expect(alias.callable);
-            try std.testing.expect(alias.signature != null);
-            try std.testing.expect(!alias.signature.?.variable_known);
-        }
-        if (std.mem.eql(u8, alias.source_namespace, "可変長真")) {
-            try std.testing.expect(alias.callable);
-            try std.testing.expect(alias.signature.?.variable_known);
-            try std.testing.expect(alias.signature.?.variable_final);
-        }
-    }
-
-    const variable = (try bindsCallableExact(allocator, false, 0, aliases.items, "可変長式", 10)) orelse return error.TestUnexpectedResult;
-    defer {
-        for (variable.fallback_names) |name| allocator.free(name);
-        allocator.free(variable.fallback_names);
-        allocator.free(variable.resolved_name);
-    }
-    try std.testing.expect(variable.runtime_alignment);
-}
-
-test "appendJavaScriptPluginAliases はエスケープされた型アクセサを型分類より先に確定不能にする" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
-    const source =
-        \\export default {
-        \\  エスケープアクセサ: { type: "func", josi: [["を"]], fn: (a) => a * 2, get "ty\u0070e"() { return "const" }, value: 8 },
-        \\  エスケープデータ: { type: "func", josi: [["を"]], fn: (a) => a * 2, "ty\u0070e": "const", value: 8 },
-        \\  有効関数: { type: "func", josi: [["を"]], fn: (a) => a * 2 },
-        \\  有効定数: { type: "const", value: 8 },
-        \\};
-    ;
-    // Zigの複数行文字列はエスケープを処理しない。生成側で `type` へ
-    // 復号されていないことをここで固定する。
-    try std.testing.expect(std.mem.indexOf(u8, source, "\\u0070e") != null);
-
-    var aliases: std.ArrayList(DynamicCommandAlias) = .empty;
-    const ok = try appendJavaScriptPluginAliases(allocator, &aliases, source, "pkg:test:escaped-accessor.mjs", 3);
-    try std.testing.expect(ok);
-    try std.testing.expectEqual(@as(usize, 4), aliases.items.len);
-
-    for (aliases.items) |alias| {
-        if (std.mem.eql(u8, alias.source_namespace, "エスケープアクセサ") or
-            std.mem.eql(u8, alias.source_namespace, "エスケープデータ"))
-        {
-            try std.testing.expect(!alias.callable);
-            try std.testing.expect(!alias.value);
-            try std.testing.expect(alias.signature == null);
-            try std.testing.expect((try bindsCallableExact(allocator, false, 0, aliases.items, alias.source_namespace, 10)) == null);
-            try std.testing.expect((try bindsValueExact(allocator, false, 0, aliases.items, alias.source_namespace, 10)) == null);
-        }
-        if (std.mem.eql(u8, alias.source_namespace, "有効関数")) {
-            try std.testing.expect(alias.callable);
-            try std.testing.expect(alias.signature != null);
-            try std.testing.expect((try bindsCallableExact(allocator, false, 0, aliases.items, "有効関数", 10)) != null);
-        }
-        if (std.mem.eql(u8, alias.source_namespace, "有効定数")) {
-            try std.testing.expect(alias.value);
-            try std.testing.expect((try bindsValueExact(allocator, false, 0, aliases.items, "有効定数", 10)) != null);
-        }
-    }
-}
-
-test "appendJavaScriptPluginAliases は関数内addPluginObjectの登録を確定扱いしない" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
-    var aliases: std.ArrayList(DynamicCommandAlias) = .empty;
-    const ok = try appendJavaScriptPluginAliases(allocator, &aliases,
-        \\export default {};
-        \\function 未使用() { navigator.nako3.addPluginObject("b", { 外部命令: { type: "func", josi: [["に"]], fn: (a) => a * 3 } }); }
-    , "pkg:test:ghost.mjs", 7);
-    try std.testing.expect(ok);
-
-    var uncertain_count: usize = 0;
-    for (aliases.items) |alias| {
-        if (!std.mem.eql(u8, alias.source_namespace, "外部命令")) continue;
-        try std.testing.expect(!alias.registration_certain);
-        try std.testing.expectEqualStrings("に", alias.signature.?.slots[0][0]);
-        uncertain_count += 1;
-    }
-    try std.testing.expectEqual(@as(usize, 1), uncertain_count);
-
-    // 別moduleの先発候補（確実）と後発の未実行候補（不確実）で助詞が異なる。
-    const mixed = [_]DynamicCommandAlias{
-        .{ .source_namespace = "外部命令", .dispatch_namespace = "pkg:a.mjs__外部命令", .import_position = 3, .exact = true, .signature = .{ .slots = &.{&.{"を"}} }, .signature_required = true },
-        .{ .source_namespace = "外部命令", .dispatch_namespace = "pkg:b.mjs__外部命令", .import_position = 7, .exact = true, .signature = .{ .slots = &.{&.{"に"}} }, .signature_required = true, .registration_certain = false },
-    };
-    const resolved = (try bindsCallableExact(allocator, false, 0, &mixed, "外部命令", 10)) orelse return error.TestUnexpectedResult;
-    defer {
-        for (resolved.fallback_names) |name| allocator.free(name);
-        allocator.free(resolved.fallback_names);
-        if (resolved.candidate_plans.len > 0) allocator.free(resolved.candidate_plans);
-        allocator.free(resolved.resolved_name);
-    }
-    try std.testing.expect(resolved.runtime_alignment);
-    try std.testing.expectEqualStrings("pkg:b.mjs__外部命令", resolved.resolved_name);
-    try std.testing.expectEqual(@as(usize, 1), resolved.fallback_names.len);
-    try std.testing.expectEqualStrings("pkg:a.mjs__外部命令", resolved.fallback_names[0]);
-    // 後発の実登録が不確実で署名も異なるため、候補ごとの評価計画を持つ。
-    try std.testing.expectEqual(@as(usize, 2), resolved.candidate_plans.len);
-    try std.testing.expectEqualStrings("pkg:b.mjs__外部命令", resolved.candidate_plans[0].name);
-    try std.testing.expectEqualStrings("pkg:a.mjs__外部命令", resolved.candidate_plans[1].name);
-    try std.testing.expectEqualStrings("に", resolved.candidate_plans[0].signature.slots[0][0]);
-    try std.testing.expectEqualStrings("を", resolved.candidate_plans[1].signature.slots[0][0]);
-}
-
-test "bindsCallableExact はcatch-allや非関数exactを呼出し候補にしない" {
-    const allocator = std.testing.allocator;
-    const aliases = [_]DynamicCommandAlias{
-        .{ .source_namespace = "", .dispatch_namespace = "pkg:a:dyn.mjs", .import_position = 5, .unqualified = true },
-        .{ .source_namespace = "外部定数", .dispatch_namespace = "pkg:a:static.mjs__外部定数", .import_position = 5, .exact = true, .callable = false },
-    };
-    try std.testing.expect((try bindsCallableExact(allocator, false, 0, &aliases, "外部定数", 10)) == null);
-    try std.testing.expect((try bindsCallableExact(allocator, false, 0, &aliases, "外部関数", 10)) == null);
-    const only_exact = [_]DynamicCommandAlias{
-        .{ .source_namespace = "外部関数", .dispatch_namespace = "pkg:a:static.mjs__外部関数", .import_position = 5, .exact = true },
-    };
-    const resolved = (try bindsCallableExact(allocator, false, 0, &only_exact, "外部関数", 10)) orelse return error.TestUnexpectedResult;
-    defer {
-        for (resolved.fallback_names) |name| allocator.free(name);
-        allocator.free(resolved.fallback_names);
-        allocator.free(resolved.resolved_name);
-    }
-    try std.testing.expectEqualStrings("pkg:a:static.mjs__外部関数", resolved.resolved_name);
 }
 
 test "appendJavaScriptPluginAliases は spread や動的生成式で false を返し fallback を許容する" {
@@ -1917,87 +1048,4 @@ test "appendJavaScriptPluginAliases は算出プロパティ名付き修飾子�
     try std.testing.expectEqual(@as(usize, 2), combo_aliases.items.len);
     try std.testing.expectEqualStrings("async", combo_aliases.items[0].source_namespace);
     try std.testing.expectEqualStrings("get", combo_aliases.items[1].source_namespace);
-}
-
-test "bindsWithFallbacks は先発catch-allで実行時メタデータ利用と評価順確定を無効にしない" {
-    const allocator = std.testing.allocator;
-    // 先発の未確定catch-all (default spread) と、後発の実登録可変長命令。
-    // catch-allには静的署名がないが、後発の登録は確実なので、後発の可変長
-    // メタデータを実行時に読む必要を失わない。
-    const aliases = [_]DynamicCommandAlias{
-        .{ .source_namespace = "", .dispatch_namespace = "pkg:a:early.mjs", .import_position = 5, .unqualified = true },
-        .{ .source_namespace = "外部命令", .dispatch_namespace = "pkg:a:late.mjs__外部命令", .import_position = 10, .exact = true, .signature = .{ .slots = &.{&.{ "と", "を" }}, .variable_known = false }, .signature_required = true },
-    };
-    const resolved = (try bindsCallableExact(allocator, false, 0, &aliases, "外部命令", 20)) orelse return error.TestUnexpectedResult;
-    defer {
-        allocator.free(resolved.resolved_name);
-        for (resolved.fallback_names) |name| allocator.free(name);
-        allocator.free(resolved.fallback_names);
-    }
-    try std.testing.expectEqualStrings("pkg:a:late.mjs__外部命令", resolved.resolved_name);
-    try std.testing.expect(resolved.runtime_alignment);
-    try std.testing.expect(resolved.evaluation_order_known);
-
-    // 代替候補の署名が異なる場合は、実行時メタデータで割り当てつつ、
-    // 主候補の固定レイアウトを評価順へ流用しない。
-    const mixed = [_]DynamicCommandAlias{
-        .{ .source_namespace = "外部命令", .dispatch_namespace = "pkg:a:early.mjs__外部命令", .import_position = 5, .exact = true, .signature = .{ .slots = &.{&.{"を"}} }, .signature_required = true },
-        .{ .source_namespace = "", .dispatch_namespace = "pkg:a:early-dyn.mjs", .import_position = 6, .unqualified = true },
-        .{ .source_namespace = "外部命令", .dispatch_namespace = "pkg:a:late.mjs__外部命令", .import_position = 10, .exact = true, .signature = .{ .slots = &.{&.{"に"}} }, .signature_required = true, .registration_certain = false },
-    };
-    const mixed_resolved = (try bindsCallableExact(allocator, false, 0, &mixed, "外部命令", 20)) orelse return error.TestUnexpectedResult;
-    defer {
-        allocator.free(mixed_resolved.resolved_name);
-        for (mixed_resolved.fallback_names) |name| allocator.free(name);
-        allocator.free(mixed_resolved.fallback_names);
-    }
-    try std.testing.expect(mixed_resolved.runtime_alignment);
-    try std.testing.expect(!mixed_resolved.evaluation_order_known);
-
-    // 登録が確実でリテラルの可変長指定が揃う場合は、従来どおり静的計画で足りる。
-    const fixed = [_]DynamicCommandAlias{
-        .{ .source_namespace = "", .dispatch_namespace = "pkg:a:early.mjs", .import_position = 5, .unqualified = true },
-        .{ .source_namespace = "外部命令", .dispatch_namespace = "pkg:a:late.mjs__外部命令", .import_position = 10, .exact = true, .signature = .{ .slots = &.{&.{ "と", "を" }}, .variable_final = true }, .signature_required = true },
-    };
-    const fixed_resolved = (try bindsCallableExact(allocator, false, 0, &fixed, "外部命令", 20)) orelse return error.TestUnexpectedResult;
-    defer {
-        allocator.free(fixed_resolved.resolved_name);
-        for (fixed_resolved.fallback_names) |name| allocator.free(name);
-        allocator.free(fixed_resolved.fallback_names);
-    }
-    try std.testing.expect(!fixed_resolved.runtime_alignment);
-}
-
-test "空のjosi表を持つ単一確実候補だけを解析時判定の対象にする" {
-    const allocator = std.testing.allocator;
-    // `josi: []` と式の`isVariableJosi`（Boolean(1)/Boolean(0)）の組合せ。
-    // 可変長の真偽は実行時にしか決まらないが、スロットが0個であることは
-    // 静的に確定しているため、単一確実候補として解析時に扱える。
-    const zero = [_]DynamicCommandAlias{
-        .{ .source_namespace = "外部命令", .dispatch_namespace = "pkg:a:zero.mjs__外部命令", .import_position = 5, .exact = true, .signature = .{ .slots = &.{}, .variable_known = false }, .signature_required = true },
-    };
-    const zero_resolved = (try bindsCallableExact(allocator, false, 0, &zero, "外部命令", 10)) orelse return error.TestUnexpectedResult;
-    defer {
-        allocator.free(zero_resolved.resolved_name);
-        allocator.free(zero_resolved.fallback_names);
-        if (zero_resolved.candidate_plans.len > 0) allocator.free(zero_resolved.candidate_plans);
-    }
-    try std.testing.expect(zero_resolved.runtime_alignment);
-    try std.testing.expect(zero_resolved.single_certain);
-    try std.testing.expectEqual(@as(usize, 0), zero_resolved.signature.?.slots.len);
-
-    // 実行時に登録され得る別候補が残る場合は単一確実候補にしない。
-    const competing = [_]DynamicCommandAlias{
-        .{ .source_namespace = "外部命令", .dispatch_namespace = "pkg:a:zero.mjs__外部命令", .import_position = 5, .exact = true, .signature = .{ .slots = &.{}, .variable_known = false }, .signature_required = true },
-        .{ .source_namespace = "外部命令", .dispatch_namespace = "pkg:a:ghost.mjs__外部命令", .import_position = 7, .exact = true, .signature = .{ .slots = &.{&.{"を"}}, .variable_known = false }, .signature_required = true, .registration_certain = false },
-    };
-    const competing_resolved = (try bindsCallableExact(allocator, false, 0, &competing, "外部命令", 10)) orelse return error.TestUnexpectedResult;
-    defer {
-        allocator.free(competing_resolved.resolved_name);
-        for (competing_resolved.fallback_names) |name| allocator.free(name);
-        allocator.free(competing_resolved.fallback_names);
-        if (competing_resolved.candidate_plans.len > 0) allocator.free(competing_resolved.candidate_plans);
-    }
-    try std.testing.expect(competing_resolved.runtime_alignment);
-    try std.testing.expect(!competing_resolved.single_certain);
 }

@@ -33,8 +33,6 @@ pub const Emitter = struct {
     esm_plugin_names: std.ArrayList([]const u8) = .empty,
     /// フォールバック候補列を持つ動的 plugin 呼出し／関数参照の名前列（[0]=主配送先）。
     plugin_fallback_lists: std.ArrayList([]const []const u8) = .empty,
-    /// 実行時助詞割り当てに使う未整列実引数の助詞列。
-    plugin_argument_lists: std.ArrayList([]ArgumentJosiEntry) = .empty,
     system_arrays: std.ArrayList(usize) = .empty,
     system_dictionaries: std.ArrayList(usize) = .empty,
     system_era_data: std.ArrayList(usize) = .empty,
@@ -68,11 +66,6 @@ pub const Emitter = struct {
         self.esm_plugin_names.deinit(self.allocator);
         for (self.plugin_fallback_lists.items) |candidates| self.allocator.free(candidates);
         self.plugin_fallback_lists.deinit(self.allocator);
-        for (self.plugin_argument_lists.items) |arguments| {
-            for (arguments) |argument| self.allocator.free(argument.josi);
-            self.allocator.free(arguments);
-        }
-        self.plugin_argument_lists.deinit(self.allocator);
         self.system_arrays.deinit(self.allocator);
         self.system_dictionaries.deinit(self.allocator);
         self.system_era_data.deinit(self.allocator);
@@ -185,43 +178,6 @@ pub const Emitter = struct {
             if (matches) return index;
         }
         return null;
-    }
-
-    pub const ArgumentJosiEntry = struct {
-        josi: []const u8,
-        implicit: bool,
-    };
-
-    pub fn pluginArgumentIndex(self: Emitter, josi: []const []const u8, implicit: []const bool) ?usize {
-        if (josi.len != implicit.len) return null;
-        for (self.plugin_argument_lists.items, 0..) |arguments, index| {
-            if (arguments.len != josi.len) continue;
-            var matches = true;
-            for (arguments, josi, implicit) |argument, josi_item, implicit_item| {
-                if (argument.implicit != implicit_item or !std.mem.eql(u8, argument.josi, josi_item)) {
-                    matches = false;
-                    break;
-                }
-            }
-            if (matches) return index;
-        }
-        return null;
-    }
-
-    pub fn ensurePluginArgumentList(self: *Emitter, josi: []const []const u8, implicit: []const bool) !void {
-        if (self.pluginArgumentIndex(josi, implicit) != null) return;
-        if (josi.len != implicit.len) return error.InvalidPluginArguments;
-        const list = try self.allocator.alloc(ArgumentJosiEntry, josi.len);
-        var initialized: usize = 0;
-        errdefer {
-            for (list[0..initialized]) |argument| self.allocator.free(argument.josi);
-            self.allocator.free(list);
-        }
-        for (josi, implicit, 0..) |josi_item, implicit_item, index| {
-            list[index] = .{ .josi = try self.allocator.dupe(u8, josi_item), .implicit = implicit_item };
-            initialized += 1;
-        }
-        try self.plugin_argument_lists.append(self.allocator, list);
     }
 
     pub fn ensurePluginFallbackList(self: *Emitter, primary: []const u8, fallbacks: []const []const u8) !void {
@@ -528,7 +484,6 @@ pub fn functionMayInvokeBridge(function: ir.Function) bool {
         .property_get,
         .element_set,
         .init_array_index,
-        .plugin_registered,
         => return true,
         else => {},
     };

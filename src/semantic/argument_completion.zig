@@ -125,41 +125,14 @@ pub fn plan(allocator: std.mem.Allocator, slots: []const Slot, arguments: []cons
     return .{ .operands = operands, .provided = provided, .missing = missing };
 }
 
-/// 実行時の登録メタデータで助詞を割り当てる呼出し向けに、式を評価する
-/// 実引数の添字列を返す。固定スロットへ割り当てた実引数をスロット順へ
-/// 並べ、可変長スロットの実引数と未割当の実引数はソース順で後ろへ置く。
-/// これにより、値だけを後から並べ替えるのではなく、副作用のある式を
-/// 公式`yCallFunc`と同じスロット順で一度だけ評価できる。`slots`には
-/// 実行時に確定できる固定スロットだけを渡す（可変長末尾は除く）。
-pub fn evaluationOrder(allocator: std.mem.Allocator, slots: []const Slot, arguments: []const *ast.Node) ![]usize {
-    var result = try match(allocator, slots, arguments, false);
-    defer result.deinit(allocator);
-    const order = try allocator.alloc(usize, arguments.len);
-    var position: usize = 0;
-    for (result.assigned) |item| if (item) |argument| {
-        order[position] = argument;
-        position += 1;
-    };
-    // `match`は連文マーカーを未使用のまま残す。未割当の実引数をソース順で
-    // 末尾へ置くことで、可変長スロットの引数順とマーカーの評価位置を保つ。
-    for (result.used, 0..) |used, index| if (!used) {
-        order[position] = index;
-        position += 1;
-    };
-    std.debug.assert(position == order.len);
-    return order;
-}
-
+/// `plan`と同じ割当規則で、どのスロットにも助詞が一致しなかった引数の
+/// 添字を返す。公式はこの値をスタックへ残して行末の未解決の単語エラーに
+/// する。`slots.len == 0`のときは全引数が未解決になる。
 pub fn unresolvedArguments(allocator: std.mem.Allocator, slots: []const Slot, arguments: []const *ast.Node, variable_final: bool) ![]usize {
     var unresolved: std.ArrayList(usize) = .empty;
     errdefer unresolved.deinit(allocator);
     if (slots.len == 0) {
-        for (arguments, 0..) |argument, index| {
-            // 連文マーカーはユーザーの実引数ではないため、引数を取らない
-            // 関数でも未解決扱いにしない。
-            if (isChainImplicitIt(argument)) continue;
-            try unresolved.append(allocator, index);
-        }
+        for (0..arguments.len) |index| try unresolved.append(allocator, index);
         return unresolved.toOwnedSlice(allocator);
     }
     var result = try match(allocator, slots, arguments, variable_final);
@@ -401,30 +374,4 @@ test "仮引数の助詞候補『|』を異表記スロットへ分割する" {
     try std.testing.expectEqualStrings("を", slots[0].josi[2]);
     try std.testing.expectEqual(@as(usize, 1), slots[1].josi.len);
     try std.testing.expectEqualStrings("へ", slots[1].josi[0]);
-}
-
-test "evaluationOrderは固定スロット順に並べ可変長と未割当をソース順で残す" {
-    var nodes = [_]ast.Node{
-        .{ .kind = .number, .span = ast.emptySpan(), .end_span = ast.emptySpan(), .josi = "と" },
-        .{ .kind = .number, .span = ast.emptySpan(), .end_span = ast.emptySpan(), .josi = "から" },
-        .{ .kind = .number, .span = ast.emptySpan(), .end_span = ast.emptySpan(), .josi = "と" },
-    };
-    const arguments = [_]*ast.Node{ &nodes[0], &nodes[1], &nodes[2] };
-    // 可変長の末尾スロットを除いた固定部分 `から` だけを渡す。
-    const slots = [_]Slot{.{ .josi = &.{"から"} }};
-    const order = try evaluationOrder(std.testing.allocator, &slots, &arguments);
-    defer std.testing.allocator.free(order);
-    try std.testing.expectEqualSlices(usize, &.{ 1, 0, 2 }, order);
-}
-
-test "evaluationOrderは全スロット固定のときスロット順で評価する" {
-    var nodes = [_]ast.Node{
-        .{ .kind = .number, .span = ast.emptySpan(), .end_span = ast.emptySpan(), .josi = "を" },
-        .{ .kind = .number, .span = ast.emptySpan(), .end_span = ast.emptySpan(), .josi = "から" },
-    };
-    const arguments = [_]*ast.Node{ &nodes[0], &nodes[1] };
-    const slots = [_]Slot{ .{ .josi = &.{"から"} }, .{ .josi = &.{"を"} } };
-    const order = try evaluationOrder(std.testing.allocator, &slots, &arguments);
-    defer std.testing.allocator.free(order);
-    try std.testing.expectEqualSlices(usize, &.{ 1, 0 }, order);
 }

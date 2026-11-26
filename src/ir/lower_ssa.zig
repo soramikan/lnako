@@ -1,9 +1,6 @@
 const std = @import("std");
-const ast = @import("../frontend/ast.zig");
 const hir = @import("hir.zig");
 const ir = @import("nako_ir.zig");
-const argument_completion = @import("../semantic/argument_completion.zig");
-const dynamic_commands = @import("../semantic/dynamic_commands.zig");
 const system_constant = @import("../runtime/system_constant.zig");
 
 pub fn lower(backing_allocator: std.mem.Allocator, hir_program: hir.Program) !ir.Program {
@@ -209,10 +206,7 @@ const FunctionBuilder = struct {
                 try self.lowerFallible(.unary, toType(node.type_hint), node)
             else
                 try self.lowerVariadic(.unary, toType(node.type_hint), node),
-            .call => if (node.runtime_argument_alignment and node.candidate_plans.len >= 2)
-                try self.lowerDynamicCandidateCall(node)
-            else
-                try self.lowerCall(.call, node),
+            .call => try self.lowerCall(.call, node),
             .call_value => try self.lowerCall(.call_value, node),
             .make_array => try self.lowerVariadic(.make_array, .array, node),
             .make_object => try self.lowerVariadic(.make_object, .object, node),
@@ -292,156 +286,6 @@ const FunctionBuilder = struct {
     fn lowerCall(self: *FunctionBuilder, opcode: ir.Opcode, node: hir.Node) !?ir.ValueId {
         const result = (try self.lowerVariadic(opcode, toType(node.type_hint), node)) orelse return null;
         try self.lowerExceptionCheck(node);
-        return result;
-    }
-
-    /// 候補ごとの助詞計画を、その候補が実登録されている分岐の中だけで評価する。
-    /// 主候補→フォールバック候補の順に登録を問い合わせ、選ばれた候補の固定
-    /// スロット順で実引数を一度だけ評価してから、同じ候補を明示名で呼ぶ。
-    /// 登録の選択を式の評価より前に行い、評価中に別候補が登録されても
-    /// 計画と呼出しがずれないよう、各分岐は自分の候補名だけを呼ぶ。
-    fn lowerDynamicCandidateCall(self: *FunctionBuilder, node: hir.Node) !?ir.ValueId {
-        const plans = node.candidate_plans;
-        const orders = try self.allocator.alloc([]usize, plans.len);
-        for (plans, orders) |plan, *order| order.* = try self.candidateEvaluationOrder(plan, node);
-        var same_order = true;
-        for (orders[1..]) |order| {
-            if (!std.mem.eql(usize, orders[0], order)) {
-                same_order = false;
-                break;
-            }
-        }
-        if (same_order) {
-            // 候補ごとに順序が同じなら、登録を問い合わせる分岐は不要。
-            // その順序で一度だけ評価し、値はソース順で実行時割り当てへ渡す。
-            const values = try self.lowerArgumentsInOrder(node, orders[0]);
-            if (self.isTerminated()) return null;
-            const operands = try self.assembleOperands(node, values);
-            const result = try self.emitValue(.call, toType(node.type_hint), operands, node);
-            try self.lowerExceptionCheck(node);
-            return result;
-        }
-
-        const merge_block = try self.createBlock("dynamic.candidate.merge");
-        var incoming: std.ArrayList(ir.PhiIncoming) = .empty;
-        const candidate_blocks = try self.allocator.alloc(ir.BlockId, plans.len);
-        for (candidate_blocks) |*block| block.* = try self.createBlock("dynamic.candidate.then");
-        const test_blocks = try self.allocator.alloc(ir.BlockId, plans.len);
-        for (0..plans.len - 1) |index| test_blocks[index] = try self.createBlock("dynamic.candidate.test");
-        const none_block = try self.createBlock("dynamic.candidate.none");
-
-        var next_block = self.current;
-        for (plans, 0..) |plan, index| {
-            self.current = next_block;
-            var predicate = node;
-            predicate.name = plan.name;
-            predicate.fallback_names = &.{};
-            const condition = try self.emitValue(.plugin_registered, .boolean, &.{}, predicate);
-            try self.lowerExceptionCheck(predicate);
-            const fallback_block = if (index + 1 < plans.len) test_blocks[index] else none_block;
-            self.terminate(.{ .conditional_branch = .{
-                .condition = condition,
-                .then_block = candidate_blocks[index],
-                .else_block = fallback_block,
-            } });
-
-            self.current = candidate_blocks[index];
-            const values = try self.lowerArgumentsInOrder(node, orders[index]);
-            if (!self.isTerminated()) {
-                const operands = try self.assembleOperands(node, values);
-                const result = (try self.emitCandidateCall(plan, node, operands)) orelse return error.InvalidHir;
-                if (!self.isTerminated()) {
-                    try incoming.append(self.allocator, .{ .predecessor = self.current, .value = result });
-                    self.terminate(.{ .branch = merge_block });
-                }
-            }
-            if (index + 1 < plans.len) next_block = test_blocks[index];
-        }
-
-        // どの候補も未登録の経路。従来どおり主候補名とフォールバック一覧で
-        // 呼び出し、実行時の未登録診断へ戻す。式はソース順で一度だけ評価する。
-        self.current = none_block;
-        const source_order = try identityOrder(self.allocator, node.children.len);
-        const none_values = try self.lowerArgumentsInOrder(node, source_order);
-        if (!self.isTerminated()) {
-            const operands = try self.assembleOperands(node, none_values);
-            const result = try self.emitValue(.call, toType(node.type_hint), operands, node);
-            try self.lowerExceptionCheck(node);
-            if (!self.isTerminated()) {
-                try incoming.append(self.allocator, .{ .predecessor = self.current, .value = result });
-                self.terminate(.{ .branch = merge_block });
-            }
-        }
-
-        self.current = merge_block;
-        if (incoming.items.len == 0) {
-            self.terminate(.unreachable_terminator);
-            return null;
-        }
-        const merged = self.next_value;
-        self.next_value += 1;
-        try self.currentBlock().instructions.append(self.allocator, .{
-            .result = merged,
-            .opcode = .phi,
-            .type = toType(node.type_hint),
-            .phi_incoming = try incoming.toOwnedSlice(self.allocator),
-            .span = node.span,
-        });
-        return merged;
-    }
-
-    fn candidateEvaluationOrder(self: *FunctionBuilder, plan: hir.CandidatePlan, node: hir.Node) ![]usize {
-        const signature = plan.signature;
-        const slots = try dynamic_commands.signatureSlots(self.allocator, signature);
-        const fixed_count = if (slots.len == 0)
-            0
-        else if (signature.variable_final or !signature.variable_known)
-            slots.len - 1
-        else
-            slots.len;
-        // HIRは子をASTノードではなくNodeIdで持つため、助詞割り当てに必要な
-        // 助詞と連文マーカーだけを持つ一時ノードを組み立てる（実体の評価は
-        // lowerArgumentsInOrderが元の子IDで行う）。
-        const arguments = try self.allocator.alloc(*ast.Node, node.children.len);
-        for (arguments, 0..) |*argument, index| {
-            const pseudo = try self.allocator.create(ast.Node);
-            pseudo.* = .{
-                .kind = .word,
-                .span = node.span,
-                .end_span = node.span,
-                .josi = if (index < node.argument_josi.len) node.argument_josi[index] else "",
-                .is_implicit_it = index < node.argument_implicit.len and node.argument_implicit[index],
-            };
-            argument.* = pseudo;
-        }
-        return argument_completion.evaluationOrder(self.allocator, slots[0..fixed_count], arguments);
-    }
-
-    /// 指定順に子をlowerし、ソース位置ごとの値へ戻す。途中で制御が終端した
-    /// 経路では残りの式を評価しない（例外送出後の式を実行しない公式と同じ）。
-    fn lowerArgumentsInOrder(self: *FunctionBuilder, node: hir.Node, order: []const usize) ![]?ir.ValueId {
-        const values = try self.allocator.alloc(?ir.ValueId, node.children.len);
-        @memset(values, null);
-        for (order) |index| {
-            if (self.isTerminated()) break;
-            if (index >= node.children.len) return error.InvalidHir;
-            values[index] = try self.lowerNode(node.children[index]);
-        }
-        return values;
-    }
-
-    fn assembleOperands(self: *FunctionBuilder, node: hir.Node, values: []const ?ir.ValueId) ![]ir.ValueId {
-        const operands = try self.allocator.alloc(ir.ValueId, values.len);
-        for (values, 0..) |value, index| operands[index] = value orelse try self.emitUndefined(node);
-        return operands;
-    }
-
-    fn emitCandidateCall(self: *FunctionBuilder, plan: hir.CandidatePlan, node: hir.Node, operands: []const ir.ValueId) !?ir.ValueId {
-        var call_node = node;
-        call_node.name = plan.name;
-        call_node.fallback_names = &.{};
-        const result = try self.emitValue(.call, toType(node.type_hint), operands, call_node);
-        try self.lowerExceptionCheck(call_node);
         return result;
     }
 
@@ -958,9 +802,6 @@ const FunctionBuilder = struct {
             .is_builtin_call = node.is_builtin_call,
             .dynamic_call = node.dynamic_call,
             .fallback_names = if (node.fallback_names.len > 0) try dupeStrings(self.allocator, node.fallback_names) else &.{},
-            .runtime_argument_alignment = node.runtime_argument_alignment,
-            .argument_josi = if (node.argument_josi.len > 0) try dupeStrings(self.allocator, node.argument_josi) else &.{},
-            .argument_implicit = try self.allocator.dupe(bool, node.argument_implicit),
             .check_array_init = node.check_array_init,
             .local_target = node.local_target,
             .is_foreach = node.kind == .foreach_statement,
@@ -991,9 +832,6 @@ const FunctionBuilder = struct {
             .is_builtin_call = node.is_builtin_call,
             .dynamic_call = node.dynamic_call,
             .fallback_names = if (node.fallback_names.len > 0) try dupeStrings(self.allocator, node.fallback_names) else &.{},
-            .runtime_argument_alignment = node.runtime_argument_alignment,
-            .argument_josi = if (node.argument_josi.len > 0) try dupeStrings(self.allocator, node.argument_josi) else &.{},
-            .argument_implicit = try self.allocator.dupe(bool, node.argument_implicit),
             .check_array_init = node.check_array_init,
             .local_target = node.local_target,
             .is_foreach = node.kind == .foreach_statement,
@@ -1079,9 +917,3 @@ fn dupeStrings(allocator: std.mem.Allocator, strings: []const []const u8) ![]con
 }
 
 pub const tests = @import("lower_ssa_test.zig");
-
-fn identityOrder(allocator: std.mem.Allocator, count: usize) ![]usize {
-    const order = try allocator.alloc(usize, count);
-    for (order, 0..) |*index, value| index.* = value;
-    return order;
-}

@@ -1065,366 +1065,6 @@ test "package内の先発静的ESMと後発動的ESMは非競合時にフォー�
     }
 }
 
-test "ローカルパッケージの戻り値候補はESM関数だけを実行し定数は実引数を拒否する" {
-    if (!lnako.compat.quickjs.available()) return error.SkipZigTest;
-    const gpa = testing.allocator;
-    const io = testing.io;
-    var temporary = test_sandbox.tmpDir(.{});
-    defer temporary.cleanup();
-
-    try temporary.dir.createDirPath(io, "packages/owned");
-    try temporary.dir.writeFile(io, .{
-        .sub_path = "packages/owned/plugin.mjs",
-        .data =
-        \\export default {
-        \\  外部倍算: { type: "func", josi: [["を"]], fn: (value) => Number(value) * 2 },
-        \\  外部引算: { type: "func", josi: [["から"],["を"]], fn: (a, b) => Number(a) - Number(b) },
-        \\  外部定数: { type: "const", value: 8 },
-        \\};
-        \\
-        ,
-    });
-    try temporary.dir.writeFile(io, .{
-        .sub_path = "packages/owned/main.nako3",
-        .data =
-        \\!「./plugin.mjs」を取り込む。
-        \\●試験とは
-        \\  3を外部倍算で戻る。
-        \\ここまで
-        \\●C風とは
-        \\  外部倍算(3)を戻る。
-        \\ここまで
-        \\●定数値とは
-        \\  「x」と表示して外部定数を戻る。
-        \\ここまで
-        \\●連文とは
-        \\  「x」と表示して3を外部倍算で戻る。
-        \\ここまで
-        \\●引算とは
-        \\  3を10から外部引算で戻る。
-        \\ここまで
-        \\
-        ,
-    });
-    try temporary.dir.writeFile(io, .{
-        .sub_path = "main.nako3",
-        .data =
-        \\!「pkg:owned」を取り込む
-        \\●束縛値とは
-        \\  N=5
-        \\  Nで戻る。
-        \\ここまで
-        \\●改行値とは
-        \\  改行で戻る。
-        \\ここまで
-        \\owned__試験()を表示
-        \\owned__C風()を表示
-        \\owned__定数値()を表示
-        \\owned__連文()を表示
-        \\owned__引算()を表示
-        \\束縛値()を表示
-        \\改行値()を表示
-        \\
-        ,
-    });
-    try temporary.dir.writeFile(io, .{
-        .sub_path = "reject-main.nako3",
-        .data =
-        \\!「pkg:owned-bad」を取り込む
-        \\owned-bad__定数呼出()を表示
-        \\
-        ,
-    });
-    try temporary.dir.createDirPath(io, "packages/owned-bad");
-    try temporary.dir.writeFile(io, .{
-        .sub_path = "packages/owned-bad/plugin.mjs",
-        .data =
-        \\export default {
-        \\  外部定数: { type: "const", value: 8, fn(x) { return x; } },
-        \\  式が型: { type: "func" && "const", value: 8 },
-        \\  上書き: { type: "func", josi: [["を"]], fn: (x) => x },
-        \\  上書き: { type: "const", value: 8 },
-        \\  助詞不明: { type: "func", josi: buildJosi(), fn: (x) => x },
-        \\  外部倍算: { type: "func", josi: [["を"]], fn: (x) => Number(x) * 2 },
-        \\};
-        \\
-        ,
-    });
-    try temporary.dir.writeFile(io, .{
-        .sub_path = "packages/owned-bad/main.nako3",
-        .data =
-        \\!「./plugin.mjs」を取り込む。
-        \\●定数呼出とは
-        \\  3を外部定数で戻る。
-        \\ここまで
-        \\●式型呼出とは
-        \\  3を式が型で戻る。
-        \\ここまで
-        \\●上書き呼出とは
-        \\  3を上書きで戻る。
-        \\ここまで
-        \\●助詞不明呼出とは
-        \\  3を助詞不明で戻る。
-        \\ここまで
-        \\●誤助詞とは
-        \\  3に外部倍算で戻る。
-        \\ここまで
-        \\●余分とは
-        \\  3を4から外部倍算で戻る。
-        \\ここまで
-        \\
-        ,
-    });
-
-    const app_root = try temporary.dir.realPathFileAlloc(io, ".", gpa);
-    defer gpa.free(app_root);
-    const Resolver = struct {
-        root: []const u8,
-        fn resolve(context: *anyopaque, allocator: std.mem.Allocator, _: []const u8, _: ?[]const u8, specifier: []const u8) !lnako.semantic.module_graph.ResolvedPackageImport {
-            const self: *@This() = @ptrCast(@alignCast(context));
-            if (std.mem.eql(u8, specifier, "pkg:owned")) {
-                return .{
-                    .path = try std.fs.path.join(allocator, &.{ self.root, "packages", "owned", "main.nako3" }),
-                    .canonical_id = try allocator.dupe(u8, "pkg:owned/main"),
-                    .namespace = "owned",
-                    .package_owner = try allocator.dupe(u8, "pkg:owned"),
-                    .package_root = try std.fs.path.join(allocator, &.{ self.root, "packages", "owned" }),
-                };
-            }
-            if (std.mem.eql(u8, specifier, "pkg:owned-bad")) {
-                return .{
-                    .path = try std.fs.path.join(allocator, &.{ self.root, "packages", "owned-bad", "main.nako3" }),
-                    .canonical_id = try allocator.dupe(u8, "pkg:owned-bad/main"),
-                    .namespace = "owned-bad",
-                    .package_owner = try allocator.dupe(u8, "pkg:owned-bad"),
-                    .package_root = try std.fs.path.join(allocator, &.{ self.root, "packages", "owned-bad" }),
-                };
-            }
-            return error.PackageNotFound;
-        }
-    };
-    var resolver = Resolver{ .root = app_root };
-
-    // Interpreter: 助詞呼出し・C風呼出しは6、値だけのESM定数は8、
-    // 普通の束縛は5、組み込みの値`改行`は空行を表示する。
-    {
-        const main_path = try std.fs.path.join(gpa, &.{ app_root, "main.nako3" });
-        defer gpa.free(main_path);
-        var stderr: std.Io.Writer.Allocating = .init(gpa);
-        defer stderr.deinit();
-        var program = (try compile_pipeline.compileInput(gpa, io, main_path, .{
-            .compat_js = true,
-            .package_resolver = .{ .context = &resolver, .resolveFn = Resolver.resolve },
-        }, &stderr.writer)) orelse return error.UnexpectedCompileFailure;
-        defer program.deinit();
-
-        var runtime = lnako.runtime.value.Runtime.init(gpa);
-        defer runtime.deinit();
-        var host = lnako.runtime.interpreter.BufferHost{ .allocator = gpa };
-        defer host.deinit();
-        var interpreter = lnako.runtime.interpreter.Interpreter.init(gpa, &runtime, program, host.host());
-        defer interpreter.deinit();
-        _ = try interpreter.run();
-        try testing.expectEqualStrings("6\n6\nx\n8\nx\n6\n7\n5\n\n\n", host.written());
-    }
-
-    // 型・式境界・重複キー・助詞シグネチャを静的に確定できない戻り値候補は、
-    // 実引数を消費せずInterpreterのcompileで拒否する。
-    const reject_mains = [_]struct { path: []const u8, source: []const u8 }{
-        .{ .path = "reject-main.nako3", .source = "!「pkg:owned-bad」を取り込む\nowned-bad__定数呼出()を表示\n" },
-        .{ .path = "reject-computed.nako3", .source = "!「pkg:owned-bad」を取り込む\nowned-bad__式型呼出()を表示\n" },
-        .{ .path = "reject-duplicate.nako3", .source = "!「pkg:owned-bad」を取り込む\nowned-bad__上書き呼出()を表示\n" },
-        .{ .path = "reject-josi.nako3", .source = "!「pkg:owned-bad」を取り込む\nowned-bad__助詞不明呼出()を表示\n" },
-        .{ .path = "reject-wrong-particle.nako3", .source = "!「pkg:owned-bad」を取り込む\nowned-bad__誤助詞()を表示\n" },
-        .{ .path = "reject-extra.nako3", .source = "!「pkg:owned-bad」を取り込む\nowned-bad__余分()を表示\n" },
-    };
-    for (reject_mains) |item| {
-        try temporary.dir.writeFile(io, .{ .sub_path = item.path, .data = item.source });
-        const reject_path = try std.fs.path.join(gpa, &.{ app_root, item.path });
-        defer gpa.free(reject_path);
-        var stderr: std.Io.Writer.Allocating = .init(gpa);
-        defer stderr.deinit();
-        try testing.expect((try compile_pipeline.compileInput(gpa, io, reject_path, .{
-            .compat_js = true,
-            .package_resolver = .{ .context = &resolver, .resolveFn = Resolver.resolve },
-        }, &stderr.writer)) == null);
-        try testing.expect(std.mem.indexOf(u8, stderr.written(), "『戻』文の直前に未解決の引数があります") != null);
-    }
-}
-
-test "Issue #297 第6回: 実登録候補の助詞・可変長・不足判定をInterpreterで共有する" {
-    if (!lnako.compat.quickjs.available()) return error.SkipZigTest;
-    const gpa = testing.allocator;
-    const io = testing.io;
-    var temporary = test_sandbox.tmpDir(.{});
-    defer temporary.cleanup();
-
-    try temporary.dir.createDirPath(io, "packages/ghost");
-    try temporary.dir.writeFile(io, .{
-        .sub_path = "ghost_main.nako3",
-        .data = "!「pkg:ghost」を取り込む\nghost__差分()を表示\nghost__順序()を表示\nghost__両方()を表示\nghost__可変()を表示\n",
-    });
-    try temporary.dir.writeFile(io, .{
-        .sub_path = "packages/ghost/main.nako3",
-        .data =
-        \\!「./a.mjs」を取り込む
-        \\!「./b.mjs」を取り込む
-        \\●差分とは
-        \\  3を外部命令で戻る。
-        \\ここまで
-        \\●順序とは
-        \\  3を10から外部引算で戻る。
-        \\ここまで
-        \\●両方とは
-        \\  3を10から外部競合で戻る。
-        \\ここまで
-        \\●可変とは
-        \\  3と5を外部可変で戻る。
-        \\ここまで
-        \\
-        ,
-    });
-    try temporary.dir.writeFile(io, .{
-        .sub_path = "packages/ghost/a.mjs",
-        .data =
-        \\export default {
-        \\  外部命令: { type: "func", josi: [["を"]], fn: (a) => Number(a) * 2 },
-        \\  外部引算: { type: "func", josi: [["から"],["を"]], fn: (a, b) => Number(a) - Number(b) },
-        \\  外部競合: { type: "func", josi: [["から"],["を"]], fn: (a, b) => Number(a) - Number(b) },
-        \\  外部可変: { type: "func", josi: [["と","を"]], fn: (...args) => args.length, isVariableJosi: Boolean(1) },
-        \\};
-        \\
-        ,
-    });
-    try temporary.dir.writeFile(io, .{
-        .sub_path = "packages/ghost/b.mjs",
-        .data =
-        \\export default { 外部競合: { type: "func", josi: [["を"],["から"]], fn: (b, a) => Number(a) - Number(b) + 100 } };
-        \\function 未使用() {
-        \\  navigator.nako3.addPluginObject("b", {
-        \\    外部命令: { type: "func", josi: [["に"]], fn: (a) => Number(a) * 3 },
-        \\    外部引算: { type: "func", josi: [["を"],["から"]], fn: (b, a) => Number(a) - Number(b) + 100 }
-        \\  });
-        \\}
-        \\
-        ,
-    });
-
-    try temporary.dir.createDirPath(io, "packages/bad");
-    try temporary.dir.writeFile(io, .{
-        .sub_path = "packages/bad/main.nako3",
-        .data =
-        \\!「./plugin.mjs」を取り込む
-        \\●アクセサとは
-        \\  3をアクセサで戻る。
-        \\ここまで
-        \\●エスケープとは
-        \\  3をエスケープで戻る。
-        \\ここまで
-        \\●複合式とは
-        \\  3を複合式で戻る。
-        \\ここまで
-        \\
-        ,
-    });
-    try temporary.dir.writeFile(io, .{
-        .sub_path = "packages/bad/plugin.mjs",
-        .data =
-        \\export default {
-        \\  アクセサ: { type: "func", josi: [["を"]], fn: (a) => a * 2, get type() { return "const" }, value: 8 },
-        \\  エスケープ: { type: "func", josi: [["を"]], fn: (a) => a * 2, "ty\u0070e": "const", value: 8 },
-        \\  複合式: { type: "func", josi: [["を"]], fn: (a) => Number(a) * 2 } && { type: "const", value: 8 },
-        \\};
-        \\
-        ,
-    });
-
-    try temporary.dir.createDirPath(io, "packages/short");
-    try temporary.dir.writeFile(io, .{
-        .sub_path = "packages/short/main.nako3",
-        .data =
-        \\!「./plugin.mjs」を取り込む
-        \\●試験とは
-        \\  5を不足で戻る。
-        \\ここまで
-        \\
-        ,
-    });
-    try temporary.dir.writeFile(io, .{
-        .sub_path = "packages/short/plugin.mjs",
-        .data = "export default { 不足: { type: \"func\", josi: [[\"を\"],[\"に\"],[\"から\"]], fn: (a, b, c) => [a, b, c] } };\n",
-    });
-
-    const app_root = try temporary.dir.realPathFileAlloc(io, ".", gpa);
-    defer gpa.free(app_root);
-    const Resolver = struct {
-        root: []const u8,
-        fn resolve(context: *anyopaque, allocator: std.mem.Allocator, _: []const u8, _: ?[]const u8, specifier: []const u8) !lnako.semantic.module_graph.ResolvedPackageImport {
-            const self: *@This() = @ptrCast(@alignCast(context));
-            const names = [_][]const u8{ "ghost", "bad", "short" };
-            inline for (names) |name| {
-                if (std.mem.eql(u8, specifier, "pkg:" ++ name)) {
-                    return .{
-                        .path = try std.fs.path.join(allocator, &.{ self.root, "packages", name, "main.nako3" }),
-                        .canonical_id = try allocator.dupe(u8, "pkg:" ++ name ++ "/main"),
-                        .namespace = name,
-                        .package_owner = try allocator.dupe(u8, "pkg:" ++ name),
-                        .package_root = try std.fs.path.join(allocator, &.{ self.root, "packages", name }),
-                    };
-                }
-            }
-            return error.PackageNotFound;
-        }
-    };
-    var resolver = Resolver{ .root = app_root };
-
-    {
-        const main_path = try std.fs.path.join(gpa, &.{ app_root, "ghost_main.nako3" });
-        defer gpa.free(main_path);
-        var stderr: std.Io.Writer.Allocating = .init(gpa);
-        defer stderr.deinit();
-        var program = (try compile_pipeline.compileInput(gpa, io, main_path, .{
-            .compat_js = true,
-            .package_resolver = .{ .context = &resolver, .resolveFn = Resolver.resolve },
-        }, &stderr.writer)) orelse return error.UnexpectedCompileFailure;
-        defer program.deinit();
-        var runtime = lnako.runtime.value.Runtime.init(gpa);
-        defer runtime.deinit();
-        var host = lnako.runtime.interpreter.BufferHost{ .allocator = gpa };
-        defer host.deinit();
-        var interpreter = lnako.runtime.interpreter.Interpreter.init(gpa, &runtime, program, host.host());
-        defer interpreter.deinit();
-        _ = try interpreter.run();
-        try testing.expectEqualStrings("6\n7\n107\n3\n", host.written());
-    }
-
-    const rejects = [_]struct { name: []const u8, call: []const u8, code: []const u8, text: []const u8 }{
-        .{ .name = "reject-accessor", .call = "bad__アクセサ()を表示", .code = "unresolved_word", .text = "未解決" },
-        .{ .name = "reject-escaped", .call = "bad__エスケープ()を表示", .code = "unresolved_word", .text = "未解決" },
-        .{ .name = "reject-object-expression", .call = "bad__複合式()を表示", .code = "unresolved_word", .text = "未解決" },
-        .{ .name = "reject-missing-two", .call = "short__試験()を表示", .code = "invalid_argument_count", .text = "引数が不足" },
-    };
-    for (rejects) |item| {
-        const path = try std.fmt.allocPrint(gpa, "{s}/{s}.nako3", .{ app_root, item.name });
-        defer gpa.free(path);
-        const package_name = if (std.mem.eql(u8, item.name, "reject-missing-two")) "short" else "bad";
-        const source = try std.fmt.allocPrint(gpa, "!「pkg:{s}」を取り込む\n{s}\n", .{ package_name, item.call });
-        defer gpa.free(source);
-        const sub_path = try std.fmt.allocPrint(gpa, "{s}.nako3", .{item.name});
-        defer gpa.free(sub_path);
-        try temporary.dir.writeFile(io, .{ .sub_path = sub_path, .data = source });
-        var stderr: std.Io.Writer.Allocating = .init(gpa);
-        defer stderr.deinit();
-        try testing.expect((try compile_pipeline.compileInput(gpa, io, path, .{
-            .compat_js = true,
-            .package_resolver = .{ .context = &resolver, .resolveFn = Resolver.resolve },
-        }, &stderr.writer)) == null);
-        const written = stderr.written();
-        try testing.expect(std.mem.indexOf(u8, written, item.code) != null);
-        try testing.expect(std.mem.indexOf(u8, written, item.text) != null);
-    }
-}
-
 test "package内の静的抽出が実登録を保証しない場合と依存ESMの自己登録でも先発pluginと依存登録の命令へ届く" {
     if (!lnako.compat.quickjs.available()) return error.SkipZigTest;
     const gpa = testing.allocator;
@@ -1552,67 +1192,44 @@ test "package内の静的抽出が実登録を保証しない場合と依存ESM�
     }
 }
 
-test "Issue #297 第7回: エスケープされた型アクセサを実行前に拒否し有効なfunc/constを維持する" {
+test "package内のESM関数を戻り値の助詞付き候補として呼び出す" {
+    // Issue #297: `3を外部倍算で戻る` の候補は、daa0c09c 以降は実引数を
+    // 保つ`.word`として解析される。package内で静的に抽出した完全一致aliasへ
+    // 束縛できた場合は、既存の動的命令呼出し経路で6を返す（第8回の
+    // 評価順・助詞シグネチャ用IRは使わない）。
     if (!lnako.compat.quickjs.available()) return error.SkipZigTest;
     const gpa = testing.allocator;
     const io = testing.io;
     var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
 
-    // 有効な func/const だけを持つ package。同じ object に判定不能な
-    // キーを混ぜた場合の分類は src/semantic の単体テストで固定する。
-    try temporary.dir.createDirPath(io, "packages/escapedok");
+    try temporary.dir.createDirPath(io, "packages/owned");
     try temporary.dir.writeFile(io, .{
-        .sub_path = "packages/escapedok/plugin.mjs",
+        .sub_path = "packages/owned/plugin.mjs",
         .data =
         \\export default {
-        \\  有効関数: { type: "func", josi: [["を"]], fn: (a) => a * 2 },
-        \\  有効定数: { type: "const", value: 8 },
+        \\  外部倍算: { type: "func", josi: [["を"]], fn: (value) => Number(value) * 2 },
+        \\  外部命令: { type: "func", josi: [["を"]], fn: (...args) => args.length, isVariableJosi: Boolean(0) },
         \\};
         \\
         ,
     });
     try temporary.dir.writeFile(io, .{
-        .sub_path = "packages/escapedok/main.nako3",
+        .sub_path = "packages/owned/main.nako3",
         .data =
         \\!「./plugin.mjs」を取り込む。
-        \\●倍算とは
-        \\  3を有効関数で戻る。
+        \\●試験とは
+        \\3を外部倍算で戻る。
         \\ここまで
-        \\●定数値とは
-        \\  有効定数を戻る。
+        \\●連文とは
+        \\「x」と表示して3を外部命令で戻る。
         \\ここまで
         \\
         ,
     });
-
-    // エスケープされたアクセサとデータキーを持つ package。テンプレートや
-    // JS評価で `type` に復号されず、実ファイルにもバックスラッシュが残る
-    // ことを固定する。
-    const bad_plugin =
-        \\export default {
-        \\  アクセサ: { type: "func", josi: [["を"]], fn: (a) => a * 2, get "ty\u0070e"() { return "const" }, value: 8 },
-        \\  データ: { type: "func", josi: [["を"]], fn: (a) => a * 2, "ty\u0070e": "const", value: 8 },
-        \\};
-    ;
-    try testing.expect(std.mem.indexOf(u8, bad_plugin, "\\u0070e") != null);
-    try temporary.dir.createDirPath(io, "packages/escapedbad");
-    try temporary.dir.writeFile(io, .{ .sub_path = "packages/escapedbad/plugin.mjs", .data = bad_plugin });
-    const written_plugin = try temporary.dir.readFileAlloc(io, "packages/escapedbad/plugin.mjs", gpa, .limited(4096));
-    defer gpa.free(written_plugin);
-    try testing.expect(std.mem.indexOf(u8, written_plugin, "\\u0070e") != null);
     try temporary.dir.writeFile(io, .{
-        .sub_path = "packages/escapedbad/main.nako3",
-        .data =
-        \\!「./plugin.mjs」を取り込む。
-        \\●アクセサとは
-        \\  3をアクセサで戻る。
-        \\ここまで
-        \\●データとは
-        \\  3をデータで戻る。
-        \\ここまで
-        \\
-        ,
+        .sub_path = "main.nako3",
+        .data = "!「pkg:owned」を取り込む。\nowned__試験()を表示。\nowned__連文()を表示。\n",
     });
 
     const app_root = try temporary.dir.realPathFileAlloc(io, ".", gpa);
@@ -1621,261 +1238,36 @@ test "Issue #297 第7回: エスケープされた型アクセサを実行前に
         root: []const u8,
         fn resolve(context: *anyopaque, allocator: std.mem.Allocator, _: []const u8, _: ?[]const u8, specifier: []const u8) !lnako.semantic.module_graph.ResolvedPackageImport {
             const self: *@This() = @ptrCast(@alignCast(context));
-            const names = [_][]const u8{ "escapedok", "escapedbad" };
-            inline for (names) |name| {
-                if (std.mem.eql(u8, specifier, "pkg:" ++ name)) {
-                    return .{
-                        .path = try std.fs.path.join(allocator, &.{ self.root, "packages", name, "main.nako3" }),
-                        .canonical_id = try allocator.dupe(u8, "pkg:" ++ name ++ "/main"),
-                        .namespace = name,
-                        .package_owner = try allocator.dupe(u8, "pkg:" ++ name),
-                        .package_root = try std.fs.path.join(allocator, &.{ self.root, "packages", name }),
-                    };
-                }
-            }
-            return error.PackageNotFound;
+            if (!std.mem.eql(u8, specifier, "pkg:owned")) return error.PackageNotFound;
+            return .{
+                .path = try std.fs.path.join(allocator, &.{ self.root, "packages", "owned", "main.nako3" }),
+                .canonical_id = try allocator.dupe(u8, "pkg:owned/main"),
+                .namespace = "owned",
+                .package_owner = try allocator.dupe(u8, "pkg:owned"),
+                .package_root = try std.fs.path.join(allocator, &.{ self.root, "packages", "owned" }),
+            };
         }
     };
     var resolver = Resolver{ .root = app_root };
-
-    {
-        const ok_path = try std.fs.path.join(gpa, &.{ app_root, "escapedok-main.nako3" });
-        defer gpa.free(ok_path);
-        try temporary.dir.writeFile(io, .{
-            .sub_path = "escapedok-main.nako3",
-            .data = "!「pkg:escapedok」を取り込む\nescapedok__倍算()を表示\nescapedok__定数値()を表示\n",
-        });
-        var stderr: std.Io.Writer.Allocating = .init(gpa);
-        defer stderr.deinit();
-        var program = (try compile_pipeline.compileInput(gpa, io, ok_path, .{
-            .compat_js = true,
-            .package_resolver = .{ .context = &resolver, .resolveFn = Resolver.resolve },
-        }, &stderr.writer)) orelse return error.UnexpectedCompileFailure;
-        defer program.deinit();
-        var runtime = lnako.runtime.value.Runtime.init(gpa);
-        defer runtime.deinit();
-        var host = lnako.runtime.interpreter.BufferHost{ .allocator = gpa };
-        defer host.deinit();
-        var interpreter = lnako.runtime.interpreter.Interpreter.init(gpa, &runtime, program, host.host());
-        defer interpreter.deinit();
-        _ = try interpreter.run();
-        try testing.expectEqualStrings("6\n8\n", host.written());
-    }
-
-    const rejects = [_]struct { id: []const u8, call: []const u8 }{
-        .{ .id = "escaped-accessor", .call = "escapedbad__アクセサ()を表示" },
-        .{ .id = "escaped-data", .call = "escapedbad__データ()を表示" },
-    };
-    for (rejects) |item| {
-        const sub_path = try std.fmt.allocPrint(gpa, "{s}.nako3", .{item.id});
-        defer gpa.free(sub_path);
-        const source = try std.fmt.allocPrint(gpa, "!「pkg:escapedbad」を取り込む\n{s}\n", .{item.call});
-        defer gpa.free(source);
-        try temporary.dir.writeFile(io, .{ .sub_path = sub_path, .data = source });
-        const path = try std.fs.path.join(gpa, &.{ app_root, sub_path });
-        defer gpa.free(path);
-        var stderr: std.Io.Writer.Allocating = .init(gpa);
-        defer stderr.deinit();
-        try testing.expect((try compile_pipeline.compileInput(gpa, io, path, .{
-            .compat_js = true,
-            .package_resolver = .{ .context = &resolver, .resolveFn = Resolver.resolve },
-        }, &stderr.writer)) == null);
-        try testing.expect(std.mem.indexOf(u8, stderr.written(), "unresolved_word") != null);
-        try testing.expect(std.mem.indexOf(u8, stderr.written(), "未解決") != null);
-    }
-}
-
-/// パッケージentryをcompileしてInterpreterで実行し、出力をhostへ書く。
-/// 第7回追加テストの各ケースで同じcompile/run設定を共有する。
-fn runPackageEntry(
-    gpa: std.mem.Allocator,
-    io: std.Io,
-    temporary: anytype,
-    app_root: []const u8,
-    package_resolver: anytype,
-    source_name: []const u8,
-    source: []const u8,
-    host: *lnako.runtime.interpreter.BufferHost,
-) !void {
-    const sub_path = try std.fmt.allocPrint(gpa, "{s}.nako3", .{source_name});
-    defer gpa.free(sub_path);
-    try temporary.dir.writeFile(io, .{ .sub_path = sub_path, .data = source });
-    const path = try std.fs.path.join(gpa, &.{ app_root, sub_path });
-    defer gpa.free(path);
+    const main_path = try std.fs.path.join(gpa, &.{ app_root, "main.nako3" });
+    defer gpa.free(main_path);
     var stderr: std.Io.Writer.Allocating = .init(gpa);
     defer stderr.deinit();
-    var program = (try compile_pipeline.compileInput(gpa, io, path, .{
+    var program = (try compile_pipeline.compileInput(gpa, io, main_path, .{
         .compat_js = true,
-        .package_resolver = package_resolver,
+        .package_resolver = .{ .context = &resolver, .resolveFn = Resolver.resolve },
     }, &stderr.writer)) orelse return error.UnexpectedCompileFailure;
     defer program.deinit();
+
     var runtime = lnako.runtime.value.Runtime.init(gpa);
     defer runtime.deinit();
+    var host = lnako.runtime.interpreter.BufferHost{ .allocator = gpa };
+    defer host.deinit();
     var interpreter = lnako.runtime.interpreter.Interpreter.init(gpa, &runtime, program, host.host());
     defer interpreter.deinit();
     _ = try interpreter.run();
-}
-
-test "Issue #297 第7回追加: 実登録候補ごとの評価順と空josi表の解析時拒否" {
-    if (!lnako.compat.quickjs.available()) return error.SkipZigTest;
-    const gpa = testing.allocator;
-    const io = testing.io;
-    var temporary = test_sandbox.tmpDir(.{});
-    defer temporary.cleanup();
-
-    const order_main =
-        \\!「./a.mjs」を取り込む。
-        \\!「./b.mjs」を取り込む。
-        \\●甲とは
-        \\ 「a」と表示。
-        \\ 3を戻す。
-        \\ここまで
-        \\●乙とは
-        \\ 「b」と表示。
-        \\ 10を戻す。
-        \\ここまで
-        \\●例外甲とは
-        \\ 「a」と表示。
-        \\ 「失敗A」のエラー発生
-        \\ここまで
-        \\●例外乙とは
-        \\ 「b」と表示。
-        \\ 「失敗B」のエラー発生
-        \\ここまで
-        \\●試験とは
-        \\甲()を乙()から外部命令で戻る。
-        \\ここまで
-        \\●例外試験甲とは
-        \\例外甲()を乙()から外部命令で戻る。
-        \\ここまで
-        \\●例外試験乙とは
-        \\例外甲()を例外乙()から外部命令で戻る。
-        \\ここまで
-        \\
-    ;
-    const earlier_plugin =
-        \\export default { 外部命令: { type: "func", josi: [["から"],["を"]], fn: (a, b) => Number(a) - Number(b) } };
-        \\
-    ;
-    // 後発の登録が呼ばれない関数内にあり、実登録では先発の計画だけが使われる。
-    const ghost_plugin =
-        \\export default {};
-        \\function 未使用() {
-        \\  navigator.nako3.addPluginObject("b", {
-        \\    外部命令: { type: "func", josi: [["を"],["から"]], fn: (b, a) => Number(a) - Number(b) + 100 }
-        \\  });
-        \\}
-        \\
-    ;
-    // 後発が実登録される場合は後発の計画 [["を"],["から"]] が使われる。
-    const later_plugin = "export default { 外部命令: { type: \"func\", josi: [[\"を\"],[\"から\"]], fn: (b, a) => Number(a) - Number(b) + 100 } };\n";
-
-    try temporary.dir.createDirPath(io, "packages/ghostorder");
-    try temporary.dir.writeFile(io, .{ .sub_path = "packages/ghostorder/main.nako3", .data = order_main });
-    try temporary.dir.writeFile(io, .{ .sub_path = "packages/ghostorder/a.mjs", .data = earlier_plugin });
-    try temporary.dir.writeFile(io, .{ .sub_path = "packages/ghostorder/b.mjs", .data = ghost_plugin });
-
-    try temporary.dir.createDirPath(io, "packages/bothorder");
-    try temporary.dir.writeFile(io, .{ .sub_path = "packages/bothorder/main.nako3", .data = order_main });
-    try temporary.dir.writeFile(io, .{ .sub_path = "packages/bothorder/a.mjs", .data = earlier_plugin });
-    try temporary.dir.writeFile(io, .{ .sub_path = "packages/bothorder/b.mjs", .data = later_plugin });
-
-    // 空の`josi`表は、式の`isVariableJosi`（Boolean(0)/Boolean(1)）に
-    // 依存せず、単一の確実な候補なら解析時に実引数を拒否する。
-    const zero_body = "!「./plugin.mjs」を取り込む。\n●試験とは\n 「x」と表示して3を外部命令で戻る。\nここまで\n";
-    const zero_marker = "!「./plugin.mjs」を取り込む。\n●試験とは\n 「x」と表示して外部命令で戻る。\nここまで\n";
-    const zero_variants = [_]struct { name: []const u8, main: []const u8, plugin: []const u8, reject: bool }{
-        .{ .name = "zerostatic", .main = zero_body, .plugin = "export default { 外部命令: { type: \"func\", josi: [], fn: (...args) => args.length } };\n", .reject = true },
-        .{ .name = "zerovar0", .main = zero_body, .plugin = "export default { 外部命令: { type: \"func\", josi: [], fn: (...args) => args.length, isVariableJosi: Boolean(0) } };\n", .reject = true },
-        .{ .name = "zerovar1", .main = zero_body, .plugin = "export default { 外部命令: { type: \"func\", josi: [], fn: (...args) => args.length, isVariableJosi: Boolean(1) } };\n", .reject = true },
-        .{ .name = "zeromarker", .main = zero_marker, .plugin = "export default { 外部命令: { type: \"func\", josi: [], fn: (...args) => args.length, isVariableJosi: Boolean(1) } };\n", .reject = false },
-    };
-    for (zero_variants) |variant| {
-        const dir_sub = try std.fmt.allocPrint(gpa, "packages/{s}", .{variant.name});
-        defer gpa.free(dir_sub);
-        try temporary.dir.createDirPath(io, dir_sub);
-        const main_sub = try std.fmt.allocPrint(gpa, "packages/{s}/main.nako3", .{variant.name});
-        defer gpa.free(main_sub);
-        const plugin_sub = try std.fmt.allocPrint(gpa, "packages/{s}/plugin.mjs", .{variant.name});
-        defer gpa.free(plugin_sub);
-        try temporary.dir.writeFile(io, .{ .sub_path = main_sub, .data = variant.main });
-        try temporary.dir.writeFile(io, .{ .sub_path = plugin_sub, .data = variant.plugin });
-    }
-
-    const app_root = try temporary.dir.realPathFileAlloc(io, ".", gpa);
-    defer gpa.free(app_root);
-    const Resolver = struct {
-        root: []const u8,
-        fn resolve(context: *anyopaque, allocator: std.mem.Allocator, _: []const u8, _: ?[]const u8, specifier: []const u8) !lnako.semantic.module_graph.ResolvedPackageImport {
-            const self: *@This() = @ptrCast(@alignCast(context));
-            const names = [_][]const u8{ "ghostorder", "bothorder", "zerostatic", "zerovar0", "zerovar1", "zeromarker" };
-            inline for (names) |name| {
-                if (std.mem.eql(u8, specifier, "pkg:" ++ name)) {
-                    return .{
-                        .path = try std.fs.path.join(allocator, &.{ self.root, "packages", name, "main.nako3" }),
-                        .canonical_id = try allocator.dupe(u8, "pkg:" ++ name ++ "/main"),
-                        .namespace = name,
-                        .package_owner = try allocator.dupe(u8, "pkg:" ++ name),
-                        .package_root = try std.fs.path.join(allocator, &.{ self.root, "packages", name }),
-                    };
-                }
-            }
-            return error.PackageNotFound;
-        }
-    };
-    var resolver = Resolver{ .root = app_root };
-
-    const resolver_option: lnako.semantic.module_graph.PackageResolver = .{ .context = &resolver, .resolveFn = Resolver.resolve };
-
-    var host = lnako.runtime.interpreter.BufferHost{ .allocator = gpa };
-    defer host.deinit();
-    try runPackageEntry(gpa, io, &temporary, app_root, resolver_option, "ghost-value", "!「pkg:ghostorder」を取り込む。\nghostorder__試験()を表示。\n", &host);
-    try testing.expectEqualStrings("b\na\n7\n", host.written());
-    host.output.clearRetainingCapacity();
-    try runPackageEntry(gpa, io, &temporary, app_root, resolver_option, "ghost-first", "!「pkg:ghostorder」を取り込む。\nエラー監視\nghostorder__例外試験甲()を表示。\nエラーならば\n「捕捉:{エラーメッセージ}」を表示。\nここまで\n", &host);
-    try testing.expectEqualStrings("b\na\n捕捉:失敗A\n", host.written());
-    host.output.clearRetainingCapacity();
-    try runPackageEntry(gpa, io, &temporary, app_root, resolver_option, "ghost-second", "!「pkg:ghostorder」を取り込む。\nエラー監視\nghostorder__例外試験乙()を表示。\nエラーならば\n「捕捉:{エラーメッセージ}」を表示。\nここまで\n", &host);
-    try testing.expectEqualStrings("b\n捕捉:失敗B\n", host.written());
-    host.output.clearRetainingCapacity();
-
-    try runPackageEntry(gpa, io, &temporary, app_root, resolver_option, "both-value", "!「pkg:bothorder」を取り込む。\nbothorder__試験()を表示。\n", &host);
-    try testing.expectEqualStrings("a\nb\n107\n", host.written());
-    host.output.clearRetainingCapacity();
-    try runPackageEntry(gpa, io, &temporary, app_root, resolver_option, "both-first", "!「pkg:bothorder」を取り込む。\nエラー監視\nbothorder__例外試験甲()を表示。\nエラーならば\n「捕捉:{エラーメッセージ}」を表示。\nここまで\n", &host);
-    try testing.expectEqualStrings("a\n捕捉:失敗A\n", host.written());
-    host.output.clearRetainingCapacity();
-
-    for (zero_variants) |variant| {
-        const zero_source = try std.fmt.allocPrint(gpa, "!「pkg:{s}」を取り込む。\n{s}__試験()を表示。\n", .{ variant.name, variant.name });
-        defer gpa.free(zero_source);
-        const sub_path = try std.fmt.allocPrint(gpa, "zero-{s}.nako3", .{variant.name});
-        defer gpa.free(sub_path);
-        try temporary.dir.writeFile(io, .{ .sub_path = sub_path, .data = zero_source });
-        const path = try std.fs.path.join(gpa, &.{ app_root, sub_path });
-        defer gpa.free(path);
-        var stderr: std.Io.Writer.Allocating = .init(gpa);
-        defer stderr.deinit();
-        const program = try compile_pipeline.compileInput(gpa, io, path, .{
-            .compat_js = true,
-            .package_resolver = .{ .context = &resolver, .resolveFn = Resolver.resolve },
-        }, &stderr.writer);
-        if (variant.reject) {
-            try testing.expect(program == null);
-            try testing.expect(std.mem.indexOf(u8, stderr.written(), "『戻』文の直前に未解決の引数があります") != null);
-        } else {
-            var compiled = program orelse return error.UnexpectedCompileFailure;
-            defer compiled.deinit();
-            var runtime = lnako.runtime.value.Runtime.init(gpa);
-            defer runtime.deinit();
-            var marker_host = lnako.runtime.interpreter.BufferHost{ .allocator = gpa };
-            defer marker_host.deinit();
-            var interpreter = lnako.runtime.interpreter.Interpreter.init(gpa, &runtime, compiled, marker_host.host());
-            defer interpreter.deinit();
-            _ = try interpreter.run();
-            // 連文マーカー単独は実引数として数えず、既存の別制約のまま
-            // ダミー値を渡さない（先頭の表示だけを固定する）。
-            try testing.expect(std.mem.startsWith(u8, marker_host.written(), "x\n"));
-        }
-    }
+    // 連文は実引数を評価して基点と同じ`x`/`3`を返す（公式は`x`/`2`だが、
+    // これは今回の変更以前からのESM互換差）。第8回で問題になった
+    // `evaluationOrder`のSIGABRT経路は使わない。
+    try testing.expectEqualStrings("6\nx\n3\n", host.written());
 }

@@ -617,30 +617,11 @@ pub fn writeEsmPluginCall(emitter: *Emitter, function: ir.Function, instruction:
         try emitter.output.writer.print(", ptr %esm-plugin.{d}.slot.{d}", .{ result, index });
         try emitter.debugSuffix(instruction.span, scope);
     }
-    const aligned_list = if (instruction.runtime_argument_alignment)
-        emitter.pluginArgumentIndex(instruction.argument_josi, instruction.argument_implicit) orelse return error.MissingPluginArgumentList
-    else
-        null;
-    if (aligned_list) |argument_list_index| {
-        try emitter.output.writer.print("  call void @lnako_aot_esm_plugin_call_josi(ptr %root.slot.{d}, ptr ", .{result});
-        if (instruction.operands.len > 0) {
-            try emitter.output.writer.print("%esm-plugin.{d}.slot.0", .{result});
-        } else try emitter.output.writer.writeAll("null");
-        try emitter.output.writer.print(", i64 {d}, ptr @lnako.plugin.argument.{d}, i64 {d}, ptr @lnako.esm.plugin.name.{d}, i64 {d}, i64 {d})", .{
-            instruction.operands.len,
-            argument_list_index,
-            instruction.argument_josi.len,
-            name_index,
-            instruction.name.len,
-            site_id,
-        });
-    } else {
-        try emitter.output.writer.print("  call void @lnako_aot_esm_plugin_call(ptr %root.slot.{d}, ptr ", .{result});
-        if (instruction.operands.len > 0) {
-            try emitter.output.writer.print("%esm-plugin.{d}.slot.0", .{result});
-        } else try emitter.output.writer.writeAll("null");
-        try emitter.output.writer.print(", i64 {d}, ptr @lnako.esm.plugin.name.{d}, i64 {d}, i64 {d})", .{ instruction.operands.len, name_index, instruction.name.len, site_id });
-    }
+    try emitter.output.writer.print("  call void @lnako_aot_esm_plugin_call(ptr %root.slot.{d}, ptr ", .{result});
+    if (instruction.operands.len > 0) {
+        try emitter.output.writer.print("%esm-plugin.{d}.slot.0", .{result});
+    } else try emitter.output.writer.writeAll("null");
+    try emitter.output.writer.print(", i64 {d}, ptr @lnako.esm.plugin.name.{d}, i64 {d}, i64 {d})", .{ instruction.operands.len, name_index, instruction.name.len, site_id });
     try emitter.debugSuffix(instruction.span, scope);
     try emitter.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
     try emitter.debugSuffix(instruction.span, scope);
@@ -683,37 +664,17 @@ pub fn writePluginFallbackCall(emitter: *Emitter, function: ir.Function, instruc
         try emitter.output.writer.print(", ptr %plugin-fallback.{d}.slot.{d}", .{ result, index });
         try emitter.debugSuffix(instruction.span, scope);
     }
-    const aligned_list = if (instruction.runtime_argument_alignment)
-        emitter.pluginArgumentIndex(instruction.argument_josi, instruction.argument_implicit) orelse return error.MissingPluginArgumentList
-    else
-        null;
-    if (aligned_list) |argument_list_index| {
-        try emitter.output.writer.print("  call void @lnako_aot_plugin_fallback_call_josi(ptr %root.slot.{d}, ptr ", .{result});
-        if (instruction.operands.len > 0) {
-            try emitter.output.writer.print("%plugin-fallback.{d}.slot.0", .{result});
-        } else try emitter.output.writer.writeAll("null");
-        try emitter.output.writer.print(", i64 {d}, ptr @lnako.plugin.argument.{d}, i64 {d}, ptr @lnako.plugin.fallback.{d}, i64 {d}, i64 {d}, i1 {d})", .{
-            instruction.operands.len,
-            argument_list_index,
-            instruction.argument_josi.len,
-            list_index,
-            1 + instruction.fallback_names.len,
-            site_id,
-            default_is_esm,
-        });
-    } else {
-        try emitter.output.writer.print("  call void @lnako_aot_plugin_fallback_call(ptr %root.slot.{d}, ptr ", .{result});
-        if (instruction.operands.len > 0) {
-            try emitter.output.writer.print("%plugin-fallback.{d}.slot.0", .{result});
-        } else try emitter.output.writer.writeAll("null");
-        try emitter.output.writer.print(", i64 {d}, ptr @lnako.plugin.fallback.{d}, i64 {d}, i64 {d}, i1 {d})", .{
-            instruction.operands.len,
-            list_index,
-            1 + instruction.fallback_names.len,
-            site_id,
-            default_is_esm,
-        });
-    }
+    try emitter.output.writer.print("  call void @lnako_aot_plugin_fallback_call(ptr %root.slot.{d}, ptr ", .{result});
+    if (instruction.operands.len > 0) {
+        try emitter.output.writer.print("%plugin-fallback.{d}.slot.0", .{result});
+    } else try emitter.output.writer.writeAll("null");
+    try emitter.output.writer.print(", i64 {d}, ptr @lnako.plugin.fallback.{d}, i64 {d}, i64 {d}, i1 {d})", .{
+        instruction.operands.len,
+        list_index,
+        1 + instruction.fallback_names.len,
+        site_id,
+        default_is_esm,
+    });
     try emitter.debugSuffix(instruction.span, scope);
     try emitter.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
     try emitter.debugSuffix(instruction.span, scope);

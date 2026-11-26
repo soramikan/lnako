@@ -53,12 +53,6 @@ pub const Kind = enum {
     performance_monitor,
 };
 
-/// 実行時に選択され得る動的plugin候補の登録名と助詞シグネチャ。
-pub const CandidatePlan = struct {
-    name: []const u8,
-    signature: semantic.dynamic_commands.JosiSignature,
-};
-
 pub const Node = struct {
     id: NodeId,
     kind: Kind,
@@ -80,18 +74,8 @@ pub const Node = struct {
     /// package経由plugin）で真。取り込み辺を持たないモジュールの同名呼出し
     /// は false のまま残り、実行時にpackage修飾命令へ誤配送されない。
     dynamic_call: bool = false,
-    /// 動的plugin呼び出しの実引数を未整列のまま実行時へ渡し、実際に登録
-    /// された候補の助詞メタデータで割り当てる。
-    runtime_argument_alignment: bool = false,
-    /// 未整列実引数それぞれの助詞（`runtime_argument_alignment`時のみ）。
-    argument_josi: []const []const u8 = &.{},
-    /// 未整列実引数のうち連文の暗黙『それ』マーカーか。
-    argument_implicit: []const bool = &.{},
     /// 動的plugin呼出しで主配送先が未登録だった場合に試すフォールバック候補名。
     fallback_names: []const []const u8 = &.{},
-    /// 実登録の選択前に評価順を固定できない呼出しの、候補ごとの助詞計画。
-    /// 主候補が先頭で、`fallback_names`と同じ順に並ぶ。
-    candidate_plans: []const CandidatePlan = &.{},
     /// DNCL互換の配列要素代入で、未初期化変数へ30要素の0配列を自動初期化する。
     check_array_init: bool = false,
     /// 代入系ノードの対象名が意味解析でローカルシンボルへ解決された場合に真。
@@ -350,36 +334,15 @@ const Lowerer = struct {
             return self.addNode(.nop, node.span, &.{});
         }
         const implicit_function = self.implicitFunction(node);
-        const runtime_arguments = self.runtimeArgumentAlignment(node);
-        var runtime_order: ?[]usize = null;
         const completion = try self.argumentCompletionPlan(node);
         var child_ids: []NodeId = undefined;
-        if (runtime_arguments) {
-            // 実登録される候補が未確定な動的呼出しは、候補ごとの助詞で
-            // 並べ替えず、ソース順の実引数と助詞をそのまま保持する。
-            // 主候補の固定スロットが確定できる場合は、値の後並べ替えではなく
-            // スロット順で式を一度だけ評価する。
-            runtime_order = try self.runtimeEvaluationOrder(node);
-            if (runtime_order) |order| {
-                child_ids = try self.allocator.alloc(NodeId, order.len);
-                for (order, 0..) |child_index, index| child_ids[index] = try self.lowerNode(node.children[child_index], module_index);
-            } else {
-                child_ids = try self.allocator.alloc(NodeId, node.children.len);
-                for (node.children, 0..) |child, index| child_ids[index] = try self.lowerNode(child, module_index);
-            }
-        } else if (completion) |plan| {
+        if (completion) |plan| {
             // 公式`yCallFunc`と同じ助詞補完。省略された引数は変数「それ」を渡す。
             child_ids = try self.allocator.alloc(NodeId, plan.operands.len);
             for (plan.operands, 0..) |operand, index| {
                 child_ids[index] = switch (operand) {
                     .provided => |argument| try self.lowerNode(node.children[argument], module_index),
-                    // 連文が積んだ実在の『それ』マーカーがあれば、その束縛を
-                    // 再利用する（公式の省略引数は関数ローカルの『それ』）。
-                    // マーカーが無い場合だけ新しい読み出しを作る。
-                    .implicit_it => if (self.chainImplicitIt(node)) |marker|
-                        try self.lowerNode(marker, module_index)
-                    else
-                        try self.implicitItNode(node.span),
+                    .implicit_it => try self.implicitItNode(node.span),
                 };
             }
         } else {
@@ -450,23 +413,6 @@ const Lowerer = struct {
             .function_call, .word, .function_pointer => try self.bindingFallbackNames(node),
             else => &.{},
         };
-        result.candidate_plans = switch (node.kind) {
-            .function_call, .word => try self.bindingCandidatePlans(node),
-            else => &.{},
-        };
-        result.runtime_argument_alignment = runtime_arguments;
-        if (runtime_arguments) {
-            const josi = try self.allocator.alloc([]const u8, node.children.len);
-            const implicit = try self.allocator.alloc(bool, node.children.len);
-            for (0..node.children.len) |index| {
-                const child_index = if (runtime_order) |order| order[index] else index;
-                const child = node.children[child_index];
-                josi[index] = try self.allocator.dupe(u8, child.josi);
-                implicit[index] = isChainImplicitItNode(child);
-            }
-            result.argument_josi = josi;
-            result.argument_implicit = implicit;
-        }
         result.check_array_init = node.check_array_init;
         result.local_target = self.bindingIsLocal(node);
         result.uses_implicit_arguments = self.bindsImplicitArguments(node);
@@ -531,77 +477,24 @@ const Lowerer = struct {
         return &.{};
     }
 
-    /// 意味解析が保持する候補ごとの助詞計画をHIRの生存期間へ複製する。
-    fn bindingCandidatePlans(self: *Lowerer, node: *ast.Node) ![]const CandidatePlan {
-        for (self.semantic_program.bindings) |binding| {
-            if (binding.node != node or binding.candidate_plans.len == 0) continue;
-            const plans = try self.allocator.alloc(CandidatePlan, binding.candidate_plans.len);
-            for (binding.candidate_plans, plans) |source, *target| {
-                target.* = .{
-                    .name = try self.allocator.dupe(u8, source.name),
-                    .signature = try semantic.dynamic_commands.cloneSignature(self.allocator, source.signature),
-                };
-            }
-            return plans;
-        }
-        return &.{};
-    }
-
-    /// 動的命令へ束縛された戻り値候補を、呼出しとしてloweringするか。
-    /// 意味解析がESMの静的な助詞シグネチャを確定した候補は、実引数が
-    /// 省略されていても`それ`補完の呼出しにする。シグネチャを持たない
-    /// 候補は、native pluginの実行時登録名など呼出し可能と確認済みの
-    /// aliasに限られるため、従来どおり実引数がある場合だけ呼び出す。
-    fn pendingDynamicCall(self: Lowerer, node: *ast.Node) bool {
-        if (node.kind != .word or !node.pending_return_arguments) return false;
-        if (!self.bindingIsDynamicBuiltin(node)) return false;
-        if (self.dynamicSignature(node) != null) return true;
-        for (node.children) |child| {
-            if (!child.is_implicit_it) return true;
-        }
-        return false;
-    }
-
-    /// このノードへ意味解析が付けたESM pluginの助詞シグネチャを返す。
-    fn dynamicSignature(self: Lowerer, node: *ast.Node) ?semantic.dynamic_commands.JosiSignature {
-        for (self.semantic_program.bindings) |binding| if (binding.node == node) return binding.signature;
-        return null;
-    }
-
-    /// 実登録候補を静的に確定できず、実行時の助詞割り当てが必要か。
-    fn runtimeArgumentAlignment(self: Lowerer, node: *ast.Node) bool {
-        if (node.kind != .word) return false;
-        for (self.semantic_program.bindings) |binding| if (binding.node == node) return binding.runtime_alignment;
-        return false;
-    }
-
-    /// 実行時割り当て呼出しで式を評価する順序。主候補の固定スロットが
-    /// 確定できる場合だけ、スロット順の実引数添字列を返す。可変長の末尾
-    /// スロットは、リテラルで確定していない限り固定部分から除き、その
-    /// 実引数はソース順で後ろへ残す。
-    fn runtimeEvaluationOrder(self: *Lowerer, node: *ast.Node) !?[]usize {
-        if (node.kind != .word) return null;
-        for (self.semantic_program.bindings) |binding| {
-            if (binding.node != node) continue;
-            if (!binding.runtime_evaluation_order_known) return null;
-            const signature = binding.signature orelse return null;
-            if (signature.slots.len == 0) return null;
-            const slots = try semantic.dynamic_commands.signatureSlots(self.allocator, signature);
-            defer self.allocator.free(slots);
-            const fixed_count = if (signature.variable_final or !signature.variable_known)
-                signature.slots.len - 1
-            else
-                signature.slots.len;
-            return try argument_completion.evaluationOrder(self.allocator, slots[0..fixed_count], node.children);
-        }
-        return null;
-    }
-
     /// 組み込み命令へ束縛された`.word`ノードを暗黙呼出しにするか判定する。
     /// 「それ」「対象」など組み込み名の変数はarity表に無いため呼出しへ変換しない。
     fn bindingIsBuiltinCommand(self: Lowerer, node: *ast.Node) bool {
         if (!self.bindingIsBuiltin(node)) return false;
         return builtin_catalog.findArity(node.value) != null;
+    }
+
+    /// 実引数を伴う戻り値候補がESM/native pluginの動的命令へ束縛されたとき、
+    /// 値を読む`.word`ではなく通常の動的呼出しとしてloweringする。
+    /// 静的に抽出した完全一致aliasだけが対象で、実引数のない値参照や
+    /// 暗黙の『それ』だけの連文は従来どおり値として扱う。
+    fn pendingDynamicCall(self: *Lowerer, node: *ast.Node) bool {
+        if (node.kind != .word or !node.pending_return_arguments) return false;
+        if (!self.bindingIsDynamicBuiltin(node)) return false;
+        for (node.children) |child| {
+            if (!child.is_implicit_it) return true;
+        }
+        return false;
     }
 
     fn implicitFunction(self: *Lowerer, node: *ast.Node) ?semantic.Symbol {
@@ -641,14 +534,6 @@ const Lowerer = struct {
                     const slots = try argument_completion.builtinSlots(self.allocator, spec);
                     return argument_completion.plan(self.allocator, slots, node.children, spec.is_variable);
                 }
-                if (self.dynamicSignature(node)) |signature| {
-                    // ESM pluginの宣言助詞へ実引数を割り当て、連文の暗黙
-                    // マーカーは実引数に数えない。スロットが無い関数は引数を
-                    // 取らないため、空の呼出し計画を返す。
-                    if (signature.slots.len == 0) return .{ .operands = &.{}, .provided = 0, .missing = 0 };
-                    const slots = try semantic.dynamic_commands.signatureSlots(self.allocator, signature);
-                    return argument_completion.plan(self.allocator, slots, node.children, signature.variable_final);
-                }
                 const symbol = self.callableSymbol(node) orelse return null;
                 const slots = try argument_completion.parameterSlots(self.allocator, symbol.parameter_josi);
                 if (slots.len == 0) return null;
@@ -656,22 +541,6 @@ const Lowerer = struct {
             },
             else => return null,
         }
-    }
-
-    /// 連文が挿入した暗黙マーカーか（未整列引数の補完値に使う）。
-    fn isChainImplicitItNode(node: *ast.Node) bool {
-        return node.is_implicit_it and node.kind == .word and
-            std.mem.eql(u8, node.value, "それ") and node.josi.len == 0;
-    }
-
-    /// 連文が引数列へ挿入した暗黙の『それ』マーカーを返す。
-    fn chainImplicitIt(self: Lowerer, node: *ast.Node) ?*ast.Node {
-        _ = self;
-        for (node.children) |child| {
-            if (child.is_implicit_it and child.kind == .word and
-                std.mem.eql(u8, child.value, "それ") and child.josi.len == 0) return child;
-        }
-        return null;
     }
 
     /// 省略引数へ補完する変数「それ」の読み出しノードを作る。

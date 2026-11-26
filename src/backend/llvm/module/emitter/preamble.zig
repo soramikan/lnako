@@ -173,15 +173,7 @@ pub fn emitPreamble(emitter: *Emitter) !void {
         try writer.writeAll(
             "%lnako.AotPluginCandidate = type { ptr, i64 }\n" ++
                 "declare void @lnako_aot_plugin_fallback_call(ptr, ptr, i64, ptr, i64, i64, i1)\n" ++
-                "declare i32 @lnako_aot_plugin_registered(ptr, i64, i1)\n" ++
                 "declare void @lnako_aot_plugin_function_new_fallback(ptr, ptr, i64, i1)\n\n",
-        );
-    }
-    if (emitter.plugin_argument_lists.items.len > 0) {
-        try writer.writeAll(
-            "%lnako.AotArgumentJosi = type { ptr, i64, i8 }\n" ++
-                "declare void @lnako_aot_plugin_fallback_call_josi(ptr, ptr, i64, ptr, i64, ptr, i64, i64, i1)\n" ++
-                "declare void @lnako_aot_esm_plugin_call_josi(ptr, ptr, i64, ptr, i64, ptr, i64, i64)\n\n",
         );
     }
 }
@@ -216,23 +208,16 @@ pub fn collectModuleData(emitter: *Emitter) !void {
             if (instruction.opcode == .exception_take and emitter.globalIndex("エラーメッセージ") == null) {
                 try emitter.appendGlobal("エラーメッセージ");
             }
-            if (instruction.opcode == .plugin_registered) {
-                try emitter.ensurePluginFallbackList(instruction.name, instruction.fallback_names);
-            }
             if (instruction.opcode == .call and instruction.direct_callee == null) {
                 if (isNativePluginCall(emitter.program, function, instruction)) {
                     if (instruction.fallback_names.len > 0) {
                         try emitter.ensurePluginFallbackList(instruction.name, instruction.fallback_names);
-                        if (instruction.runtime_argument_alignment)
-                            try emitter.ensurePluginArgumentList(instruction.argument_josi, instruction.argument_implicit);
                     } else if (isEsmPluginCommandName(emitter.program, instruction.name)) {
                         // ESM plugin の命令は runtime が module 評価で登録するため、
                         // 名前を ABI 引数として渡す別の表へ入れる。
                         if (emitter.esmPluginNameIndex(instruction.name) == null) {
                             try emitter.esm_plugin_names.append(emitter.allocator, instruction.name);
                         }
-                        if (instruction.runtime_argument_alignment)
-                            try emitter.ensurePluginArgumentList(instruction.argument_josi, instruction.argument_implicit);
                     } else if (emitter.nativePluginNameIndex(instruction.name) == null) {
                         try emitter.native_plugin_names.append(emitter.allocator, instruction.name);
                     }
@@ -527,32 +512,6 @@ pub fn emitDeclarations(emitter: *Emitter) !void {
         for (candidates, 0..) |name, cand_index| {
             if (cand_index > 0) try writer.writeAll(", ");
             try writer.print("%lnako.AotPluginCandidate {{ ptr @lnako.plugin.fallback.{d}.name.{d}, i64 {d} }}", .{ list_index, cand_index, name.len });
-        }
-        try writer.writeAll("]\n");
-    }
-    for (emitter.plugin_argument_lists.items, 0..) |arguments, list_index| {
-        for (arguments, 0..) |argument, argument_index| {
-            try writer.print("@lnako.plugin.argument.{d}.josi.{d} = private unnamed_addr constant [{d} x i8] ", .{ list_index, argument_index, argument.josi.len });
-            if (argument.josi.len == 0) {
-                try writer.writeAll("zeroinitializer\n");
-            } else {
-                try writer.writeByte('[');
-                for (argument.josi, 0..) |byte, byte_index| {
-                    if (byte_index > 0) try writer.writeAll(", ");
-                    try writer.print("i8 {d}", .{byte});
-                }
-                try writer.writeAll("]\n");
-            }
-        }
-        try writer.print("@lnako.plugin.argument.{d} = private unnamed_addr constant [{d} x %lnako.AotArgumentJosi] [", .{ list_index, arguments.len });
-        for (arguments, 0..) |argument, argument_index| {
-            if (argument_index > 0) try writer.writeAll(", ");
-            try writer.print("%lnako.AotArgumentJosi {{ ptr @lnako.plugin.argument.{d}.josi.{d}, i64 {d}, i8 {d} }}", .{
-                list_index,
-                argument_index,
-                argument.josi.len,
-                @intFromBool(argument.implicit),
-            });
         }
         try writer.writeAll("]\n");
     }
