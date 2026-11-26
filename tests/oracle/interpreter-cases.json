@@ -1005,5 +1005,40 @@
     "id": "varlist-constant-import-before-assignment-long-comment-issue297",
     "files": {"varlist-const-before-long.nako3": "# xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n定数[A,B]=[4,5]\n"},
     "source": "●呼出とは\nA=0\n!「./varlist-const-before-long.nako3」を取り込む。\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n"
+  },
+  {
+    "id": "varlist-constant-import-write-before-parent-issue297",
+    "files": {"varlist-const-import-own-before.nako3": "A=0\n定数[A,B]=[4,5]\n"},
+    "source": "●呼出とは\nA=0\n!「./varlist-const-import-own-before.nako3」を取り込む。\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n"
+  },
+  {
+    "id": "varlist-constant-parent-write-before-import-issue297",
+    "files": {"varlist-const-plain-before.nako3": "A=0\n"},
+    "source": "●呼出とは\nA=0\n!「./varlist-const-plain-before.nako3」を取り込む。\nA=7\n定数[A,B]=[4,5]\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n"
+  },
+  {
+    "id": "varlist-constant-nested-import-before-issue297",
+    "files": {"varlist-const-nested.nako3": "!「./varlist-const-init.nako3」を取り込む。\n定数[A,B]=[4,5]\n", "varlist-const-init.nako3": "A=7\n"},
+    "source": "●呼出とは\nA=0\n!「./varlist-const-nested.nako3」を取り込む。\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n"
+  },
+  {
+    "id": "varlist-constant-import-increment-before-issue297",
+    "files": {"varlist-const-increment.nako3": "Aを1増やす。\n定数[A,B]=[4,5]\n"},
+    "source": "●呼出とは\nA=0\n!「./varlist-const-increment.nako3」を取り込む。\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n"
+  },
+  {
+    "id": "varlist-constant-parameter-write-before-issue297",
+    "files": {"varlist-const-param.nako3": "A=7\n定数[A,B]=[4,5]\n"},
+    "source": "●呼出(Aを)とは\n!「./varlist-const-param.nako3」を取り込む。\n[A,B]で戻る\nここまで\nJSONエンコード(呼出(3))を表示。\n"
+  },
+  {
+    "id": "varlist-constant-parent-write-before-import-long-comment-issue297",
+    "files": {"varlist-const-plain-before-long.nako3": "# xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nA=0\n"},
+    "source": "# main comment\n●呼出とは\nA=0\n!「./varlist-const-plain-before-long.nako3」を取り込む。\nA=7\n定数[A,B]=[4,5]\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n"
+  },
+  {
+    "id": "varlist-constant-parent-increment-before-import-issue297",
+    "files": {"varlist-const-plain-before2.nako3": "A=0\n"},
+    "source": "●呼出とは\nA=0\n!「./varlist-const-plain-before2.nako3」を取り込む。\nAを1増やす\n定数[A,B]=[4,5]\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n"
   }
 ]

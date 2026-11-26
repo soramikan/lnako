@@ -1017,6 +1017,7 @@ test "関数内取り込みの分割定数宣言は展開済み順序で前後�
     const Provider = struct {
         main_source: []const u8,
         module_source: []const u8,
+        nested_source: ?[]const u8 = null,
 
         fn sourceProvider(self: *@This()) module_graph.SourceProvider {
             return .{ .context = self, .readFn = read };
@@ -1026,6 +1027,9 @@ test "関数内取り込みの分割定数宣言は展開済み順序で前後�
             const self: *@This() = @ptrCast(@alignCast(context));
             if (pathHasSuffix(path, "main.nako3")) return allocator.dupe(u8, self.main_source);
             if (pathHasSuffix(path, "定数部.nako3")) return allocator.dupe(u8, self.module_source);
+            if (self.nested_source) |source| {
+                if (pathHasSuffix(path, "初期化.nako3")) return allocator.dupe(u8, source);
+            }
             return error.FileNotFound;
         }
 
@@ -1046,10 +1050,22 @@ test "関数内取り込みの分割定数宣言は展開済み順序で前後�
         assignments: usize = 0,
         first_line: ?usize = null,
     };
-    const run = struct {
+    const Runner = struct {
         fn count(main_source: []const u8, module_source: []const u8) !Result {
-            var provider = Provider{ .main_source = main_source, .module_source = module_source };
-            var graph = try module_graph.load(std.testing.allocator, "main.nako3", provider.sourceProvider(), .{});
+            return countWith(Provider{ .main_source = main_source, .module_source = module_source });
+        }
+
+        fn countNested(main_source: []const u8, module_source: []const u8, nested_source: []const u8) !Result {
+            return countWith(Provider{
+                .main_source = main_source,
+                .module_source = module_source,
+                .nested_source = nested_source,
+            });
+        }
+
+        fn countWith(provider: Provider) !Result {
+            var mutable_provider = provider;
+            var graph = try module_graph.load(std.testing.allocator, "main.nako3", mutable_provider.sourceProvider(), .{});
             defer graph.deinit();
             var program = try graph.analyze(std.testing.allocator);
             defer program.deinit();
@@ -1061,7 +1077,9 @@ test "関数内取り込みの分割定数宣言は展開済み順序で前後�
             }
             return result;
         }
-    }.count;
+    };
+    const run = Runner.count;
+    const runNested = Runner.countNested;
 
     const main_before = "●呼出とは\nA=0\n!「./定数部.nako3」を取り込む。\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n";
     const main_after = "●呼出とは\nA=0\n!「./定数部.nako3」を取り込む。\nA=9\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n";
@@ -1072,6 +1090,9 @@ test "関数内取り込みの分割定数宣言は展開済み順序で前後�
     // 代入と取り込み後の代入・増減の判定は展開済みの走査順で一定になる。
     const long_const_decl =
         "# xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n" ++ const_decl;
+    // 書き込み側のファイルに長いコメントを置いても、展開順の判定は変わらない。
+    const long_pre_write_module =
+        "# xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nA=0\n";
     try std.testing.expectEqual(@as(usize, 0), (try run(main_before, const_decl)).assignments);
     try std.testing.expectEqual(@as(usize, 0), (try run(main_before, long_const_decl)).assignments);
     const after_short = try run(main_after, const_decl);
@@ -1097,6 +1118,50 @@ test "関数内取り込みの分割定数宣言は展開済み順序で前後�
     const cross_module = try run(main_const_then_import, "A=9\n");
     try std.testing.expectEqual(@as(usize, 1), cross_module.assignments);
     try std.testing.expectEqual(@as(usize, 0), cross_module.first_line.?);
+    const cross_module_increment = try run(main_const_then_import, "Aを1増やす\n");
+    try std.testing.expectEqual(@as(usize, 1), cross_module_increment.assignments);
+    try std.testing.expectEqual(@as(usize, 0), cross_module_increment.first_line.?);
+
+    // 取り込み先（呼出側）の宣言前の書き込みも、取り込み元の宣言と同じ
+    // 関数スコープへ展開される。書き込みを最初に作ったファイルと宣言の
+    // ファイルが違っても、展開済みの走査順で宣言前なら許可する。
+    const parent_before = "●呼出とは\nA=0\n!「./定数部.nako3」を取り込む。\nA=7\n定数[A,B]=[4,5]\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n";
+    try std.testing.expectEqual(@as(usize, 0), (try run(parent_before, "A=0\n")).assignments);
+    try std.testing.expectEqual(@as(usize, 0), (try run(parent_before, long_pre_write_module)).assignments);
+    const parent_before_increment = "●呼出とは\nA=0\nAを1増やす\n!「./定数部.nako3」を取り込む。\nA=7\n定数[A,B]=[4,5]\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n";
+    try std.testing.expectEqual(@as(usize, 0), (try run(parent_before_increment, "A=0\n")).assignments);
+    // 逆に、書き込みを最初に作ったのが取り込み元でも、宣言前なら通る。
+    try std.testing.expectEqual(@as(usize, 0), (try run(main_before, "A=0\n" ++ const_decl)).assignments);
+    try std.testing.expectEqual(@as(usize, 0), (try run(main_before, "Aを1増やす\n" ++ const_decl)).assignments);
+    // 仮引数も同じ関数スコープの既存束縛なので、宣言前の取り込み元書き込みを許す。
+    const main_parameter = "●呼出(Aを)とは\n!「./定数部.nako3」を取り込む。\n[A,B]で戻る\nここまで\nJSONエンコード(呼出(3))を表示。\n";
+    try std.testing.expectEqual(@as(usize, 0), (try run(main_parameter, "A=7\n" ++ const_decl)).assignments);
+    // 入れ子の取り込みでも、展開後の関数スコープと走査順で判定する。
+    const main_nested = "●呼出とは\nA=0\n!「./定数部.nako3」を取り込む。\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n";
+    try std.testing.expectEqual(@as(usize, 0), (try runNested(main_nested, "!「./初期化.nako3」を取り込む。\n" ++ const_decl, "A=7\n")).assignments);
+    // 同じ関数スコープでも宣言後の書き込みは、由来ファイルにかかわらず拒否する。
+    const parent_after = "●呼出とは\nA=0\n!「./定数部.nako3」を取り込む。\n定数[A,B]=[4,5]\nA=7\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n";
+    const parent_after_result = try run(parent_after, "A=0\n");
+    try std.testing.expectEqual(@as(usize, 1), parent_after_result.assignments);
+    try std.testing.expectEqual(@as(usize, 4), parent_after_result.first_line.?);
+
+    // 別スコープの定数は書き換えられない。モジュール定数へ取り込み元から
+    // 書く場合と、取り込んだ別モジュールの定数へ取り込み先から書く場合の
+    // 双方を拒否する。
+    const main_module_const = "定数 A=0\n●呼出とは\n!「./定数部.nako3」を取り込む。\nAを表示\nここまで\n呼出()\n";
+    const module_const_write = try run(main_module_const, "A=9\n");
+    try std.testing.expectEqual(@as(usize, 1), module_const_write.assignments);
+    try std.testing.expectEqual(@as(usize, 0), module_const_write.first_line.?);
+    const main_write_imported_const = "!「./定数部.nako3」を取り込む。\nA=9\n";
+    const imported_const_write = try run(main_write_imported_const, "定数 A=0\n");
+    try std.testing.expectEqual(@as(usize, 1), imported_const_write.assignments);
+    try std.testing.expectEqual(@as(usize, 1), imported_const_write.first_line.?);
+    // 別の関数のローカル定数と同名でも、新しい関数ローカルは独立して書ける。
+    const main_other_scope = "●定数側とは\n定数[A,B]=[4,5]\n[A,B]で戻る\nここまで\n●書込側とは\n!「./定数部.nako3」を取り込む。\nAを表示\nここまで\nJSONエンコード(定数側())を表示。\n書込側()\n";
+    try std.testing.expectEqual(@as(usize, 0), (try run(main_other_scope, "A=9\n")).assignments);
+    // 分割宣言以外のスカラー定数は、従来どおり宣言後の書き込みだけを拒否する。
+    try std.testing.expectEqual(@as(usize, 1), (try run("定数 A=0\nA=9\n", "A=0\n")).assignments);
+    try std.testing.expectEqual(@as(usize, 1), (try run("●Fとは\n定数 A=0\nA=9\nここまで\nF()\n", "A=0\n")).assignments);
 }
 
 test "package内scopeの依存命令は所有者修飾のdispatch名へ束縛する" {

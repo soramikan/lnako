@@ -1243,13 +1243,11 @@ pub const Analyzer = struct {
     /// 既存束縛を宣言位置から読み取り専用にするため、宣言前の代入・増減は
     /// 定数への再代入として診断しない（`A=0; 定数[A,B]=[4,5]`）。
     fn writeBeforeConstantDeclaration(self: *Analyzer, symbol: Symbol, module_index: u32, scope: ScopeId, node: *ast.Node) bool {
-        // 位置比較は同一モジュール内の宣言順にだけ適用する。取り込み先の
-        // シンボルを別モジュールから書く場合は従来どおり定数として拒否する。
-        if (symbol.module_index != module_index) return false;
         // 同じスコープの書き込みは、宣言名のファイル内バイト位置ではなく
-        // 展開済みの事前宣言走査順で比較する。関数内取り込みの宣言は
-        // 取り込み元ファイルの位置を持つため、単純なバイト位置比較では
-        // 取り込み先のコメント量で前後が逆転してしまう。
+        // 展開済みの事前宣言走査順で比較する。関数内取り込みで共有する
+        // 関数スコープでは、書き込みと宣言・既存束縛が別ファイルに由来して
+        // いても展開後は同じ束縛なので、由来モジュールで先に拒否しない。
+        // この順序比較は、取り込み元ファイルの長さで前後が逆転しない。
         if (symbol.constant_decl_scope) |decl_scope| {
             if (decl_scope == scope) {
                 if (symbol.constant_decl_order) |declared_order| {
@@ -1258,6 +1256,10 @@ pub const Analyzer = struct {
                 }
             }
         }
+        // 別スコープの定数への書き込みは、モジュールをまたぐ位置比較をせず
+        // 従来どおり定数として拒否する。別モジュールのモジュール変数を
+        // 関数ローカルから書き換える場合もここで拒否される。
+        if (symbol.module_index != module_index) return false;
         const declared = symbol.constant_decl_span orelse return false;
         return self.positionAfter(symbol.module_index, declared, module_index, node.span);
     }
