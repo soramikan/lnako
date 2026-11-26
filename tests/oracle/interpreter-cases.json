@@ -978,5 +978,15 @@
   {
     "id": "varlist-constant-after-assignment",
     "source": "A=0\n定数[A,B]=[4,5]\nJSONエンコード([A,B])を表示。\n"
+  },
+  {
+    "id": "varlist-constant-import-before-assignment-issue297",
+    "files": {"varlist-const-before.nako3": "定数[A,B]=[4,5]\n"},
+    "source": "●呼出とは\nA=0\n!「./varlist-const-before.nako3」を取り込む。\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n"
+  },
+  {
+    "id": "varlist-constant-import-before-assignment-long-comment-issue297",
+    "files": {"varlist-const-before-long.nako3": "# xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n定数[A,B]=[4,5]\n"},
+    "source": "●呼出とは\nA=0\n!「./varlist-const-before-long.nako3」を取り込む。\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n"
   }
 ]
