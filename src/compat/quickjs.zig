@@ -730,13 +730,17 @@ pub fn commandJosiMetadata(state: *State, allocator: std.mem.Allocator, name: []
     const slot_count = lnako_qjs_array_length(josi_value);
     var slots = try allocator.alloc([][]const u8, slot_count);
     var initialized_slots: usize = 0;
-    errdefer {
+    // 成功で呼出し元へ所有権を移すまで、正常な null 返却・エラー・部分確保の
+    // すべてでここまでに確保した領域を解放する（errdefer だけでは正常な
+    // null 返却を捕捉できない）。
+    var transferred = false;
+    defer if (!transferred) {
         for (slots[0..initialized_slots]) |slot| {
             for (slot) |item| allocator.free(item);
             allocator.free(slot);
         }
         allocator.free(slots);
-    }
+    };
     for (0..slot_count) |slot_index| {
         const slot_value = lnako_qjs_get_index(josi_value, @intCast(slot_index)) orelse return null;
         defer lnako_qjs_value_free(slot_value);
@@ -744,10 +748,11 @@ pub fn commandJosiMetadata(state: *State, allocator: std.mem.Allocator, name: []
         const alternative_count = lnako_qjs_array_length(slot_value);
         const alternatives = try allocator.alloc([]const u8, alternative_count);
         var initialized_alternatives: usize = 0;
-        errdefer {
+        var alternatives_owned = true;
+        defer if (alternatives_owned) {
             for (alternatives[0..initialized_alternatives]) |item| allocator.free(item);
             allocator.free(alternatives);
-        }
+        };
         for (0..alternative_count) |alternative_index| {
             const item = lnako_qjs_get_index(slot_value, @intCast(alternative_index)) orelse return null;
             defer lnako_qjs_value_free(item);
@@ -759,9 +764,11 @@ pub fn commandJosiMetadata(state: *State, allocator: std.mem.Allocator, name: []
         }
         slots[slot_index] = alternatives;
         initialized_slots += 1;
+        alternatives_owned = false;
     }
     const variable_value = lnako_qjs_get_property(resolved, "isVariableJosi") orelse return null;
     defer lnako_qjs_value_free(variable_value);
+    transferred = true;
     return .{
         .slots = slots,
         .variable_final = lnako_qjs_to_boolean(variable_value) != 0,

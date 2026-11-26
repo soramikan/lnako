@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -546,13 +546,23 @@ function 未使用() {
 ●複合式とは
   3を複合式で戻る。
 ここまで
+●引用アクセサとは
+  3を引用アクセサで戻る。
+ここまで
 `);
     write("packages/bad/plugin.mjs", `export default {
   アクセサ: { type: "func", josi: [["を"]], fn: (a) => a * 2, get type() { return "const" }, value: 8 },
-  エスケープ: { type: "func", josi: [["を"]], fn: (a) => a * 2, "ty\u0070e": "const", value: 8 },
+  エスケープ: { type: "func", josi: [["を"]], fn: (a) => a * 2, "ty\\u0070e": "const", value: 8 },
+  引用アクセサ: { type: "func", josi: [["を"]], fn: (a) => a * 2, get "ty\\u0070e"() { return "const" }, value: 8 },
   複合式: { type: "func", josi: [["を"]], fn: (a) => Number(a) * 2 } && { type: "const", value: 8 },
 };
 `);
+    // JSテンプレートが `\u0070` を復号すると生成ファイルは `type` になり、
+    // 対象のエスケープ判定を試せない。実ファイルにバックスラッシュが残ることを固定する。
+    if (!readFileSync(resolve(app, "packages/bad/plugin.mjs"), "utf8").includes("ty\\u0070e")) {
+      failures += 1;
+      console.error("Issue #297 第7回 エスケープ生成: plugin.mjs にバックスラッシュが残っていません");
+    }
     const entry = (pkg, body) => `!「pkg:${pkg}」を取り込む。\n${pkg}__試験()を表示。\n`;
     const callBody = (call) => `!「./plugin.mjs」を取り込む。\n●試験とは\n  ${call}\nここまで\n試験()を表示。\n`;
     const runApp = (args, cwd = app) => spawnSync(executable, args, { ...options, cwd, env: { ...options.env, HOME: sandboxHome, XDG_CACHE_HOME: resolve(sandboxHome, "cache") } });
@@ -623,7 +633,8 @@ ghost__両方()を表示
 
     const rejectCases = [
       { id: "accessor", name: "アクセサ", message: "未解決", plugin: `export default { 外部: { type: "func", josi: [["を"]], fn: (a) => a * 2, get type() { return "const" }, value: 8 } };\n` },
-      { id: "escaped", name: "エスケープ", message: "未解決", plugin: `export default { 外部: { type: "func", josi: [["を"]], fn: (a) => a * 2, "ty\u0070e": "const", value: 8 } };\n` },
+      { id: "escaped", name: "エスケープ", message: "未解決", plugin: `export default { 外部: { type: "func", josi: [["を"]], fn: (a) => a * 2, "ty\\u0070e": "const", value: 8 } };\n` },
+      { id: "quoted-accessor", name: "引用アクセサ", message: "未解決", plugin: `export default { 外部: { type: "func", josi: [["を"]], fn: (a) => a * 2, get "ty\\u0070e"() { return "const" }, value: 8 } };\n` },
       { id: "object-expression", name: "複合式", message: "未解決", plugin: `export default { 外部: { type: "func", josi: [["を"]], fn: (a) => Number(a) * 2 } && { type: "const", value: 8 } };\n` },
 
     ];

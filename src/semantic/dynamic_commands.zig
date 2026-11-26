@@ -863,9 +863,30 @@ fn objectEntryInfo(allocator: std.mem.Allocator, items: []const js_scanner.JavaS
             if (pos >= items.len) return .{};
         }
         if (pos >= items.len or (items[pos].kind != .identifier and items[pos].kind != .string)) return .{};
-        const key = items[pos].text;
+        const key_token = items[pos];
         pos += 1;
         if (pos >= items.len) return .{};
+        // 引用符付きキーのエスケープは、アクセサ・メソッド・データプロパティ
+        // のどの分岐よりも先に正規化する。単純なエスケープだけを復号し、
+        // `\u0070` のような判定不能な表記は entry 全体を確定しない
+        // （`get "ty\u0070e"` を通常のメソッドとして通過させない）。
+        var decoded_key: ?[]const u8 = null;
+        defer if (decoded_key) |owned| allocator.free(owned);
+        var key = key_token.text;
+        var key_uncertain = false;
+        if (key_token.kind == .string and std.mem.indexOfScalar(u8, key_token.text, '\\') != null) {
+            if (try unescapeSimpleString(allocator, key_token.text)) |decoded| {
+                key = decoded;
+                decoded_key = decoded;
+            } else {
+                key_uncertain = true;
+            }
+        }
+        if (key_uncertain) {
+            opaque_entry = true;
+            pos = skipPropertyRemainder(items, pos);
+            continue;
+        }
         // アクセサで `type`・`josi`・`fn` 等を再定義すると、後続の値から
         // 最終的なメタデータを確定できない。先に見た値だけを確定扱いしない。
         if (accessor and (std.mem.eql(u8, key, "type") or std.mem.eql(u8, key, "josi") or
@@ -883,11 +904,6 @@ fn objectEntryInfo(allocator: std.mem.Allocator, items: []const js_scanner.JavaS
         if (!isPunct(items[pos], ":")) return .{};
         const value_start = pos + 1;
         if (value_start >= items.len) return .{};
-        if (items[pos - 1].kind == .string) {
-            // エスケープ表記のキーは単純比較では同一プロパティと判定できない。
-            // 後続の同名キーで分類が変わり得るため entry 全体を確定しない。
-            if (try unescapeSimpleString(allocator, items[pos - 1].text) == null) opaque_entry = true;
-        }
         if (std.mem.eql(u8, key, "type")) {
             saw_type = true;
             if (exactStringValue(items, value_start)) |type_text| {
@@ -1383,6 +1399,49 @@ test "appendJavaScriptPluginAliases はアクセサ・エスケープキー・�
         allocator.free(variable.resolved_name);
     }
     try std.testing.expect(variable.runtime_alignment);
+}
+
+test "appendJavaScriptPluginAliases はエスケープされた型アクセサを型分類より先に確定不能にする" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const source =
+        \\export default {
+        \\  エスケープアクセサ: { type: "func", josi: [["を"]], fn: (a) => a * 2, get "ty\u0070e"() { return "const" }, value: 8 },
+        \\  エスケープデータ: { type: "func", josi: [["を"]], fn: (a) => a * 2, "ty\u0070e": "const", value: 8 },
+        \\  有効関数: { type: "func", josi: [["を"]], fn: (a) => a * 2 },
+        \\  有効定数: { type: "const", value: 8 },
+        \\};
+    ;
+    // Zigの複数行文字列はエスケープを処理しない。生成側で `type` へ
+    // 復号されていないことをここで固定する。
+    try std.testing.expect(std.mem.indexOf(u8, source, "\\u0070e") != null);
+
+    var aliases: std.ArrayList(DynamicCommandAlias) = .empty;
+    const ok = try appendJavaScriptPluginAliases(allocator, &aliases, source, "pkg:test:escaped-accessor.mjs", 3);
+    try std.testing.expect(ok);
+    try std.testing.expectEqual(@as(usize, 4), aliases.items.len);
+
+    for (aliases.items) |alias| {
+        if (std.mem.eql(u8, alias.source_namespace, "エスケープアクセサ") or
+            std.mem.eql(u8, alias.source_namespace, "エスケープデータ"))
+        {
+            try std.testing.expect(!alias.callable);
+            try std.testing.expect(!alias.value);
+            try std.testing.expect(alias.signature == null);
+            try std.testing.expect((try bindsCallableExact(allocator, false, 0, aliases.items, alias.source_namespace, 10)) == null);
+            try std.testing.expect((try bindsValueExact(allocator, false, 0, aliases.items, alias.source_namespace, 10)) == null);
+        }
+        if (std.mem.eql(u8, alias.source_namespace, "有効関数")) {
+            try std.testing.expect(alias.callable);
+            try std.testing.expect(alias.signature != null);
+            try std.testing.expect((try bindsCallableExact(allocator, false, 0, aliases.items, "有効関数", 10)) != null);
+        }
+        if (std.mem.eql(u8, alias.source_namespace, "有効定数")) {
+            try std.testing.expect(alias.value);
+            try std.testing.expect((try bindsValueExact(allocator, false, 0, aliases.items, "有効定数", 10)) != null);
+        }
+    }
 }
 
 test "appendJavaScriptPluginAliases は関数内addPluginObjectの登録を確定扱いしない" {

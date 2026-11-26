@@ -1551,3 +1551,136 @@ test "package内の静的抽出が実登録を保証しない場合と依存ESM�
         try testing.expectEqualStrings(case.expected, host.written());
     }
 }
+
+test "Issue #297 第7回: エスケープされた型アクセサを実行前に拒否し有効なfunc/constを維持する" {
+    if (!lnako.compat.quickjs.available()) return error.SkipZigTest;
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var temporary = test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+
+    // 有効な func/const だけを持つ package。同じ object に判定不能な
+    // キーを混ぜた場合の分類は src/semantic の単体テストで固定する。
+    try temporary.dir.createDirPath(io, "packages/escapedok");
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "packages/escapedok/plugin.mjs",
+        .data =
+        \\export default {
+        \\  有効関数: { type: "func", josi: [["を"]], fn: (a) => a * 2 },
+        \\  有効定数: { type: "const", value: 8 },
+        \\};
+        \\
+        ,
+    });
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "packages/escapedok/main.nako3",
+        .data =
+        \\!「./plugin.mjs」を取り込む。
+        \\●倍算とは
+        \\  3を有効関数で戻る。
+        \\ここまで
+        \\●定数値とは
+        \\  有効定数を戻る。
+        \\ここまで
+        \\
+        ,
+    });
+
+    // エスケープされたアクセサとデータキーを持つ package。テンプレートや
+    // JS評価で `type` に復号されず、実ファイルにもバックスラッシュが残る
+    // ことを固定する。
+    const bad_plugin =
+        \\export default {
+        \\  アクセサ: { type: "func", josi: [["を"]], fn: (a) => a * 2, get "ty\u0070e"() { return "const" }, value: 8 },
+        \\  データ: { type: "func", josi: [["を"]], fn: (a) => a * 2, "ty\u0070e": "const", value: 8 },
+        \\};
+    ;
+    try testing.expect(std.mem.indexOf(u8, bad_plugin, "\\u0070e") != null);
+    try temporary.dir.createDirPath(io, "packages/escapedbad");
+    try temporary.dir.writeFile(io, .{ .sub_path = "packages/escapedbad/plugin.mjs", .data = bad_plugin });
+    const written_plugin = try temporary.dir.readFileAlloc(io, "packages/escapedbad/plugin.mjs", gpa, .limited(4096));
+    defer gpa.free(written_plugin);
+    try testing.expect(std.mem.indexOf(u8, written_plugin, "\\u0070e") != null);
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "packages/escapedbad/main.nako3",
+        .data =
+        \\!「./plugin.mjs」を取り込む。
+        \\●アクセサとは
+        \\  3をアクセサで戻る。
+        \\ここまで
+        \\●データとは
+        \\  3をデータで戻る。
+        \\ここまで
+        \\
+        ,
+    });
+
+    const app_root = try temporary.dir.realPathFileAlloc(io, ".", gpa);
+    defer gpa.free(app_root);
+    const Resolver = struct {
+        root: []const u8,
+        fn resolve(context: *anyopaque, allocator: std.mem.Allocator, _: []const u8, _: ?[]const u8, specifier: []const u8) !lnako.semantic.module_graph.ResolvedPackageImport {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            const names = [_][]const u8{ "escapedok", "escapedbad" };
+            inline for (names) |name| {
+                if (std.mem.eql(u8, specifier, "pkg:" ++ name)) {
+                    return .{
+                        .path = try std.fs.path.join(allocator, &.{ self.root, "packages", name, "main.nako3" }),
+                        .canonical_id = try allocator.dupe(u8, "pkg:" ++ name ++ "/main"),
+                        .namespace = name,
+                        .package_owner = try allocator.dupe(u8, "pkg:" ++ name),
+                        .package_root = try std.fs.path.join(allocator, &.{ self.root, "packages", name }),
+                    };
+                }
+            }
+            return error.PackageNotFound;
+        }
+    };
+    var resolver = Resolver{ .root = app_root };
+
+    {
+        const ok_path = try std.fs.path.join(gpa, &.{ app_root, "escapedok-main.nako3" });
+        defer gpa.free(ok_path);
+        try temporary.dir.writeFile(io, .{
+            .sub_path = "escapedok-main.nako3",
+            .data = "!「pkg:escapedok」を取り込む\nescapedok__倍算()を表示\nescapedok__定数値()を表示\n",
+        });
+        var stderr: std.Io.Writer.Allocating = .init(gpa);
+        defer stderr.deinit();
+        var program = (try compile_pipeline.compileInput(gpa, io, ok_path, .{
+            .compat_js = true,
+            .package_resolver = .{ .context = &resolver, .resolveFn = Resolver.resolve },
+        }, &stderr.writer)) orelse return error.UnexpectedCompileFailure;
+        defer program.deinit();
+        var runtime = lnako.runtime.value.Runtime.init(gpa);
+        defer runtime.deinit();
+        var host = lnako.runtime.interpreter.BufferHost{ .allocator = gpa };
+        defer host.deinit();
+        var interpreter = lnako.runtime.interpreter.Interpreter.init(gpa, &runtime, program, host.host());
+        defer interpreter.deinit();
+        _ = try interpreter.run();
+        try testing.expectEqualStrings("6\n8\n", host.written());
+    }
+
+    const rejects = [_]struct { id: []const u8, call: []const u8 }{
+        .{ .id = "escaped-accessor", .call = "escapedbad__アクセサ()を表示" },
+        .{ .id = "escaped-data", .call = "escapedbad__データ()を表示" },
+    };
+    for (rejects) |item| {
+        const sub_path = try std.fmt.allocPrint(gpa, "{s}.nako3", .{item.id});
+        defer gpa.free(sub_path);
+        const source = try std.fmt.allocPrint(gpa, "!「pkg:escapedbad」を取り込む\n{s}\n", .{item.call});
+        defer gpa.free(source);
+        try temporary.dir.writeFile(io, .{ .sub_path = sub_path, .data = source });
+        const path = try std.fs.path.join(gpa, &.{ app_root, sub_path });
+        defer gpa.free(path);
+        var stderr: std.Io.Writer.Allocating = .init(gpa);
+        defer stderr.deinit();
+        try testing.expect((try compile_pipeline.compileInput(gpa, io, path, .{
+            .compat_js = true,
+            .package_resolver = .{ .context = &resolver, .resolveFn = Resolver.resolve },
+        }, &stderr.writer)) == null);
+        try testing.expect(std.mem.indexOf(u8, stderr.written(), "unresolved_word") != null);
+        try testing.expect(std.mem.indexOf(u8, stderr.written(), "未解決") != null);
+    }
+}
