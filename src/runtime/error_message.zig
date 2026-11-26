@@ -55,6 +55,8 @@ pub fn forFailure(failure: anyerror) []const u8 {
         error.StringPadWidthUnbounded => "String padding width is unbounded",
         error.ValueNestingTooDeep => "Value nesting exceeds safety limit",
         error.CallStackLimitExceeded => "Maximum call stack size exceeded",
+        error.UnresolvedArguments => "『戻』文の直前に未解決の引数があります。『(式)を戻す』のように式をカッコで括ってください。",
+        error.ArgumentShortage => "関数の引数が不足しています。",
         error.InvalidHttpQueryEncoding => "URI malformed",
         error.InvalidAjaxContentType => "TypeError: res.body is not a function",
         else => @errorName(failure),

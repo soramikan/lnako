@@ -74,6 +74,13 @@ pub const Node = struct {
     /// package経由plugin）で真。取り込み辺を持たないモジュールの同名呼出し
     /// は false のまま残り、実行時にpackage修飾命令へ誤配送されない。
     dynamic_call: bool = false,
+    /// 動的plugin呼び出しの実引数を未整列のまま実行時へ渡し、実際に登録
+    /// された候補の助詞メタデータで割り当てる。
+    runtime_argument_alignment: bool = false,
+    /// 未整列実引数それぞれの助詞（`runtime_argument_alignment`時のみ）。
+    argument_josi: []const []const u8 = &.{},
+    /// 未整列実引数のうち連文の暗黙『それ』マーカーか。
+    argument_implicit: []const bool = &.{},
     /// 動的plugin呼出しで主配送先が未登録だった場合に試すフォールバック候補名。
     fallback_names: []const []const u8 = &.{},
     /// DNCL互換の配列要素代入で、未初期化変数へ30要素の0配列を自動初期化する。
@@ -334,9 +341,15 @@ const Lowerer = struct {
             return self.addNode(.nop, node.span, &.{});
         }
         const implicit_function = self.implicitFunction(node);
+        const runtime_arguments = self.runtimeArgumentAlignment(node);
         const completion = try self.argumentCompletionPlan(node);
         var child_ids: []NodeId = undefined;
-        if (completion) |plan| {
+        if (runtime_arguments) {
+            // 実登録される候補が未確定な動的呼出しは、候補ごとの助詞で
+            // 並べ替えず、ソース順の実引数と助詞をそのまま保持する。
+            child_ids = try self.allocator.alloc(NodeId, node.children.len);
+            for (node.children, 0..) |child, index| child_ids[index] = try self.lowerNode(child, module_index);
+        } else if (completion) |plan| {
             // 公式`yCallFunc`と同じ助詞補完。省略された引数は変数「それ」を渡す。
             child_ids = try self.allocator.alloc(NodeId, plan.operands.len);
             for (plan.operands, 0..) |operand, index| {
@@ -419,6 +432,17 @@ const Lowerer = struct {
             .function_call, .word, .function_pointer => try self.bindingFallbackNames(node),
             else => &.{},
         };
+        result.runtime_argument_alignment = runtime_arguments;
+        if (runtime_arguments) {
+            const josi = try self.allocator.alloc([]const u8, node.children.len);
+            const implicit = try self.allocator.alloc(bool, node.children.len);
+            for (node.children, 0..) |child, index| {
+                josi[index] = try self.allocator.dupe(u8, child.josi);
+                implicit[index] = isChainImplicitItNode(child);
+            }
+            result.argument_josi = josi;
+            result.argument_implicit = implicit;
+        }
         result.check_array_init = node.check_array_init;
         result.local_target = self.bindingIsLocal(node);
         result.uses_implicit_arguments = self.bindsImplicitArguments(node);
@@ -504,6 +528,13 @@ const Lowerer = struct {
         return null;
     }
 
+    /// 実登録候補を静的に確定できず、実行時の助詞割り当てが必要か。
+    fn runtimeArgumentAlignment(self: Lowerer, node: *ast.Node) bool {
+        if (node.kind != .word) return false;
+        for (self.semantic_program.bindings) |binding| if (binding.node == node) return binding.runtime_alignment;
+        return false;
+    }
+
     /// 組み込み命令へ束縛された`.word`ノードを暗黙呼出しにするか判定する。
     /// 「それ」「対象」など組み込み名の変数はarity表に無いため呼出しへ変換しない。
     fn bindingIsBuiltinCommand(self: Lowerer, node: *ast.Node) bool {
@@ -563,6 +594,12 @@ const Lowerer = struct {
             },
             else => return null,
         }
+    }
+
+    /// 連文が挿入した暗黙マーカーか（未整列引数の補完値に使う）。
+    fn isChainImplicitItNode(node: *ast.Node) bool {
+        return node.is_implicit_it and node.kind == .word and
+            std.mem.eql(u8, node.value, "それ") and node.josi.len == 0;
     }
 
     /// 連文が引数列へ挿入した暗黙の『それ』マーカーを返す。

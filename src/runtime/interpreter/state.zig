@@ -616,6 +616,16 @@ pub const Interpreter = struct {
         return plugins.callExternalCommand(self, name, arguments);
     }
 
+    pub fn alignExternalArguments(
+        self: *Interpreter,
+        name: []const u8,
+        arguments: []const Value,
+        argument_josi: []const []const u8,
+        argument_implicit: []const bool,
+    ) !?[]Value {
+        return plugins.alignExternalArguments(self, name, arguments, argument_josi, argument_implicit);
+    }
+
     pub fn resolvePluginTarget(self: *Interpreter, primary: []const u8, fallbacks: []const []const u8) !plugins.ResolvedPluginTarget {
         return plugins.resolvePluginTarget(self, primary, fallbacks);
     }

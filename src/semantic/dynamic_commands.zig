@@ -7,6 +7,9 @@ const argument_completion = @import("argument_completion.zig");
 pub const JosiSignature = struct {
     slots: []const []const []const u8,
     variable_final: bool = false,
+    /// `isVariableJosi` をリテラル真偽値として確定できたか。省略時はJSの
+    /// false と同じだが、式で書かれた場合は実登録メタデータでのみ決まる。
+    variable_known: bool = true,
 };
 
 /// package経由plugin命令のソース上の修飾aliasと、runtime登録名への写像。
@@ -50,6 +53,10 @@ pub const DynamicCommandAlias = struct {
     /// 呼出し可能と推測せず、未解決引数として診断させる。native pluginの
     /// 実行時登録名など、registryで関数と確認できるaliasはfalseのまま。
     signature_required: bool = false,
+    /// 抽出元の登録が取り込み時の評価で必ず実行されるか。トップレベルの
+    /// `export default`・`addPluginObject` は真、関数内など未実行になり得る
+    /// 登録は偽。偽の候補の助詞定義を主候補の呼出し計画へ流用しない。
+    registration_certain: bool = true,
 };
 
 /// 動的builtinとして束縛する命令名か判定する。直接取り込んだnative plugin
@@ -153,6 +160,10 @@ pub const CandidateResolution = struct {
     resolved_name: []const u8,
     fallback_names: []const []const u8 = &.{},
     signature: ?JosiSignature = null,
+    /// 実登録される候補が静的には確定できず、候補ごとの助詞定義も一致
+    /// しない場合に真。呼出し側は実引数を未整列のまま実行時へ渡し、
+    /// 選択された登録のメタデータで割り当てる。
+    runtime_alignment: bool = false,
 };
 
 /// `binds` と同じ優先規則で主配送先 `resolved_name` を決めつつ、主配送先が
@@ -202,6 +213,26 @@ pub fn bindsWithFallbacks(
         }
     }.lessThan);
 
+    // 候補ごとの助詞定義が一致しない、または可変長助詞をリテラルで確定
+    // できない場合は、主候補の呼出し計画を先発候補へ流用できない。実引数を
+    // 未整列のまま実行時へ渡し、実際に登録された候補のメタデータで割り当てる。
+    var runtime_alignment = primary.exact and !primary.registration_certain;
+    if (primary.exact and primary.signature != null) {
+        if (!primary.signature.?.variable_known) runtime_alignment = true;
+    }
+    var all_esm_signatures = primary.exact and primary.signature != null;
+    for (candidates.items) |entry| {
+        if (!entry.alias.exact or !entry.alias.signature_required or entry.alias.signature == null) {
+            all_esm_signatures = false;
+            continue;
+        }
+        if (primary.signature) |primary_signature| {
+            if (!signatureEql(entry.alias.signature.?, primary_signature)) runtime_alignment = true;
+        }
+        if (!entry.alias.signature.?.variable_known) runtime_alignment = true;
+    }
+    if (!all_esm_signatures) runtime_alignment = false;
+
     var fallbacks: std.ArrayList([]const u8) = .empty;
     errdefer {
         for (fallbacks.items) |item| allocator.free(item);
@@ -234,7 +265,21 @@ pub fn bindsWithFallbacks(
         .resolved_name = resolved_name,
         .fallback_names = try fallbacks.toOwnedSlice(allocator),
         .signature = primary.signature,
+        .runtime_alignment = runtime_alignment,
     };
+}
+
+/// 2つの助詞シグネチャが同じスロット表・可変長指定か。文字列は内容で比較する。
+fn signatureEql(a: JosiSignature, b: JosiSignature) bool {
+    if (a.variable_final != b.variable_final or a.variable_known != b.variable_known) return false;
+    if (a.slots.len != b.slots.len) return false;
+    for (a.slots, b.slots) |a_slot, b_slot| {
+        if (a_slot.len != b_slot.len) return false;
+        for (a_slot, b_slot) |a_item, b_item| {
+            if (!std.mem.eql(u8, a_item, b_item)) return false;
+        }
+    }
+    return true;
 }
 
 /// 解析中の一時arenaに由来する`JosiSignature`を、Programの生存期間を持つ
@@ -247,7 +292,7 @@ pub fn cloneSignature(allocator: std.mem.Allocator, signature: JosiSignature) !J
         for (alternatives, 0..) |alternative, alternative_index| copied[alternative_index] = try allocator.dupe(u8, alternative);
         slots[index] = copied;
     }
-    return .{ .slots = slots, .variable_final = signature.variable_final };
+    return .{ .slots = slots, .variable_final = signature.variable_final, .variable_known = signature.variable_known };
 }
 
 /// `JosiSignature`を`argument_completion.plan`のスロット表へ変換する。
@@ -322,7 +367,7 @@ pub fn appendJavaScriptPluginAliases(
             if (expr_start >= items.len) {
                 all_static_complete = false;
             } else if (isPunct(items[expr_start], "{")) {
-                const result = try extractObjectLiteralKeys(allocator, aliases, items, expr_start, dispatch_namespace, import_position);
+                const result = try extractObjectLiteralKeys(allocator, aliases, items, expr_start, dispatch_namespace, import_position, true);
                 if (!result.complete or result.close_brace_index == null or
                     !isExportDefaultExpressionEnd(source, items, result.close_brace_index.?, open_parens))
                     all_static_complete = false;
@@ -330,7 +375,7 @@ pub fn appendJavaScriptPluginAliases(
                 isExportDefaultExpressionEnd(source, items, expr_start, open_parens))
             {
                 if (findVariableObjectInitializer(source, items, index, items[expr_start].text)) |obj_brace| {
-                    const result = try extractObjectLiteralKeys(allocator, aliases, items, obj_brace, dispatch_namespace, import_position);
+                    const result = try extractObjectLiteralKeys(allocator, aliases, items, obj_brace, dispatch_namespace, import_position, true);
                     if (!result.complete or result.close_brace_index == null) all_static_complete = false;
                 } else {
                     all_static_complete = false;
@@ -341,7 +386,7 @@ pub fn appendJavaScriptPluginAliases(
         } else if (isIdent(token, "addPluginObject") and !(index > 0 and isIdent(items[index - 1], "function"))) {
             if (index + 1 < items.len and isPunct(items[index + 1], "(")) {
                 found_plugin_site = true;
-                const ok = try extractAddPluginObjectSecondArg(allocator, aliases, source, items, index + 1, dispatch_namespace, import_position);
+                const ok = try extractAddPluginObjectSecondArg(allocator, aliases, source, items, index + 1, dispatch_namespace, import_position, depth == 0);
                 if (!ok) all_static_complete = false;
             } else {
                 // `const reg = navigator.nako3.addPluginObject`・分割代入・`?.()`・`.call()` などの
@@ -604,6 +649,7 @@ fn extractAddPluginObjectSecondArg(
     open_paren_index: usize,
     dispatch_namespace: []const u8,
     import_position: usize,
+    registration_certain: bool,
 ) !bool {
     var pos = open_paren_index + 1;
     var nested: usize = 0;
@@ -629,7 +675,7 @@ fn extractAddPluginObjectSecondArg(
     const open_parens = expr_start - raw_start;
     if (expr_start >= items.len) return false;
     if (isPunct(items[expr_start], "{")) {
-        const result = try extractObjectLiteralKeys(allocator, aliases, items, expr_start, dispatch_namespace, import_position);
+        const result = try extractObjectLiteralKeys(allocator, aliases, items, expr_start, dispatch_namespace, import_position, registration_certain);
         return result.complete and
             result.close_brace_index != null and
             isCallArgEnd(items, result.close_brace_index.? + 1, open_parens);
@@ -638,7 +684,7 @@ fn extractAddPluginObjectSecondArg(
         isCallArgEnd(items, expr_start + 1, open_parens))
     {
         const obj_brace = findVariableObjectInitializer(source, items, open_paren_index, items[expr_start].text) orelse return false;
-        const result = try extractObjectLiteralKeys(allocator, aliases, items, obj_brace, dispatch_namespace, import_position);
+        const result = try extractObjectLiteralKeys(allocator, aliases, items, obj_brace, dispatch_namespace, import_position, registration_certain);
         return result.complete and result.close_brace_index != null;
     }
     return false;
@@ -653,6 +699,9 @@ const EntryClass = enum { function, constant, unknown };
 const EntryInfo = struct {
     class: EntryClass = .unknown,
     signature: ?JosiSignature = null,
+    /// オブジェクト値の直後の位置（閉じ`}`の次）。プロパティ値として
+    /// 単独で完結しているかの境界確認に使う。
+    end: usize = 0,
 };
 
 /// `key: value` の値が、なでしこ plugin の entry として静的に何に確定するか。
@@ -680,7 +729,13 @@ fn propertyEntryInfo(allocator: std.mem.Allocator, items: []const js_scanner.Jav
         }
         return if (isArrowFunctionAt(items, value_start)) .{ .class = .function } else .{};
     }
-    if (isPunct(value, "{")) return objectEntryInfo(allocator, items, value_start);
+    if (isPunct(value, "{")) {
+        const info = try objectEntryInfo(allocator, items, value_start);
+        // `{...} && {...}` のようにオブジェクト式がさらに式の一部になる場合、
+        // 先頭のオブジェクトだけを entry 全体と確定しない。
+        if (info.end >= items.len or !(isPunct(items[info.end], ",") or isPunct(items[info.end], "}"))) return .{};
+        return info;
+    }
     if (isPunct(value, "(")) return if (isArrowFunctionAt(items, value_start)) .{ .class = .function } else .{};
     return .{};
 }
@@ -772,10 +827,15 @@ fn objectEntryInfo(allocator: std.mem.Allocator, items: []const js_scanner.JavaS
     var fn_function = false;
     var signature: ?JosiSignature = null;
     var variable_final = false;
+    var variable_known = true;
     var opaque_entry = false;
+    var close_index: ?usize = null;
     var pos = open_brace_index + 1;
     while (pos < items.len) {
-        if (isPunct(items[pos], "}")) break;
+        if (isPunct(items[pos], "}")) {
+            close_index = pos;
+            break;
+        }
         if (isPunct(items[pos], ",")) {
             pos += 1;
             continue;
@@ -789,6 +849,7 @@ fn objectEntryInfo(allocator: std.mem.Allocator, items: []const js_scanner.JavaS
             continue;
         }
         // `*` または `get`/`set`/`async` 修飾子付きのメソッド。
+        var accessor = false;
         if (isPunct(items[pos], "*")) {
             pos += 1;
             if (pos >= items.len) return .{};
@@ -796,6 +857,7 @@ fn objectEntryInfo(allocator: std.mem.Allocator, items: []const js_scanner.JavaS
             (std.mem.eql(u8, items[pos].text, "get") or std.mem.eql(u8, items[pos].text, "set") or std.mem.eql(u8, items[pos].text, "async")) and
             pos + 1 < items.len and !isPropertyNameTerminator(items[pos + 1]))
         {
+            accessor = std.mem.eql(u8, items[pos].text, "get") or std.mem.eql(u8, items[pos].text, "set");
             pos += 1;
             if (pos < items.len and isPunct(items[pos], "*")) pos += 1;
             if (pos >= items.len) return .{};
@@ -804,6 +866,15 @@ fn objectEntryInfo(allocator: std.mem.Allocator, items: []const js_scanner.JavaS
         const key = items[pos].text;
         pos += 1;
         if (pos >= items.len) return .{};
+        // アクセサで `type`・`josi`・`fn` 等を再定義すると、後続の値から
+        // 最終的なメタデータを確定できない。先に見た値だけを確定扱いしない。
+        if (accessor and (std.mem.eql(u8, key, "type") or std.mem.eql(u8, key, "josi") or
+            std.mem.eql(u8, key, "fn") or std.mem.eql(u8, key, "isVariableJosi")))
+        {
+            opaque_entry = true;
+            pos = skipPropertyRemainder(items, pos);
+            continue;
+        }
         if (isPunct(items[pos], "(")) {
             if (std.mem.eql(u8, key, "fn")) fn_function = true;
             pos = skipPropertyRemainder(items, pos);
@@ -812,6 +883,11 @@ fn objectEntryInfo(allocator: std.mem.Allocator, items: []const js_scanner.JavaS
         if (!isPunct(items[pos], ":")) return .{};
         const value_start = pos + 1;
         if (value_start >= items.len) return .{};
+        if (items[pos - 1].kind == .string) {
+            // エスケープ表記のキーは単純比較では同一プロパティと判定できない。
+            // 後続の同名キーで分類が変わり得るため entry 全体を確定しない。
+            if (try unescapeSimpleString(allocator, items[pos - 1].text) == null) opaque_entry = true;
+        }
         if (std.mem.eql(u8, key, "type")) {
             saw_type = true;
             if (exactStringValue(items, value_start)) |type_text| {
@@ -838,20 +914,26 @@ fn objectEntryInfo(allocator: std.mem.Allocator, items: []const js_scanner.JavaS
                 signature = null;
             }
         } else if (std.mem.eql(u8, key, "isVariableJosi")) {
-            variable_final = exactBooleanValue(items, value_start) orelse false;
+            if (exactBooleanValue(items, value_start)) |value| {
+                variable_final = value;
+            } else {
+                // 式の値は plugin 評価時にしか決まらない。false とみなして
+                // 固定長シグネチャを確定しない。
+                variable_known = false;
+            }
         }
         pos = skipPropertyRemainder(items, value_start);
     }
-    if (opaque_entry) return .{};
+    if (opaque_entry or close_index == null) return .{};
     if (saw_type) {
         return switch (type_class) {
-            .function => .{ .class = .function, .signature = if (signature) |sig| .{ .slots = sig.slots, .variable_final = variable_final } else null },
-            .constant => .{ .class = .constant },
+            .function => .{ .class = .function, .signature = if (signature) |sig| .{ .slots = sig.slots, .variable_final = variable_final, .variable_known = variable_known } else null, .end = close_index.? + 1 },
+            .constant => .{ .class = .constant, .end = close_index.? + 1 },
             .unknown => .{},
         };
     }
     if (fn_function) {
-        return .{ .class = .function, .signature = if (signature) |sig| .{ .slots = sig.slots, .variable_final = variable_final } else null };
+        return .{ .class = .function, .signature = if (signature) |sig| .{ .slots = sig.slots, .variable_final = variable_final, .variable_known = variable_known } else null, .end = close_index.? + 1 };
     }
     return .{};
 }
@@ -939,6 +1021,7 @@ fn extractObjectLiteralKeys(
     open_brace_index: usize,
     dispatch_namespace: []const u8,
     import_position: usize,
+    registration_certain: bool,
 ) !ObjectExtractResult {
     var complete = true;
     const force_unknown = objectHasOpaqueTopLevelKey(items, open_brace_index);
@@ -1026,6 +1109,7 @@ fn extractObjectLiteralKeys(
                     .value = info.class == .constant,
                     .signature = info.signature,
                     .signature_required = true,
+                    .registration_certain = registration_certain,
                 };
                 // 同じオブジェクト内の同名キーはJSの後勝ち。最後の値だけで
                 // 分類し、先の関数entryを残さない。
@@ -1036,6 +1120,12 @@ fn extractObjectLiteralKeys(
                         std.mem.eql(u8, existing.source_namespace, key) and
                         std.mem.eql(u8, existing.dispatch_namespace, dispatch))
                     {
+                        // 同時点で必ず実行される登録を、未実行になり得る登録で
+                        // 上書きしない（助詞シグネチャの選択元を失わない）。
+                        if (existing.registration_certain and !alias.registration_certain) {
+                            replaced = true;
+                            break;
+                        }
                         existing.* = alias;
                         replaced = true;
                         break;
@@ -1247,6 +1337,89 @@ test "appendJavaScriptPluginAliases はトップレベルの算出アクセサ�
     try std.testing.expectEqualStrings("既知", aliases.items[0].source_namespace);
     try std.testing.expect(!aliases.items[0].callable);
     try std.testing.expect(!aliases.items[0].value);
+}
+
+test "appendJavaScriptPluginAliases はアクセサ・エスケープキー・複合式のentryを確定しない" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var aliases: std.ArrayList(DynamicCommandAlias) = .empty;
+    const ok = try appendJavaScriptPluginAliases(allocator, &aliases,
+        \\export default {
+        \\  アクセサ上書き: { type: "func", josi: [["を"]], fn: (a) => a * 2, get type() { return "const" }, value: 8 },
+        \\  エスケープキー: { type: "func", josi: [["を"]], fn: (a) => a * 2, "ty\u0070e": "const", value: 8 },
+        \\  複合式: { type: "func", josi: [["を"]], fn: (a) => Number(a) * 2 } && { type: "const", value: 8 },
+        \\  可変長式: { type: "func", josi: [["と", "を"]], fn: (...args) => args.length, isVariableJosi: Boolean(1) },
+        \\  可変長真: { type: "func", josi: [["を"], ["に"]], fn: (a, b) => [a, b], isVariableJosi: true },
+        \\};
+    , "pkg:test:boundary.mjs", 5);
+    try std.testing.expect(ok);
+
+    for (aliases.items) |alias| {
+        if (std.mem.eql(u8, alias.source_namespace, "アクセサ上書き") or
+            std.mem.eql(u8, alias.source_namespace, "エスケープキー") or
+            std.mem.eql(u8, alias.source_namespace, "複合式"))
+        {
+            try std.testing.expect(!alias.callable);
+            try std.testing.expect(!alias.value);
+            try std.testing.expect(alias.signature == null);
+        }
+        if (std.mem.eql(u8, alias.source_namespace, "可変長式")) {
+            try std.testing.expect(alias.callable);
+            try std.testing.expect(alias.signature != null);
+            try std.testing.expect(!alias.signature.?.variable_known);
+        }
+        if (std.mem.eql(u8, alias.source_namespace, "可変長真")) {
+            try std.testing.expect(alias.callable);
+            try std.testing.expect(alias.signature.?.variable_known);
+            try std.testing.expect(alias.signature.?.variable_final);
+        }
+    }
+
+    const variable = (try bindsCallableExact(allocator, false, 0, aliases.items, "可変長式", 10)) orelse return error.TestUnexpectedResult;
+    defer {
+        for (variable.fallback_names) |name| allocator.free(name);
+        allocator.free(variable.fallback_names);
+        allocator.free(variable.resolved_name);
+    }
+    try std.testing.expect(variable.runtime_alignment);
+}
+
+test "appendJavaScriptPluginAliases は関数内addPluginObjectの登録を確定扱いしない" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var aliases: std.ArrayList(DynamicCommandAlias) = .empty;
+    const ok = try appendJavaScriptPluginAliases(allocator, &aliases,
+        \\export default {};
+        \\function 未使用() { navigator.nako3.addPluginObject("b", { 外部命令: { type: "func", josi: [["に"]], fn: (a) => a * 3 } }); }
+    , "pkg:test:ghost.mjs", 7);
+    try std.testing.expect(ok);
+
+    var uncertain_count: usize = 0;
+    for (aliases.items) |alias| {
+        if (!std.mem.eql(u8, alias.source_namespace, "外部命令")) continue;
+        try std.testing.expect(!alias.registration_certain);
+        try std.testing.expectEqualStrings("に", alias.signature.?.slots[0][0]);
+        uncertain_count += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 1), uncertain_count);
+
+    // 別moduleの先発候補（確実）と後発の未実行候補（不確実）で助詞が異なる。
+    const mixed = [_]DynamicCommandAlias{
+        .{ .source_namespace = "外部命令", .dispatch_namespace = "pkg:a.mjs__外部命令", .import_position = 3, .exact = true, .signature = .{ .slots = &.{&.{"を"}} }, .signature_required = true },
+        .{ .source_namespace = "外部命令", .dispatch_namespace = "pkg:b.mjs__外部命令", .import_position = 7, .exact = true, .signature = .{ .slots = &.{&.{"に"}} }, .signature_required = true, .registration_certain = false },
+    };
+    const resolved = (try bindsCallableExact(allocator, false, 0, &mixed, "外部命令", 10)) orelse return error.TestUnexpectedResult;
+    defer {
+        for (resolved.fallback_names) |name| allocator.free(name);
+        allocator.free(resolved.fallback_names);
+        allocator.free(resolved.resolved_name);
+    }
+    try std.testing.expect(resolved.runtime_alignment);
+    try std.testing.expectEqualStrings("pkg:b.mjs__外部命令", resolved.resolved_name);
+    try std.testing.expectEqual(@as(usize, 1), resolved.fallback_names.len);
+    try std.testing.expectEqualStrings("pkg:a.mjs__外部命令", resolved.fallback_names[0]);
 }
 
 test "bindsCallableExact はcatch-allや非関数exactを呼出し候補にしない" {

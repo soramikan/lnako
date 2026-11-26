@@ -100,6 +100,13 @@ pub const Instruction = struct {
     /// ある呼出しに限る — 取り込み辺を持たないモジュールが同名を書いても
     /// pluginへ届かない。
     dynamic_call: bool = false,
+    /// 実登録候補を静的に確定できない動的plugin呼出しで、実引数を未整列の
+    /// まま実行時の助詞メタデータで割り当てる。
+    runtime_argument_alignment: bool = false,
+    /// 未整列実引数それぞれの助詞。
+    argument_josi: []const []const u8 = &.{},
+    /// 未整列実引数が連文の暗黙『それ』マーカーか。
+    argument_implicit: []const bool = &.{},
     /// 動的plugin呼出しで主配送先が未登録だった場合に試すフォールバック候補名。
     fallback_names: []const []const u8 = &.{},
     /// DNCL互換の配列要素代入で、未初期化変数へ30要素の0配列を自動初期化する。
@@ -327,6 +334,8 @@ pub const Program = struct {
                     for (instruction.names, names) |source_name, *target_name| target_name.* = try allocator.dupe(u8, source_name);
                     instruction.names = names;
                     instruction.fallback_names = if (instruction.fallback_names.len > 0) try cloneStrings(allocator, instruction.fallback_names) else &.{};
+                    instruction.argument_josi = if (instruction.argument_josi.len > 0) try cloneStrings(allocator, instruction.argument_josi) else &.{};
+                    instruction.argument_implicit = try allocator.dupe(bool, instruction.argument_implicit);
                     instruction.names_local = try allocator.dupe(bool, instruction.names_local);
                 }
                 target_block.* = source_block;

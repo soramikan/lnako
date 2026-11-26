@@ -518,6 +518,124 @@ pub fn callBuiltinWithFallbacks(
     return self.callBuiltinResolved(null, target, arguments, site_id);
 }
 
+/// 静的に候補を確定できない動的plugin呼出し。実登録された候補を選んだ後、
+/// その登録の `josi` メタデータで未整列の実引数を割り当てる。
+pub fn callBuiltinWithFallbacksAligned(
+    self: *Interpreter,
+    name: []const u8,
+    fallbacks: []const []const u8,
+    arguments: []const Value,
+    argument_josi: []const []const u8,
+    argument_implicit: []const bool,
+    site_id: ?u64,
+) !Value {
+    const target = try resolveRegisteredFallbackCommand(self, name, fallbacks);
+    if (try alignExternalArguments(self, target, arguments, argument_josi, argument_implicit)) |aligned| {
+        defer self.allocator.free(aligned);
+        return self.callBuiltinResolved(null, target, aligned, site_id);
+    }
+    return self.callBuiltinResolved(null, target, arguments, site_id);
+}
+
+/// 実行時に選択されたESM commandの `josi` で実引数を整列する。メタデータを
+/// 取得できない（ESMでない・登録が無い・形が動的）場合はnullを返し、呼出し
+/// 側は既存の実引数順を維持する。
+pub fn alignExternalArguments(
+    self: *Interpreter,
+    target: []const u8,
+    arguments: []const Value,
+    argument_josi: []const []const u8,
+    argument_implicit: []const bool,
+) !?[]Value {
+    if (arguments.len != argument_josi.len or arguments.len != argument_implicit.len) return null;
+    var metadata = (try quickjs.commandJosiMetadata(&self.quickjs_state, self.allocator, target)) orelse return null;
+    defer metadata.deinit(self.allocator);
+    if (metadata.slots.len == 0) return null;
+
+    const used = try self.allocator.alloc(bool, arguments.len);
+    defer self.allocator.free(used);
+    @memset(used, false);
+    var fill: Value = .undefined;
+    var have_fill = false;
+    for (argument_implicit, 0..) |implicit, index| {
+        if (!implicit) continue;
+        used[index] = true;
+        if (!have_fill) {
+            fill = arguments[index];
+            have_fill = true;
+        }
+    }
+    if (!have_fill) fill = self.globals.get("それ") orelse .undefined;
+
+    var variable_arguments: std.ArrayList(usize) = .empty;
+    defer variable_arguments.deinit(self.allocator);
+    var fixed_count = metadata.slots.len;
+    if (metadata.variable_final) {
+        const last = metadata.slots.len - 1;
+        for (arguments, 0..) |_, index| {
+            if (used[index]) continue;
+            if (!josiMatches(metadata.slots[last], argument_josi[index])) continue;
+            used[index] = true;
+            try variable_arguments.append(self.allocator, index);
+        }
+        fixed_count = metadata.slots.len - 1;
+    }
+    const assigned = try self.allocator.alloc(?usize, fixed_count);
+    defer self.allocator.free(assigned);
+    @memset(assigned, null);
+    var index = fixed_count;
+    while (index > 0) {
+        index -= 1;
+        var candidate = arguments.len;
+        while (candidate > 0) {
+            candidate -= 1;
+            if (used[candidate]) continue;
+            if (!josiMatches(metadata.slots[index], argument_josi[candidate])) continue;
+            assigned[index] = candidate;
+            used[candidate] = true;
+            break;
+        }
+    }
+    var unmatched = false;
+    for (used) |item| if (!item) {
+        unmatched = true;
+        break;
+    };
+    if (unmatched) {
+        try self.runtime.setFailureMessage("『戻』文の直前に未解決の引数があります。『(式)を戻す』のように式をカッコで括ってください。");
+        return error.UnresolvedArguments;
+    }
+    var missing: usize = 0;
+    for (assigned) |item| if (item == null) {
+        missing += 1;
+    };
+    var provided_real: usize = 0;
+    for (argument_implicit) |implicit| if (!implicit) {
+        provided_real += 1;
+    };
+    if (missing >= 2 and provided_real > 0) {
+        try self.runtime.setFailureMessage("関数の引数が不足しています。");
+        return error.ArgumentShortage;
+    }
+    const operands = try self.allocator.alloc(Value, fixed_count + variable_arguments.items.len);
+    errdefer self.allocator.free(operands);
+    var position: usize = 0;
+    for (assigned) |item| {
+        operands[position] = if (item) |argument_index| arguments[argument_index] else fill;
+        position += 1;
+    }
+    for (variable_arguments.items) |argument_index| {
+        operands[position] = arguments[argument_index];
+        position += 1;
+    }
+    return operands;
+}
+
+fn josiMatches(slot: []const []const u8, candidate: []const u8) bool {
+    for (slot) |item| if (std.mem.eql(u8, item, candidate)) return true;
+    return false;
+}
+
 pub fn resolveDynamicFunctionReference(self: *Interpreter, name: []const u8, fallbacks: []const []const u8) !?[]const u8 {
     try self.activateExternalRuntime();
     if (try allowsDynamicFunctionReference(self, name)) return name;

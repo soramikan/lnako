@@ -450,6 +450,229 @@ C風()を表示。
     }
   }
 
+  // Issue #297 第6回レビュー: 実登録候補ごとの助詞・可変長・不足判定と、
+  // アクセサ・エスケープキー・複合式entryの解析段階拒否をInterpreter/AOTで
+  // 固定する。既存9ケースの集計は変更せず、このブロックだけを追加する。
+  {
+    const reviewRoot = resolve(temporary, "package-review6-297");
+    const app = resolve(reviewRoot, "app");
+    const sandboxHome = resolve(reviewRoot, "home");
+    mkdirSync(sandboxHome, { recursive: true });
+    const write = (relative, data) => {
+      const path = resolve(app, relative);
+      mkdirSync(resolve(path, ".."), { recursive: true });
+      writeFileSync(path, data);
+    };
+    const manifest = `[package]
+name = "package-review6-297"
+version = "0.1.0"
+license = "MIT"
+
+[profiles.compat]
+runtime = "lnako"
+os = "linux"
+cpu = "x86_64"
+abi = "gnu"
+compat-js = true
+
+[dependencies.path]
+ghost = { path = "packages/ghost" }
+variable = { path = "packages/variable" }
+variable0 = { path = "packages/variable0" }
+bad = { path = "packages/bad" }
+short = { path = "packages/short" }
+`;
+    const packageManifest = (name) => `[package]
+name = "${name}"
+version = "1.0.0"
+license = "MIT"
+
+[[exports]]
+name = "main"
+path = "main.nako3"
+`;
+    write("nako.toml", manifest);
+    write("packages/ghost/nako.toml", packageManifest("ghost"));
+    write("packages/ghost/main.nako3", `!「./a.mjs」を取り込む。
+!「./b.mjs」を取り込む。
+●差分とは
+  3を外部命令で戻る。
+ここまで
+●順序とは
+  3を10から外部引算で戻る。
+ここまで
+●両方とは
+  3を10から外部競合で戻る。
+ここまで
+`);
+    write("packages/ghost/a.mjs", `export default {
+  外部命令: { type: "func", josi: [["を"]], fn: (a) => Number(a) * 2 },
+  外部引算: { type: "func", josi: [["から"],["を"]], fn: (a, b) => Number(a) - Number(b) },
+  外部競合: { type: "func", josi: [["から"],["を"]], fn: (a, b) => Number(a) - Number(b) },
+};
+`);
+    write("packages/ghost/b.mjs", `export default { 外部競合: { type: "func", josi: [["を"],["から"]], fn: (b, a) => Number(a) - Number(b) + 100 } };
+function 未使用() {
+  navigator.nako3.addPluginObject("b", {
+    外部命令: { type: "func", josi: [["に"]], fn: (a) => Number(a) * 3 },
+    外部引算: { type: "func", josi: [["を"],["から"]], fn: (b, a) => Number(a) - Number(b) + 100 }
+  });
+}
+`);
+    write("packages/variable/nako.toml", packageManifest("variable"));
+    write("packages/variable/plugin.mjs", `export default { 外部可変: { type: "func", josi: [["と","を"]], fn: (...args) => args.length, isVariableJosi: Boolean(1) } };
+`);
+    write("packages/variable/main.nako3", `!「./plugin.mjs」を取り込む。
+●試験とは
+  3と5を外部可変で戻る。
+ここまで
+`);
+    write("packages/variable0/nako.toml", packageManifest("variable0"));
+    write("packages/variable0/plugin.mjs", `export default { 外部可変: { type: "func", josi: [["と","を"]], fn: (...args) => args.length, isVariableJosi: Boolean(0) } };
+`);
+    write("packages/variable0/main.nako3", `!「./plugin.mjs」を取り込む。
+●試験とは
+  3と5を外部可変で戻る。
+ここまで
+`);
+    write("packages/bad/nako.toml", packageManifest("bad"));
+    write("packages/bad/main.nako3", `!「./plugin.mjs」を取り込む。
+●アクセサとは
+  3をアクセサで戻る。
+ここまで
+●エスケープとは
+  3をエスケープで戻る。
+ここまで
+●複合式とは
+  3を複合式で戻る。
+ここまで
+`);
+    write("packages/bad/plugin.mjs", `export default {
+  アクセサ: { type: "func", josi: [["を"]], fn: (a) => a * 2, get type() { return "const" }, value: 8 },
+  エスケープ: { type: "func", josi: [["を"]], fn: (a) => a * 2, "ty\u0070e": "const", value: 8 },
+  複合式: { type: "func", josi: [["を"]], fn: (a) => Number(a) * 2 } && { type: "const", value: 8 },
+};
+`);
+    const entry = (pkg, body) => `!「pkg:${pkg}」を取り込む。\n${pkg}__試験()を表示。\n`;
+    const callBody = (call) => `!「./plugin.mjs」を取り込む。\n●試験とは\n  ${call}\nここまで\n試験()を表示。\n`;
+    const runApp = (args, cwd = app) => spawnSync(executable, args, { ...options, cwd, env: { ...options.env, HOME: sandboxHome, XDG_CACHE_HOME: resolve(sandboxHome, "cache") } });
+    const official = (plugin, call) => {
+      const dir = resolve(reviewRoot, `official-${Math.random().toString(36).slice(2)}`);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(resolve(dir, "plugin.mjs"), plugin);
+      writeFileSync(resolve(dir, "oracle.nako3"), callBody(call));
+      return spawnSync(process.execPath, [officialCli, "oracle.nako3"], { ...options, cwd: dir, env: { ...options.env, HOME: sandboxHome } });
+    };
+
+    write("packages/short/nako.toml", packageManifest("short"));
+    write("packages/short/plugin.mjs", `export default { 不足: { type: "func", josi: [["を"],["に"],["から"]], fn: (a, b, c) => [a, b, c] } };
+`);
+    write("packages/short/main.nako3", `!「./plugin.mjs」を取り込む。
+●試験とは
+  5を不足で戻る。
+ここまで
+`);
+    write("ghost_main.nako3", `!「pkg:ghost」を取り込む。
+ghost__差分()を表示
+ghost__順序()を表示
+ghost__両方()を表示
+`);
+    const ghostInterpreter = runApp(["run", "ghost_main.nako3", "--compat-js", "--profile", "compat", "--offline"]);
+    if (ghostInterpreter.status !== 0 || normalize(ghostInterpreter).stdout !== "6\n7\n107\n") {
+      failures += 1;
+      console.error(`Issue #297 第6回 実登録候補の助詞割当(Interpreter): ${JSON.stringify(normalize(ghostInterpreter))}\n${ghostInterpreter.stderr ?? ""}`);
+    }
+    if (process.platform !== "win32") {
+      const ghostBinary = resolve(reviewRoot, `review6-ghost${executableSuffix}`);
+      const ghostBuild = runApp(["build", "ghost_main.nako3", "--compat-js", "--backend", "aot", "--profile", "compat", "--offline", "-o", ghostBinary, "-O0"]);
+      const ghostAot = ghostBuild.status === 0 ? spawnSync(ghostBinary, [], { ...options, cwd: app, env: { ...options.env, HOME: sandboxHome } }) : ghostBuild;
+      if (ghostBuild.status !== 0 || ghostAot.status !== 0 || normalize(ghostAot).stdout !== "6\n7\n107\n") {
+        failures += 1;
+        console.error(`Issue #297 第6回 実登録候補の助詞割当(AOT): build=${JSON.stringify(normalize(ghostBuild))} aot=${JSON.stringify(normalize(ghostAot))}`);
+      }
+    }
+
+    write("variable_main.nako3", entry("variable"));
+    const variableInterpreter = runApp(["run", "variable_main.nako3", "--compat-js", "--profile", "compat", "--offline"]);
+    if (variableInterpreter.status !== 0 || normalize(variableInterpreter).stdout !== "3\n") {
+      failures += 1;
+      console.error(`Issue #297 第6回 可変長助詞(Interpreter): ${JSON.stringify(normalize(variableInterpreter))}\n${variableInterpreter.stderr ?? ""}`);
+    }
+    if (process.platform !== "win32") {
+      const variableBinary = resolve(reviewRoot, `review6-variable${executableSuffix}`);
+      const variableBuild = runApp(["build", "variable_main.nako3", "--compat-js", "--backend", "aot", "--profile", "compat", "--offline", "-o", variableBinary, "-O0"]);
+      const variableAot = variableBuild.status === 0 ? spawnSync(variableBinary, [], { ...options, cwd: app, env: { ...options.env, HOME: sandboxHome } }) : variableBuild;
+      if (variableBuild.status !== 0 || variableAot.status !== 0 || normalize(variableAot).stdout !== "3\n") {
+        failures += 1;
+        console.error(`Issue #297 第6回 可変長助詞(AOT): build=${JSON.stringify(normalize(variableBuild))} aot=${JSON.stringify(normalize(variableAot))}`);
+      }
+    }
+
+    // 実行時 false の可変長指定は、未整列引数のまま実行時に拒否される。
+    write("var_bool0.nako3", `!「pkg:variable0」を取り込む。\nvariable0__試験()を表示。\n`);
+    const bool0Official = official(`export default { 外部可変: { type: "func", josi: [["と","を"]], fn: (...args) => args.length, isVariableJosi: Boolean(0) } };\n`, "3と5を外部可変で戻る。");
+    const bool0Interpreter = runApp(["run", "var_bool0.nako3", "--compat-js", "--profile", "compat", "--offline"]);
+    if (bool0Interpreter.status === 0 || !(bool0Interpreter.stderr ?? "").includes("未解決の引数")) {
+      failures += 1;
+      console.error(`Issue #297 第6回 実行時可変長falseの拒否(Interpreter): ${JSON.stringify(normalize(bool0Interpreter))}`);
+    }
+    if (!`${bool0Official.stdout ?? ""}${bool0Official.stderr ?? ""}`.includes("未解決の引数")) {
+      failures += 1;
+      console.error(`Issue #297 第6回 実行時可変長falseの公式拒否: ${JSON.stringify(normalize(bool0Official))}`);
+    }
+
+    const rejectCases = [
+      { id: "accessor", name: "アクセサ", message: "未解決", plugin: `export default { 外部: { type: "func", josi: [["を"]], fn: (a) => a * 2, get type() { return "const" }, value: 8 } };\n` },
+      { id: "escaped", name: "エスケープ", message: "未解決", plugin: `export default { 外部: { type: "func", josi: [["を"]], fn: (a) => a * 2, "ty\u0070e": "const", value: 8 } };\n` },
+      { id: "object-expression", name: "複合式", message: "未解決", plugin: `export default { 外部: { type: "func", josi: [["を"]], fn: (a) => Number(a) * 2 } && { type: "const", value: 8 } };\n` },
+
+    ];
+    for (const item of rejectCases) {
+      const source = `!「pkg:bad」を取り込む。\nbad__${item.name}()を表示。\n`;
+      write(`review6-${item.id}.nako3`, source);
+      const rejectInterpreter = runApp(["run", `review6-${item.id}.nako3`, "--compat-js", "--profile", "compat", "--offline"]);
+      if (rejectInterpreter.status === 0 || !(rejectInterpreter.stderr ?? "").includes(item.message)) {
+        failures += 1;
+        console.error(`Issue #297 第6回 ${item.id}の解析拒否(Interpreter): ${JSON.stringify(normalize(rejectInterpreter))}\n${rejectInterpreter.stderr ?? ""}`);
+      }
+      if (process.platform !== "win32") {
+        const rejectBinary = resolve(reviewRoot, `review6-reject-${item.id}${executableSuffix}`);
+        const rejectBuild = runApp(["build", `review6-${item.id}.nako3`, "--compat-js", "--backend", "aot", "--profile", "compat", "--offline", "-o", rejectBinary, "-O0"]);
+        if (rejectBuild.status === 0 || !(rejectBuild.stderr ?? "").includes(item.message)) {
+          failures += 1;
+          console.error(`Issue #297 第6回 ${item.id}の解析拒否(AOT): ${JSON.stringify(normalize(rejectBuild))}`);
+        }
+      }
+      const officialRejected = official(item.plugin, "3を外部で戻る。");
+      if (!`${officialRejected.stdout ?? ""}${officialRejected.stderr ?? ""}`.includes("未解決の引数")) {
+        failures += 1;
+        console.error(`Issue #297 第6回 ${item.id}の公式拒否: ${JSON.stringify(normalize(officialRejected))}`);
+      }
+    }
+    {
+      write("review6-missing-two.nako3", `!「pkg:short」を取り込む。\nshort__試験()を表示。\n`);
+      const missingInterpreter = runApp(["run", "review6-missing-two.nako3", "--compat-js", "--profile", "compat", "--offline"]);
+      if (missingInterpreter.status === 0 || !(missingInterpreter.stderr ?? "").includes("引数が不足")) {
+        failures += 1;
+        console.error(`Issue #297 第6回 missing-twoの解析拒否(Interpreter): ${JSON.stringify(normalize(missingInterpreter))}\n${missingInterpreter.stderr ?? ""}`);
+      }
+      if (process.platform !== "win32") {
+        const missingBinary = resolve(reviewRoot, `review6-missing-two${executableSuffix}`);
+        const missingBuild = runApp(["build", "review6-missing-two.nako3", "--compat-js", "--backend", "aot", "--profile", "compat", "--offline", "-o", missingBinary, "-O0"]);
+        if (missingBuild.status === 0 || !(missingBuild.stderr ?? "").includes("引数が不足")) {
+          failures += 1;
+          console.error(`Issue #297 第6回 missing-twoの解析拒否(AOT): ${JSON.stringify(normalize(missingBuild))}\n${missingBuild.stderr ?? ""}`);
+        }
+      }
+      const missingOfficial = official(`export default { 外部: { type: "func", josi: [["を"],["に"],["から"]], fn: (a, b, c) => [a, b, c] } };\n`, "5を外部で戻る。");
+      if (!`${missingOfficial.stdout ?? ""}${missingOfficial.stderr ?? ""}`.includes("引数が不足")) {
+        failures += 1;
+        console.error(`Issue #297 第6回 missing-twoの公式拒否: ${JSON.stringify(normalize(missingOfficial))}`);
+      }
+    }
+    if (failures === 0) console.log("Issue #297 第6回レビュー: 実登録候補と解析境界のInterpreter/AOT一致");
+  }
+
   if (failures > 0) throw new Error(`QuickJS互換モードの公式差分が${failures}件あります`);
   const commandCount = new Set(cases.flatMap((testCase) => testCase.commands)).size;
   console.log(

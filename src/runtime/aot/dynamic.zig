@@ -1612,6 +1612,33 @@ pub fn concatAotValues(runtime: *Runtime, left: Value, right: Value) !Value {
 /// interpreter の `callExternalCommand`（plugin 命令を含む dispatch 表）へ
 /// 委譲する。native plugin の `nativePluginBuiltin` と同じ変換経路を使う。
 pub fn esmPluginBuiltin(runtime: *Runtime, name: []const u8, arguments: []const Value) !Value {
+    return esmPluginBuiltinInternal(runtime, name, arguments, null, 0);
+}
+
+/// 実行時に選択された登録の `josi` で未整列引数を割り当ててから呼ぶ。
+pub const ArgumentJosi = extern struct {
+    josi: ?[*]const u8,
+    len: usize,
+    implicit: u8,
+};
+
+pub fn esmPluginBuiltinAligned(
+    runtime: *Runtime,
+    name: []const u8,
+    arguments: []const Value,
+    descriptors: ?[*]const ArgumentJosi,
+    descriptor_count: usize,
+) !Value {
+    return esmPluginBuiltinInternal(runtime, name, arguments, descriptors, descriptor_count);
+}
+
+fn esmPluginBuiltinInternal(
+    runtime: *Runtime,
+    name: []const u8,
+    arguments: []const Value,
+    descriptors: ?[*]const ArgumentJosi,
+    descriptor_count: usize,
+) !Value {
     const dynamic_state = try dynamicInterpreterState(runtime);
     const dynamic_arguments = try runtime.allocator.alloc(dynamic_value.Value, arguments.len);
     defer runtime.allocator.free(dynamic_arguments);
@@ -1635,13 +1662,37 @@ pub fn esmPluginBuiltin(runtime: *Runtime, name: []const u8, arguments: []const 
     defer before_containers.deinit();
     try before_containers.capture(&aot_to_dyn);
 
-    var result = dynamic_state.interpreter.callExternalCommand(name, dynamic_arguments) catch |failure| {
+    var aligned_arguments: ?[]dynamic_value.Value = null;
+    defer if (aligned_arguments) |aligned| runtime.allocator.free(aligned);
+    var call_arguments: []const dynamic_value.Value = dynamic_arguments;
+    if (descriptors) |descriptor_pointer| {
+        if (descriptor_count == dynamic_arguments.len) {
+            const josi_list = try runtime.allocator.alloc([]const u8, descriptor_count);
+            defer runtime.allocator.free(josi_list);
+            const implicit = try runtime.allocator.alloc(bool, descriptor_count);
+            defer runtime.allocator.free(implicit);
+            for (descriptor_pointer[0..descriptor_count], 0..) |descriptor, index| {
+                josi_list[index] = if (descriptor.josi) |text| text[0..descriptor.len] else "";
+                implicit[index] = descriptor.implicit != 0;
+            }
+            if (try dynamic_state.interpreter.alignExternalArguments(name, dynamic_arguments, josi_list, implicit)) |aligned| {
+                aligned_arguments = aligned;
+                call_arguments = aligned;
+            }
+        }
+    }
+    var result = dynamic_state.interpreter.callExternalCommand(name, call_arguments) catch |failure| {
         var err_dyn_cache = DynamicToAotCache.init(dynamic_state);
         defer err_dyn_cache.deinit();
         err_dyn_cache.enter();
         // 例外送出経路でも、送出前の引数変更や `sys.__setSysVar` 副作用を
         // AOT 側へ反映する。元の例外を優先し、失敗時も元コンテナを壊さない。
         finalizePluginCall(dynamic_state, &aot_to_dyn, &before_globals, &before_containers, &err_dyn_cache) catch {};
+        // 実行時助詞割り当ての診断は埋め込み interpreter 側で決まるため、
+        // AOT runtime の表示へ引き継ぐ。
+        if (dynamic_state.value_runtime.failureMessage()) |message| {
+            runtime.setFailureText(message);
+        }
         return failure;
     };
     try roots.protect(&result);

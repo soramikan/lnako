@@ -905,6 +905,8 @@ fn executeCallFallback(
     if (builtin_id == null and !instruction.dynamic_call and packageCommandNameIsBound(self, instruction.name)) return error.NotCallable;
     writes_result.* = !preservesResultVariable(instruction.name);
     const site_id = if (frame.owner_program == &self.root_program) instruction.site_id else null;
+    if (instruction.runtime_argument_alignment)
+        return plugins.callBuiltinWithFallbacksAligned(self, instruction.name, instruction.fallback_names, arguments, instruction.argument_josi, instruction.argument_implicit, site_id);
     if (instruction.fallback_names.len > 0) return plugins.callBuiltinWithFallbacks(self, instruction.name, instruction.fallback_names, arguments, site_id);
     return self.callBuiltinResolved(builtin_id, instruction.name, arguments, site_id);
 }

@@ -703,6 +703,71 @@ fn lookupCommandDefinition(state: *State, engine: *Engine, allocator: std.mem.Al
     return resolved;
 }
 
+/// 実登録された command の `josi` スロット表と `isVariableJosi` を読む。
+/// plugin 評価時に決まるメタデータだけを返し、配列・文字列以外の形は
+/// 判定不能として null にする。返却値は `allocator` 所有。
+pub const CommandJosiMetadata = struct {
+    slots: [][][]const u8,
+    variable_final: bool,
+
+    pub fn deinit(self: *CommandJosiMetadata, allocator: std.mem.Allocator) void {
+        for (self.slots) |slot| {
+            for (slot) |item| allocator.free(item);
+            allocator.free(slot);
+        }
+        allocator.free(self.slots);
+        self.* = undefined;
+    }
+};
+
+pub fn commandJosiMetadata(state: *State, allocator: std.mem.Allocator, name: []const u8) !?CommandJosiMetadata {
+    const engine = state.engine orelse return null;
+    const resolved = (try lookupCommandDefinition(state, engine, allocator, name)) orelse return null;
+    defer lnako_qjs_value_free(resolved);
+    const josi_value = lnako_qjs_get_property(resolved, "josi") orelse return null;
+    defer lnako_qjs_value_free(josi_value);
+    if (lnako_qjs_kind(josi_value) != .array) return null;
+    const slot_count = lnako_qjs_array_length(josi_value);
+    var slots = try allocator.alloc([][]const u8, slot_count);
+    var initialized_slots: usize = 0;
+    errdefer {
+        for (slots[0..initialized_slots]) |slot| {
+            for (slot) |item| allocator.free(item);
+            allocator.free(slot);
+        }
+        allocator.free(slots);
+    }
+    for (0..slot_count) |slot_index| {
+        const slot_value = lnako_qjs_get_index(josi_value, @intCast(slot_index)) orelse return null;
+        defer lnako_qjs_value_free(slot_value);
+        if (lnako_qjs_kind(slot_value) != .array) return null;
+        const alternative_count = lnako_qjs_array_length(slot_value);
+        const alternatives = try allocator.alloc([]const u8, alternative_count);
+        var initialized_alternatives: usize = 0;
+        errdefer {
+            for (alternatives[0..initialized_alternatives]) |item| allocator.free(item);
+            allocator.free(alternatives);
+        }
+        for (0..alternative_count) |alternative_index| {
+            const item = lnako_qjs_get_index(slot_value, @intCast(alternative_index)) orelse return null;
+            defer lnako_qjs_value_free(item);
+            if (lnako_qjs_kind(item) != .string) return null;
+            const text = rawText(item) catch return null;
+            defer lnako_qjs_free_string(text.pointer);
+            alternatives[alternative_index] = try allocator.dupe(u8, text.slice());
+            initialized_alternatives += 1;
+        }
+        slots[slot_index] = alternatives;
+        initialized_slots += 1;
+    }
+    const variable_value = lnako_qjs_get_property(resolved, "isVariableJosi") orelse return null;
+    defer lnako_qjs_value_free(variable_value);
+    return .{
+        .slots = slots,
+        .variable_final = lnako_qjs_to_boolean(variable_value) != 0,
+    };
+}
+
 /// `__lnako_commands` に `name` が `type === "func"` として登録済みか判定する。
 /// 動的評価内の `{関数}名` 解決で QuickJS registry を照会するために使う。
 /// 非 package 修飾の `plugin__cmd` については `callPlugin` と同じく末尾

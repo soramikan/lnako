@@ -192,6 +192,9 @@ pub const Binding = struct {
     /// ESM pluginの静的抽出で確定した助詞シグネチャ。呼出し計画の
     /// スロット割り当てと、戻り値候補の未解決引数判定に使う。
     signature: ?dynamic_commands.JosiSignature = null,
+    /// 実行時の登録照合後に助詞割り当てを行う呼出し。実引数は未整列の
+    /// まま lowering し、静的な不足・未解決判定を行わない。
+    runtime_alignment: bool = false,
 };
 
 pub const FunctionScope = struct {
@@ -939,20 +942,37 @@ pub const Analyzer = struct {
             if (pending_word_candidate) {
                 const has_real_arguments = hasRealPendingArguments(node);
                 if (try dynamic_commands.bindsCallableExact(self.allocator, allow_dynamic_commands, module_input.allows_dynamic_commands_from, module_input.dynamic_command_aliases, name, node.span.start)) |resolution| {
-                    if (resolution.signature) |signature| {
-                        const slots = try dynamic_commands.signatureSlots(self.allocator, signature);
-                        defer self.allocator.free(slots);
-                        const unresolved = try argument_completion.unresolvedArguments(self.allocator, slots, node.children, signature.variable_final);
-                        defer self.allocator.free(unresolved);
-                        if (unresolved.len > 0) {
-                            try self.addDiagnostic(.unresolved_word, node.span, self.modules.items[module_index].path, "『戻』文の直前に未解決の引数があります。『(式)を戻す』のように式をカッコで括ってください。");
-                            return;
+                    // 実登録される候補を静的に確定できない場合は、主候補の
+                    // 助詞シグネチャで検証しない。実引数は未整列のまま実行時へ
+                    // 渡し、選択された登録のメタデータで割り当てる。
+                    if (!resolution.runtime_alignment) {
+                        if (resolution.signature) |signature| {
+                            const slots = try dynamic_commands.signatureSlots(self.allocator, signature);
+                            defer self.allocator.free(slots);
+                            // 助詞の合わない実引数は、従来どおり『戻』文固有の
+                            // 未解決引数として診断する。
+                            const unresolved = try argument_completion.unresolvedArguments(self.allocator, slots, node.children, signature.variable_final);
+                            defer self.allocator.free(unresolved);
+                            if (unresolved.len > 0) {
+                                try self.addDiagnostic(.unresolved_word, node.span, self.modules.items[module_index].path, "『戻』文の直前に未解決の引数があります。『(式)を戻す』のように式をカッコで括ってください。");
+                                return;
+                            }
+                            // 宣言済み関数と同じ不足判定を共有する（2個以上不足）。
+                            if (try argument_completion.plan(self.allocator, slots, node.children, signature.variable_final)) |plan_result| {
+                                defer self.allocator.free(plan_result.operands);
+                                if (plan_result.missing >= 2 and (plan_result.provided > 0 or node.josi.len == 0 or parser_helpers.isSequenceJosi(node.josi))) {
+                                    const message = try std.fmt.allocPrint(self.allocator, "関数『{s}』の引数が不足しています。", .{displayQualifiedName(name)});
+                                    try self.addDiagnostic(.invalid_argument_count, node.span, self.modules.items[module_index].path, message);
+                                    return;
+                                }
+                            }
                         }
                     }
                     try self.bind(node, .builtin, name, resolution.resolved_name, null);
                     const binding = &self.bindings.items[self.bindings.items.len - 1];
                     binding.dynamic_builtin = true;
                     binding.fallback_names = resolution.fallback_names;
+                    binding.runtime_alignment = resolution.runtime_alignment;
                     if (resolution.signature) |signature| binding.signature = try dynamic_commands.cloneSignature(self.allocator, signature);
                     return;
                 }

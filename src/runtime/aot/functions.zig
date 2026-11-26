@@ -244,6 +244,46 @@ pub export fn lnako_aot_esm_plugin_call(
     success = runtime.failure_epoch == start_epoch;
 }
 
+/// ESM plugin 命令を、未整列の実引数と助詞から実行時の登録メタデータで
+/// 割り当てて呼ぶ。
+pub export fn lnako_aot_esm_plugin_call_josi(
+    out: *state.Value,
+    arguments: ?[*]const state.Value,
+    len: usize,
+    argument_josi: ?[*]const state.ArgumentJosi,
+    argument_count: usize,
+    name: ?[*]const u8,
+    name_len: usize,
+    site_id: u64,
+) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (state.active_runtime) |*active| active else return;
+    const name_pointer = name orelse {
+        runtime.setFailure(error.InvalidArgumentCount);
+        return;
+    };
+    if (argument_count != len or (argument_count > 0 and argument_josi == null)) {
+        runtime.setFailure(error.InvalidArgumentCount);
+        return;
+    }
+    const command_name = name_pointer[0..name_len];
+    if (arguments == null and len != 0) {
+        runtime.setFailure(error.InvalidArgumentCount);
+        return;
+    }
+    const call_id = runtime.dispatch_trace.begin(command_name, 0, "esm-plugin", site_id);
+    const start_epoch = runtime.failure_epoch;
+    var success = false;
+    defer runtime.dispatch_trace.result(call_id, command_name, 0, "esm-plugin", site_id, success);
+    const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+    const josi = if (argument_josi) |pointer| pointer[0..argument_count] else &.{};
+    out.* = state.esmPluginBuiltinAligned(runtime, command_name, actual, if (josi.len > 0) josi.ptr else null, josi.len) catch |failure| {
+        runtime.setFailure(failure);
+        return;
+    };
+    success = runtime.failure_epoch == start_epoch;
+}
+
 /// 後発の動的 plugin（ESM / native）の背後に先発 plugin の同名候補がある
 /// 場合、実行時に登録済み先頭候補を解決して native / ESM いずれかの経路へ
 /// 配送する。
@@ -286,6 +326,58 @@ pub export fn lnako_aot_plugin_fallback_call(
     const actual = if (arguments) |pointer| pointer[0..len] else &.{};
     out.* = (if (resolved.is_esm)
         state.esmPluginBuiltin(runtime, resolved.name, actual)
+    else
+        state.nativePluginBuiltin(runtime, resolved.name, actual)) catch |failure| {
+        runtime.setFailure(failure);
+        return;
+    };
+    success = runtime.failure_epoch == start_epoch;
+}
+
+/// 未整列の実引数と助詞を、実行時に選択された登録の `josi` で割り当てて
+/// ESM / native plugin へ配送する。
+pub export fn lnako_aot_plugin_fallback_call_josi(
+    out: *state.Value,
+    arguments: ?[*]const state.Value,
+    len: usize,
+    argument_josi: ?[*]const state.ArgumentJosi,
+    argument_count: usize,
+    candidates: ?[*]const state.PluginCandidate,
+    candidate_count: usize,
+    site_id: u64,
+    default_is_esm: bool,
+) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (state.active_runtime) |*active| active else return;
+    const candidate_slice = if (candidates) |pointer| pointer[0..candidate_count] else {
+        runtime.setFailure(error.InvalidArgumentCount);
+        return;
+    };
+    if (candidate_slice.len == 0 or argument_count != len or (argument_count > 0 and argument_josi == null)) {
+        runtime.setFailure(error.InvalidArgumentCount);
+        return;
+    }
+    const resolved = state.resolvePluginFallback(runtime, candidate_slice, default_is_esm) catch |failure| {
+        const primary_name = if (candidate_slice[0].name) |ptr| ptr[0..candidate_slice[0].len] else "";
+        const route = if (default_is_esm) "esm-plugin" else "native-plugin";
+        const call_id = runtime.dispatch_trace.begin(primary_name, 0, route, site_id);
+        runtime.setFailure(failure);
+        runtime.dispatch_trace.result(call_id, primary_name, 0, route, site_id, false);
+        return;
+    };
+    const route = if (resolved.is_esm) "esm-plugin" else "native-plugin";
+    const call_id = runtime.dispatch_trace.begin(resolved.name, 0, route, site_id);
+    const start_epoch = runtime.failure_epoch;
+    var success = false;
+    defer runtime.dispatch_trace.result(call_id, resolved.name, 0, route, site_id, success);
+    if (arguments == null and len != 0) {
+        runtime.setFailure(error.InvalidArgumentCount);
+        return;
+    }
+    const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+    const josi = if (argument_josi) |pointer| pointer[0..argument_count] else &.{};
+    out.* = (if (resolved.is_esm)
+        state.esmPluginBuiltinAligned(runtime, resolved.name, actual, if (josi.len > 0) josi.ptr else null, josi.len)
     else
         state.nativePluginBuiltin(runtime, resolved.name, actual)) catch |failure| {
         runtime.setFailure(failure);
