@@ -516,8 +516,22 @@ pub const Parser = struct {
         while (true) {
             if (self.at(.identifier) and self.isKnownCommandName(self.peek().value)) {
                 const command = self.advance();
-                const call = try self.makeCommandCall(command, try stack.toOwnedSlice(self.allocator));
+                const items = try stack.toOwnedSlice(self.allocator);
                 stack = .empty;
+                // 範囲は助詞スロットに一致する引数だけを消費し、外側の
+                // 呼出しへ残す（`JSONエンコード(Aの2から4までの範囲を参照)`の
+                // `Aの`は範囲ではなく外側の参照の第1引数）。片端省略時は
+                // 公式と同じく省略スロットを『それ』で補完する。
+                var call_arguments: []*ast.Node = items;
+                var remaining: []const *ast.Node = &.{};
+                if (std.mem.eql(u8, command.value, "範囲")) {
+                    if (try self.rangeCallParts(command, items)) |parts| {
+                        call_arguments = parts.call_arguments;
+                        remaining = parts.remaining;
+                    }
+                }
+                const call = try self.makeCommandCall(command, call_arguments);
+                try stack.appendSlice(self.allocator, remaining);
                 try stack.append(self.allocator, call);
                 // 条件助詞は公式では命令語ではなく独立トークンで、`yIFCond`が
                 // 呼出しの終端として消費する。lnakoは直前の命令語へ付くため、
@@ -1177,6 +1191,7 @@ pub const Parser = struct {
     pub const isBuiltinCommandName = commands.isBuiltinCommandName;
     pub const isKnownCommandName = commands.isKnownCommandName;
     pub const isChainedBuiltinCommand = commands.isChainedBuiltinCommand;
+    pub const rangeCallParts = commands.rangeCallParts;
     pub const callChainedBuiltinCommand = commands.callChainedBuiltinCommand;
     pub const makeCommandCall = commands.makeCommandCall;
     pub const parseImplicitCallbackCall = commands.parseImplicitCallbackCall;

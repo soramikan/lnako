@@ -417,6 +417,113 @@ test "助詞付き命令呼出しの直後の「戻る」は呼出し結果を�
     }
 }
 
+test "取り込み先の関数呼出し候補を『戻る』の直前で実引数付きの語として保持する" {
+    // Issue #297: 取り込み先の関数はこのファイルの解析時点ではfunclistに
+    // 無い。`2を倍算で戻る`の`倍算`を値として固定すると実引数`2`が失われ、
+    // 取り込み後に呼出しへ解決できない。公式`yReturn`の直前呼出しと同じく、
+    // 実引数を子に持つ語として残し、意味解析で関数か変数を決める。
+    var result = try parse(
+        std.testing.allocator,
+        "●呼出とは\n2を倍算で戻る。\nここまで\n",
+        "imported-return-candidate.nako3",
+    );
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const body = result.root.?.children[0].children[0];
+    const statement = body.children[0];
+    try std.testing.expectEqual(ast.Kind.return_statement, statement.kind);
+    const value = statement.children[0];
+    try std.testing.expectEqual(ast.Kind.word, value.kind);
+    try std.testing.expectEqualStrings("倍算", value.value);
+    try std.testing.expectEqualStrings("で", value.josi);
+    try std.testing.expectEqual(@as(usize, 1), value.children.len);
+    try std.testing.expectEqual(ast.Kind.number, value.children[0].kind);
+    try std.testing.expectEqualStrings("2", value.children[0].value);
+    try std.testing.expectEqualStrings("を", value.children[0].josi);
+
+    // 変数なら従来どおり語として戻り値になる（子は持たない）。
+    var variable = try parse(
+        std.testing.allocator,
+        "●Fとは\nA=2\nAで戻る\nここまで\n",
+        "variable-return-candidate.nako3",
+    );
+    defer variable.deinit();
+    try std.testing.expect(variable.succeeded());
+    const variable_body = variable.root.?.children[0].children[0];
+    var variable_return: ?*ast.Node = null;
+    for (variable_body.children) |child| {
+        if (child.kind == .return_statement) variable_return = child;
+    }
+    const fallback = variable_return orelse return error.MissingReturn;
+    try std.testing.expectEqual(ast.Kind.word, fallback.children[0].kind);
+    try std.testing.expectEqualStrings("A", fallback.children[0].value);
+    try std.testing.expectEqual(@as(usize, 0), fallback.children[0].children.len);
+}
+
+test "片端省略の範囲を『それ』で補完し外側の引数を参照へ残す" {
+    // Issue #297: 公式`yCallFunc`は範囲の助詞スロットに一致する引数だけを
+    // 消費する。`Aの4まで`では`Aの`が外側の参照の第1引数として残り、
+    // 欠けた開始位置は『それ』で補完される。
+    var missing_start = try parse(
+        std.testing.allocator,
+        "A=[0,1,2,3,4,5]\nそれ=2\nAの4までの範囲を参照してJSONエンコードして表示。\n",
+        "range-missing-start.nako3",
+    );
+    defer missing_start.deinit();
+    try std.testing.expect(missing_start.succeeded());
+    const start_reference = findCallNamed(missing_start.root.?, "参照") orelse return error.MissingReferenceCall;
+    try std.testing.expectEqual(@as(usize, 2), start_reference.children.len);
+    try std.testing.expectEqualStrings("A", start_reference.children[0].value);
+    try std.testing.expectEqualStrings("の", start_reference.children[0].josi);
+    const start_range = start_reference.children[1];
+    try std.testing.expectEqualStrings("範囲", start_range.name);
+    try std.testing.expectEqual(@as(usize, 2), start_range.children.len);
+    try std.testing.expectEqual(ast.Kind.word, start_range.children[0].kind);
+    try std.testing.expectEqualStrings("それ", start_range.children[0].value);
+    try std.testing.expectEqualStrings("4", start_range.children[1].value);
+    try std.testing.expectEqualStrings("までの", start_range.children[1].josi);
+
+    // `Aから2から範囲`では2番目の『から』が開始位置、外側の`Aから`が残る。
+    var missing_end = try parse(
+        std.testing.allocator,
+        "A=[0,1,2,3,4,5]\nそれ=4\nAから2から範囲を参照してJSONエンコードして表示。\n",
+        "range-missing-end.nako3",
+    );
+    defer missing_end.deinit();
+    try std.testing.expect(missing_end.succeeded());
+    const end_reference = findCallNamed(missing_end.root.?, "参照") orelse return error.MissingReferenceCall;
+    try std.testing.expectEqual(@as(usize, 2), end_reference.children.len);
+    try std.testing.expectEqualStrings("A", end_reference.children[0].value);
+    try std.testing.expectEqualStrings("から", end_reference.children[0].josi);
+    const end_range = end_reference.children[1];
+    try std.testing.expectEqualStrings("範囲", end_range.name);
+    try std.testing.expectEqual(@as(usize, 2), end_range.children.len);
+    try std.testing.expectEqualStrings("2", end_range.children[0].value);
+    try std.testing.expectEqualStrings("から", end_range.children[0].josi);
+    try std.testing.expectEqual(ast.Kind.word, end_range.children[1].kind);
+    try std.testing.expectEqualStrings("それ", end_range.children[1].value);
+
+    // 括弧内の式でも同じスロット選択を行い、`Aの`を外側へ残す。
+    var parenthesized = try parse(
+        std.testing.allocator,
+        "JSONエンコード(Aの2から4までの範囲を参照)を表示。\n",
+        "range-parenthesized.nako3",
+    );
+    defer parenthesized.deinit();
+    try std.testing.expect(parenthesized.succeeded());
+    const paren_reference = findCallNamed(parenthesized.root.?, "参照") orelse return error.MissingReferenceCall;
+    try std.testing.expectEqual(@as(usize, 2), paren_reference.children.len);
+    try std.testing.expectEqualStrings("A", paren_reference.children[0].value);
+    try std.testing.expectEqualStrings("の", paren_reference.children[0].josi);
+    const paren_range = paren_reference.children[1];
+    try std.testing.expectEqualStrings("範囲", paren_range.name);
+    try std.testing.expectEqual(@as(usize, 2), paren_range.children.len);
+    try std.testing.expectEqualStrings("2", paren_range.children[0].value);
+    try std.testing.expectEqualStrings("から", paren_range.children[0].josi);
+    try std.testing.expectEqualStrings("4", paren_range.children[1].value);
+    try std.testing.expectEqualStrings("までの", paren_range.children[1].josi);
+}
+
 test "連文の途中でも「戻る」は直前の呼出し・値を戻り値にする" {
     // 公式は『して』で文が切れるため、続く助詞付き呼出しや値は新しい文として
     // `yReturn`の対象になる。lnakoは先行する連文を保持したまま、最後の
@@ -1980,6 +2087,13 @@ fn variableDefinitions(allocator: std.mem.Allocator, root: *ast.Node) ![]const *
     var collected: std.ArrayList(*ast.Node) = .empty;
     for (root.children) |child| if (child.kind == .variable_definition) try collected.append(allocator, child);
     return collected.toOwnedSlice(allocator);
+}
+
+/// 指定した命令名の呼出しをAST全体から深さ優先で探す。
+fn findCallNamed(node: *ast.Node, name: []const u8) ?*ast.Node {
+    if (node.kind == .function_call and std.mem.eql(u8, node.name, name)) return node;
+    for (node.children) |child| if (findCallNamed(child, name)) |found| return found;
+    return null;
 }
 
 test "『定める』は定数を生成し匿名関数も右辺に取れる" {

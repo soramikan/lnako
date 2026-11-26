@@ -953,5 +953,22 @@
   {
     "id": "cond-range-inline-statement",
     "source": "もし、30が30から50の範囲内ならば、「30は範囲内」と表示。\nもし、50が30から50の範囲内ならば、「50は範囲内」と表示。\n"
+  },
+  {
+    "id": "imported-function-return-issue297",
+    "files": {"sol-lib-single.nako3": "●倍算(Xを)\n  X*2で戻る\nここまで\n"},
+    "source": "!「./sol-lib-single.nako3」を取り込む。\n●呼出とは\n  2を倍算で戻る。\nここまで\n呼出()を表示。\n"
+  },
+  {
+    "id": "range-object-reference-missing-start-issue297",
+    "source": "A=[0,1,2,3,4,5]\nそれ=2\nAの4までの範囲を参照してJSONエンコードして表示。\n"
+  },
+  {
+    "id": "range-object-reference-missing-end-issue297",
+    "source": "A=[0,1,2,3,4,5]\nそれ=4\nAから2から範囲を参照してJSONエンコードして表示。\n"
+  },
+  {
+    "id": "range-object-reference-parenthesized-issue297",
+    "source": "A=[0,1,2,3,4,5]\nそれ=2\nJSONエンコード(Aの2から4までの範囲を参照)を表示。\n"
   }
 ]

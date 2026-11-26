@@ -68,7 +68,27 @@ pub fn resolveCommandName(
     // 丁寧表現など命令名の末尾になり得る助詞は従来どおり命令として扱う。
     if (!self.isKnownCommandName(self.peek().value) and
         !isJapaneseCommandName(self.peek().value) and
-        isValueParticleJosi(self.peek().josi)) return null;
+        isValueParticleJosi(self.peek().josi))
+    {
+        // 取り込み先で定義される関数は、このファイルの構文解析時点では
+        // funclistに無い。公式`yReturn`は直前に呼び出されたfunc tokenの
+        // 結果を戻り値にするため、`2を倍算で戻る`の`倍算`を値として固定せず、
+        // 実引数を付けた呼出し候補（wordノード）として残す。意味解析で
+        // 関数へ解決できれば呼出し、変数なら通常の語として扱われる。
+        const josi = self.peek().josi;
+        if (self.peekAhead(1).kind == .keyword_return and
+            (std.mem.eql(u8, josi, "で") or std.mem.eql(u8, josi, "を")))
+        {
+            const command = self.advance();
+            const candidate = try builder.makeNodeWithChildren(self, .word, command, try arguments.toOwnedSlice(self.allocator));
+            candidate.value = command.value;
+            candidate.end_span = command.span;
+            arguments.* = .empty;
+            try arguments.*.append(self.allocator, candidate);
+            return null;
+        }
+        return null;
+    }
     // 助詞なし識別子の直後が『(』ならC風呼出しの式。公式`yCallFunc`の括弧呼出しは
     // 括弧内の引数だけを使い、直前のスタックを消費しない（`5をF(1)`は『5を』が
     // 未解決の単語になる）。命令として確定せず式の解析へ委ねる
@@ -229,12 +249,16 @@ pub fn isChainedBuiltinCommand(self: *Parser, token: Token) bool {
 /// `Aの2から5までの範囲を参照`では『Aの』を内側の範囲へ渡さず、外側の
 /// 『参照』の第1引数として残す（Issue #297。公式yCallFuncのpopStack相当）。
 const RangeSelection = struct {
-    from: usize,
-    to: usize,
+    from: ?usize,
+    to: ?usize,
 };
 
+/// 範囲の助詞スロット（`から`／`の`・`までの`）に一致する引数だけを選ぶ。
+/// 片端が省略されていても見つかったスロットだけを消費し、残りは外側の
+/// 呼出しへ渡す（公式yCallFuncのpopStack相当）。両方見つからない場合だけ
+/// 選択なしとして`null`を返す。
 fn selectRangeArguments(arguments: []const *ast.Node) ?RangeSelection {
-    if (arguments.len < 2) return null;
+    if (arguments.len == 0) return null;
     var to_index: ?usize = null;
     var index = arguments.len;
     while (index > 0) {
@@ -245,19 +269,45 @@ fn selectRangeArguments(arguments: []const *ast.Node) ?RangeSelection {
             break;
         }
     }
-    const to = to_index orelse return null;
     var from_index: ?usize = null;
     index = arguments.len;
     while (index > 0) {
         index -= 1;
-        if (index == to) continue;
+        if (to_index != null and index == to_index.?) continue;
         if (std.mem.eql(u8, arguments[index].josi, "から")) {
             from_index = index;
             break;
         }
     }
-    const from = from_index orelse return null;
-    return .{ .from = from, .to = to };
+    if (from_index == null and to_index == null) return null;
+    return .{ .from = from_index, .to = to_index };
+}
+
+pub const RangeCallParts = struct {
+    call_arguments: []*ast.Node,
+    remaining: []const *ast.Node,
+};
+
+/// 範囲の実引数を公式のスロット順`[開始, 終了]`へ組み立て、消費しなかった
+/// 外側の引数を元の順序のまま返す。省略したスロットは公式`yCallFunc`と
+/// 同じく変数『それ』で補完する。
+pub fn rangeCallParts(self: *Parser, command: Token, items: []*ast.Node) ParseFailure!?RangeCallParts {
+    const selection = selectRangeArguments(items) orelse return null;
+    var consumed: usize = 0;
+    if (selection.from != null) consumed += 1;
+    if (selection.to != null) consumed += 1;
+    const call_arguments = try self.allocator.alloc(*ast.Node, 2);
+    call_arguments[0] = if (selection.from) |from| items[from] else try self.implicitIt(command);
+    call_arguments[1] = if (selection.to) |to| items[to] else try self.implicitIt(command);
+    const remaining = try self.allocator.alloc(*ast.Node, items.len - consumed);
+    var position: usize = 0;
+    for (items, 0..) |item, index| {
+        if (selection.from != null and index == selection.from.?) continue;
+        if (selection.to != null and index == selection.to.?) continue;
+        remaining[position] = item;
+        position += 1;
+    }
+    return .{ .call_arguments = call_arguments, .remaining = remaining };
 }
 
 /// 現在位置の助詞付き命令を呼び出し、結果を引数リストへ置き換える。
@@ -269,18 +319,9 @@ pub fn callChainedBuiltinCommand(self: *Parser, arguments: *std.ArrayList(*ast.N
     var call_arguments: []*ast.Node = items;
     var remaining: []const *ast.Node = &.{};
     if (std.mem.eql(u8, command.value, "範囲")) {
-        if (selectRangeArguments(items)) |selection| {
-            call_arguments = try self.allocator.alloc(*ast.Node, 2);
-            call_arguments[0] = items[selection.from];
-            call_arguments[1] = items[selection.to];
-            const rest = try self.allocator.alloc(*ast.Node, items.len - 2);
-            var position: usize = 0;
-            for (items, 0..) |item, index| {
-                if (index == selection.from or index == selection.to) continue;
-                rest[position] = item;
-                position += 1;
-            }
-            remaining = rest;
+        if (try self.rangeCallParts(command, items)) |parts| {
+            call_arguments = parts.call_arguments;
+            remaining = parts.remaining;
         }
     }
     const call = try self.makeCommandCall(command, call_arguments);
