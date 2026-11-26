@@ -1078,6 +1078,7 @@ test "ローカルパッケージの戻り値候補はESM関数だけを実行�
         .data =
         \\export default {
         \\  外部倍算: { type: "func", josi: [["を"]], fn: (value) => Number(value) * 2 },
+        \\  外部引算: { type: "func", josi: [["から"],["を"]], fn: (a, b) => Number(a) - Number(b) },
         \\  外部定数: { type: "const", value: 8 },
         \\};
         \\
@@ -1096,6 +1097,12 @@ test "ローカルパッケージの戻り値候補はESM関数だけを実行�
         \\●定数値とは
         \\  「x」と表示して外部定数を戻る。
         \\ここまで
+        \\●連文とは
+        \\  「x」と表示して3を外部倍算で戻る。
+        \\ここまで
+        \\●引算とは
+        \\  3を10から外部引算で戻る。
+        \\ここまで
         \\
         ,
     });
@@ -1113,6 +1120,8 @@ test "ローカルパッケージの戻り値候補はESM関数だけを実行�
         \\owned__試験()を表示
         \\owned__C風()を表示
         \\owned__定数値()を表示
+        \\owned__連文()を表示
+        \\owned__引算()を表示
         \\束縛値()を表示
         \\改行値()を表示
         \\
@@ -1129,7 +1138,17 @@ test "ローカルパッケージの戻り値候補はESM関数だけを実行�
     try temporary.dir.createDirPath(io, "packages/owned-bad");
     try temporary.dir.writeFile(io, .{
         .sub_path = "packages/owned-bad/plugin.mjs",
-        .data = "export default { 外部定数: { type: 'const', value: 8 } };\n",
+        .data =
+        \\export default {
+        \\  外部定数: { type: "const", value: 8, fn(x) { return x; } },
+        \\  式が型: { type: "func" && "const", value: 8 },
+        \\  上書き: { type: "func", josi: [["を"]], fn: (x) => x },
+        \\  上書き: { type: "const", value: 8 },
+        \\  助詞不明: { type: "func", josi: buildJosi(), fn: (x) => x },
+        \\  外部倍算: { type: "func", josi: [["を"]], fn: (x) => Number(x) * 2 },
+        \\};
+        \\
+        ,
     });
     try temporary.dir.writeFile(io, .{
         .sub_path = "packages/owned-bad/main.nako3",
@@ -1137,6 +1156,21 @@ test "ローカルパッケージの戻り値候補はESM関数だけを実行�
         \\!「./plugin.mjs」を取り込む。
         \\●定数呼出とは
         \\  3を外部定数で戻る。
+        \\ここまで
+        \\●式型呼出とは
+        \\  3を式が型で戻る。
+        \\ここまで
+        \\●上書き呼出とは
+        \\  3を上書きで戻る。
+        \\ここまで
+        \\●助詞不明呼出とは
+        \\  3を助詞不明で戻る。
+        \\ここまで
+        \\●誤助詞とは
+        \\  3に外部倍算で戻る。
+        \\ここまで
+        \\●余分とは
+        \\  3を4から外部倍算で戻る。
         \\ここまで
         \\
         ,
@@ -1191,12 +1225,22 @@ test "ローカルパッケージの戻り値候補はESM関数だけを実行�
         var interpreter = lnako.runtime.interpreter.Interpreter.init(gpa, &runtime, program, host.host());
         defer interpreter.deinit();
         _ = try interpreter.run();
-        try testing.expectEqualStrings("6\n6\nx\n8\n5\n\n\n", host.written());
+        try testing.expectEqualStrings("6\n6\nx\n8\nx\n6\n7\n5\n\n\n", host.written());
     }
 
-    // 定数へ実引数を与えた戻り値候補は、Interpreterのcompileで拒否する。
-    {
-        const reject_path = try std.fs.path.join(gpa, &.{ app_root, "reject-main.nako3" });
+    // 型・式境界・重複キー・助詞シグネチャを静的に確定できない戻り値候補は、
+    // 実引数を消費せずInterpreterのcompileで拒否する。
+    const reject_mains = [_]struct { path: []const u8, source: []const u8 }{
+        .{ .path = "reject-main.nako3", .source = "!「pkg:owned-bad」を取り込む\nowned-bad__定数呼出()を表示\n" },
+        .{ .path = "reject-computed.nako3", .source = "!「pkg:owned-bad」を取り込む\nowned-bad__式型呼出()を表示\n" },
+        .{ .path = "reject-duplicate.nako3", .source = "!「pkg:owned-bad」を取り込む\nowned-bad__上書き呼出()を表示\n" },
+        .{ .path = "reject-josi.nako3", .source = "!「pkg:owned-bad」を取り込む\nowned-bad__助詞不明呼出()を表示\n" },
+        .{ .path = "reject-wrong-particle.nako3", .source = "!「pkg:owned-bad」を取り込む\nowned-bad__誤助詞()を表示\n" },
+        .{ .path = "reject-extra.nako3", .source = "!「pkg:owned-bad」を取り込む\nowned-bad__余分()を表示\n" },
+    };
+    for (reject_mains) |item| {
+        try temporary.dir.writeFile(io, .{ .sub_path = item.path, .data = item.source });
+        const reject_path = try std.fs.path.join(gpa, &.{ app_root, item.path });
         defer gpa.free(reject_path);
         var stderr: std.Io.Writer.Allocating = .init(gpa);
         defer stderr.deinit();

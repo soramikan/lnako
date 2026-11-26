@@ -132,7 +132,12 @@ pub fn unresolvedArguments(allocator: std.mem.Allocator, slots: []const Slot, ar
     var unresolved: std.ArrayList(usize) = .empty;
     errdefer unresolved.deinit(allocator);
     if (slots.len == 0) {
-        for (0..arguments.len) |index| try unresolved.append(allocator, index);
+        for (arguments, 0..) |argument, index| {
+            // 連文マーカーはユーザーの実引数ではないため、引数を取らない
+            // 関数でも未解決扱いにしない。
+            if (isChainImplicitIt(argument)) continue;
+            try unresolved.append(allocator, index);
+        }
         return unresolved.toOwnedSlice(allocator);
     }
     var result = try match(allocator, slots, arguments, variable_final);

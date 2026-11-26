@@ -802,6 +802,7 @@ test "戻り値候補の動的命令は関数entryだけを呼出し、定数は
         .dispatch_namespace = "外部定数",
         .exact = true,
         .callable = false,
+        .value = true,
     }};
     var rejected = try parser.parse(std.testing.allocator, "●呼出とは\n3を外部定数で戻る。\nここまで\n呼出()を表示。\n", "const-call.nako3");
     defer rejected.deinit();
@@ -834,6 +835,67 @@ test "戻り値候補の動的命令は関数entryだけを呼出し、定数は
         if (binding.kind == .builtin and binding.dynamic_builtin and std.mem.eql(u8, binding.resolved_name, "外部定数")) value_bound = true;
     }
     try std.testing.expect(value_bound);
+}
+
+test "ESM戻り値候補は宣言助詞へ引数を割り当て、不適合助詞と余分な引数を拒否する" {
+    const parser = @import("../frontend/parser.zig");
+    const multiply_signature = analyzer.dynamic_commands.JosiSignature{
+        .slots = &.{&.{"を"}},
+    };
+    const multiply_aliases = [_]DynamicCommandAlias{.{
+        .source_namespace = "外部倍算",
+        .dispatch_namespace = "外部倍算",
+        .exact = true,
+        .signature = multiply_signature,
+        .signature_required = true,
+    }};
+    const Analyze = struct {
+        fn run(source: []const u8, aliases: []const DynamicCommandAlias) !analyzer.Program {
+            var parsed = try parser.parse(std.testing.allocator, source, "particle.nako3");
+            defer parsed.deinit();
+            return analyzeModules(std.testing.allocator, &.{.{
+                .name = "particle",
+                .path = "particle.nako3",
+                .root = parsed.root.?,
+                .dynamic_command_aliases = aliases,
+            }});
+        }
+    };
+
+    // 連文マーカーの後ろの『3を』をスロットへ割り当てる。
+    var chained = try Analyze.run("●呼出とは\n「x」と表示して3を外部倍算で戻る。\nここまで\n呼出()を表示。\n", &multiply_aliases);
+    defer chained.deinit();
+    try std.testing.expect(chained.succeeded());
+    var signature_bound = false;
+    for (chained.bindings) |binding| {
+        if (binding.dynamic_builtin and binding.signature != null) signature_bound = true;
+    }
+    try std.testing.expect(signature_bound);
+
+    // 不適合助詞はスロットへ割り当てず未解決引数にする。
+    var wrong = try Analyze.run("●呼出とは\n3に外部倍算で戻る。\nここまで\n呼出()を表示。\n", &multiply_aliases);
+    defer wrong.deinit();
+    try std.testing.expect(!wrong.succeeded());
+
+    // 余分な引数も未解決引数にする。
+    var extra = try Analyze.run("●呼出とは\n3を4から外部倍算で戻る。\nここまで\n呼出()を表示。\n", &multiply_aliases);
+    defer extra.deinit();
+    try std.testing.expect(!extra.succeeded());
+
+    // 『から』と『を』は宣言順のスロットへ割り当てる（3は『を』、10は『から』）。
+    const subtract_signature = analyzer.dynamic_commands.JosiSignature{
+        .slots = &.{ &.{"から"}, &.{"を"} },
+    };
+    const subtract_aliases = [_]DynamicCommandAlias{.{
+        .source_namespace = "外部引算",
+        .dispatch_namespace = "外部引算",
+        .exact = true,
+        .signature = subtract_signature,
+        .signature_required = true,
+    }};
+    var order = try Analyze.run("●呼出とは\n3を10から外部引算で戻る。\nここまで\n呼出()を表示。\n", &subtract_aliases);
+    defer order.deinit();
+    try std.testing.expect(order.succeeded());
 }
 
 test "package qualified symbolは宣言したimporter以外から解決されない" {

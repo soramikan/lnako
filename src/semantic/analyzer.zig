@@ -7,7 +7,7 @@ const argument_completion = @import("argument_completion.zig");
 const parser_helpers = @import("../frontend/parser/helpers.zig");
 const unresolved_words = @import("unresolved_words.zig");
 const system_constant = @import("../runtime/system_constant.zig");
-const dynamic_commands = @import("dynamic_commands.zig");
+pub const dynamic_commands = @import("dynamic_commands.zig");
 const low_level_foundation = @import("../runtime/low_level_foundation.zig");
 
 pub const ScopeId = u32;
@@ -189,6 +189,9 @@ pub const Binding = struct {
     fallback_names: []const []const u8 = &.{},
     /// 実効取り込み文から生成されたモジュールエントリ呼び出しの展開順序情報。
     import_entry: ?ImportEntry = null,
+    /// ESM pluginの静的抽出で確定した助詞シグネチャ。呼出し計画の
+    /// スロット割り当てと、戻り値候補の未解決引数判定に使う。
+    signature: ?dynamic_commands.JosiSignature = null,
 };
 
 pub const FunctionScope = struct {
@@ -933,20 +936,46 @@ pub const Analyzer = struct {
             // 実引数を持つ戻り値候補は、静的に呼出し可能と確認できる完全一致
             // aliasだけを呼出しとして消費する。catch-allやESMの`type: "const"`は
             // 呼出し先を確定できないため、ここでは束縛せず未解決引数の診断へ戻す。
-            if (pending_word_candidate and hasRealPendingArguments(node)) {
+            if (pending_word_candidate) {
+                const has_real_arguments = hasRealPendingArguments(node);
                 if (try dynamic_commands.bindsCallableExact(self.allocator, allow_dynamic_commands, module_input.allows_dynamic_commands_from, module_input.dynamic_command_aliases, name, node.span.start)) |resolution| {
+                    if (resolution.signature) |signature| {
+                        const slots = try dynamic_commands.signatureSlots(self.allocator, signature);
+                        defer self.allocator.free(slots);
+                        const unresolved = try argument_completion.unresolvedArguments(self.allocator, slots, node.children, signature.variable_final);
+                        defer self.allocator.free(unresolved);
+                        if (unresolved.len > 0) {
+                            try self.addDiagnostic(.unresolved_word, node.span, self.modules.items[module_index].path, "『戻』文の直前に未解決の引数があります。『(式)を戻す』のように式をカッコで括ってください。");
+                            return;
+                        }
+                    }
                     try self.bind(node, .builtin, name, resolution.resolved_name, null);
                     const binding = &self.bindings.items[self.bindings.items.len - 1];
                     binding.dynamic_builtin = true;
                     binding.fallback_names = resolution.fallback_names;
+                    if (resolution.signature) |signature| binding.signature = try dynamic_commands.cloneSignature(self.allocator, signature);
                     return;
                 }
-            } else if (try dynamic_commands.bindsWithFallbacks(self.allocator, allow_dynamic_commands, module_input.allows_dynamic_commands_from, module_input.dynamic_command_aliases, name, node.span.start)) |resolution| {
-                try self.bind(node, .builtin, name, resolution.resolved_name, null);
-                const binding = &self.bindings.items[self.bindings.items.len - 1];
-                binding.dynamic_builtin = true;
-                binding.fallback_names = resolution.fallback_names;
-                return;
+                // 実引数が無い候補だけ、静的に値と確認できた完全一致entryを
+                // 値参照として読む。判定不能entryは値にも関数にも確定しない。
+                if (!has_real_arguments) {
+                    if (try dynamic_commands.bindsValueExact(self.allocator, allow_dynamic_commands, module_input.allows_dynamic_commands_from, module_input.dynamic_command_aliases, name, node.span.start)) |resolution| {
+                        try self.bind(node, .builtin, name, resolution.resolved_name, null);
+                        const binding = &self.bindings.items[self.bindings.items.len - 1];
+                        binding.dynamic_builtin = true;
+                        binding.fallback_names = resolution.fallback_names;
+                        return;
+                    }
+                }
+            } else if (callable) {
+                if (try dynamic_commands.bindsWithFallbacks(self.allocator, allow_dynamic_commands, module_input.allows_dynamic_commands_from, module_input.dynamic_command_aliases, name, node.span.start)) |resolution| {
+                    try self.bind(node, .builtin, name, resolution.resolved_name, null);
+                    const binding = &self.bindings.items[self.bindings.items.len - 1];
+                    binding.dynamic_builtin = true;
+                    binding.fallback_names = resolution.fallback_names;
+                    if (resolution.signature) |signature| binding.signature = try dynamic_commands.cloneSignature(self.allocator, signature);
+                    return;
+                }
             }
         }
         if (try pkg_ctx.handleUnresolved(self, module_index, node, name)) return;
