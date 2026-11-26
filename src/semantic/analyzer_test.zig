@@ -1012,6 +1012,93 @@ test "分割定数宣言は宣言位置以降の代入だけを拒否する" {
     try Case.expectAssignments("●Fとは\nA=0\n定数[A,B]=[4,5]\nAを1増やす\nここまで\nF\n", 1, 3);
 }
 
+test "関数内取り込みの分割定数宣言は展開済み順序で前後を判定する" {
+    const module_graph = @import("module_graph.zig");
+    const Provider = struct {
+        main_source: []const u8,
+        module_source: []const u8,
+
+        fn sourceProvider(self: *@This()) module_graph.SourceProvider {
+            return .{ .context = self, .readFn = read };
+        }
+
+        fn read(context: *anyopaque, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            if (pathHasSuffix(path, "main.nako3")) return allocator.dupe(u8, self.main_source);
+            if (pathHasSuffix(path, "定数部.nako3")) return allocator.dupe(u8, self.module_source);
+            return error.FileNotFound;
+        }
+
+        fn pathHasSuffix(path: []const u8, suffix: []const u8) bool {
+            if (suffix.len > path.len) return false;
+            const start = path.len - suffix.len;
+            if (start > 0 and path[start - 1] != '/' and path[start - 1] != '\\') return false;
+            for (suffix, 0..) |char, index| {
+                const path_char = path[start + index];
+                const normalized_path_char: u8 = if (path_char == '\\') '/' else path_char;
+                const normalized_suffix_char: u8 = if (char == '\\') '/' else char;
+                if (normalized_path_char != normalized_suffix_char) return false;
+            }
+            return true;
+        }
+    };
+    const Result = struct {
+        assignments: usize = 0,
+        first_line: ?usize = null,
+    };
+    const run = struct {
+        fn count(main_source: []const u8, module_source: []const u8) !Result {
+            var provider = Provider{ .main_source = main_source, .module_source = module_source };
+            var graph = try module_graph.load(std.testing.allocator, "main.nako3", provider.sourceProvider(), .{});
+            defer graph.deinit();
+            var program = try graph.analyze(std.testing.allocator);
+            defer program.deinit();
+            var result = Result{};
+            for (program.diagnostics) |item| {
+                if (item.code != .assign_to_constant) continue;
+                result.assignments += 1;
+                if (result.first_line == null) result.first_line = item.span.line;
+            }
+            return result;
+        }
+    }.count;
+
+    const main_before = "●呼出とは\nA=0\n!「./定数部.nako3」を取り込む。\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n";
+    const main_after = "●呼出とは\nA=0\n!「./定数部.nako3」を取り込む。\nA=9\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n";
+    const main_after_increment = "●呼出とは\nA=0\n!「./定数部.nako3」を取り込む。\nAを1増やす\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n";
+    const main_plain = "●呼出とは\n!「./定数部.nako3」を取り込む。\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n";
+    const const_decl = "定数[A,B]=[4,5]\n";
+    // 取り込み元のコメント量で宣言のバイト位置が変わっても、取り込み前の
+    // 代入と取り込み後の代入・増減の判定は展開済みの走査順で一定になる。
+    const long_const_decl =
+        "# xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n" ++ const_decl;
+    try std.testing.expectEqual(@as(usize, 0), (try run(main_before, const_decl)).assignments);
+    try std.testing.expectEqual(@as(usize, 0), (try run(main_before, long_const_decl)).assignments);
+    const after_short = try run(main_after, const_decl);
+    try std.testing.expectEqual(@as(usize, 1), after_short.assignments);
+    try std.testing.expectEqual(@as(usize, 3), after_short.first_line.?);
+    const after_long = try run(main_after, long_const_decl);
+    try std.testing.expectEqual(@as(usize, 1), after_long.assignments);
+    try std.testing.expectEqual(@as(usize, 3), after_long.first_line.?);
+    const after_increment = try run(main_after_increment, long_const_decl);
+    try std.testing.expectEqual(@as(usize, 1), after_increment.assignments);
+    try std.testing.expectEqual(@as(usize, 3), after_increment.first_line.?);
+    // 取り込み元ファイル内の宣言前後も同じ走査順で判定する。宣言後の
+    // 書き込みは、取り込み元モジュール単体の解析とインライン展開の
+    // 双方で同じ診断になる。
+    try std.testing.expectEqual(@as(usize, 0), (try run(main_plain, "A=0\n定数[A,B]=[4,5]\n")).assignments);
+    const inside_after = try run(main_plain, "定数[A,B]=[4,5]\nA=9\n");
+    try std.testing.expectEqual(@as(usize, 2), inside_after.assignments);
+    try std.testing.expectEqual(@as(usize, 1), inside_after.first_line.?);
+    // 可変の分割宣言は取り込み後も書き込みを拒否しない。
+    try std.testing.expectEqual(@as(usize, 0), (try run(main_after, "変数[A,B]=[4,5]\n")).assignments);
+    // 取り込み先の定数へ取り込み元から書き込む場合は従来どおり拒否する。
+    const main_const_then_import = "●呼出とは\n定数[A,B]=[4,5]\n!「./定数部.nako3」を取り込む。\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n";
+    const cross_module = try run(main_const_then_import, "A=9\n");
+    try std.testing.expectEqual(@as(usize, 1), cross_module.assignments);
+    try std.testing.expectEqual(@as(usize, 0), cross_module.first_line.?);
+}
+
 test "package内scopeの依存命令は所有者修飾のdispatch名へ束縛する" {
     const parser = @import("../frontend/parser.zig");
     // 別package scopeで同じaliasを使う推移依存は、ソース上の `util__命令`

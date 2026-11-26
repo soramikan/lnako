@@ -157,6 +157,13 @@ pub const Symbol = struct {
     /// 拒否するため、解決時の代入検査はこの位置より前の書き込みを許す。
     /// nullは宣言時から定数だったシンボル（分割宣言以外の定数化）を表す。
     constant_decl_span: ?ast.Span = null,
+    /// 上記の分割定数宣言を解析したスコープ。関数内取り込みの宣言は
+    /// 取り込み元ファイルの位置を持つため、同じスコープ内の書き込みとは
+    /// ファイル内バイト位置ではなく展開済みの走査順で前後を判定する。
+    constant_decl_scope: ?ScopeId = null,
+    /// 上記の分割定数宣言の事前宣言走査順位。取り込み元ファイルの長さに
+    /// 依存せず、取り込み文の位置で展開された順序を表す。
+    constant_decl_order: ?usize = null,
     /// 関数内の`引数`束縛（公式`yCallFunc`の実引数配列）。公式は呼出しごとに
     /// 用意するため、ユーザーの同名宣言で二重定義にしない。
     implicit_arguments: bool = false,
@@ -295,6 +302,9 @@ pub const Analyzer = struct {
     /// プロパティ代入ノードの走査順位。暗黙の`引数`が使用文までに変数登録
     /// 済みか（公式convLetPropのfindVar相当）を位置比較で判定するために使う。
     property_assignment_order: std.AutoHashMapUnmanaged(*ast.Node, usize) = .{},
+    /// 代入・増減ノードの事前宣言走査順位。分割定数宣言との前後を同じ
+    /// スコープ内で比較するために使う（取り込み元のバイト位置に依存しない）。
+    write_order: std.AutoHashMapUnmanaged(*ast.Node, usize) = .{},
     /// 繰り返し本体の内側にある深さ（公式のflagLoop相当）。『続ける』は
     /// この深さが正のときだけ有効で、条件分岐のcase節は繰り返しに数えない。
     loop_depth: usize = 0,
@@ -393,6 +403,8 @@ pub const Analyzer = struct {
         self.stream_order += 1;
         if (node.kind == .property_assignment)
             try self.property_assignment_order.put(self.allocator, node, self.stream_order);
+        if (node.kind == .assignment or node.kind == .increment)
+            try self.write_order.put(self.allocator, node, self.stream_order);
         // 関数宣言の引数情報は事前走査で確定済み。
         if (node.kind == .function_definition or node.kind == .test_definition) return;
         if (node.kind == .anonymous_function) return;
@@ -439,7 +451,11 @@ pub const Analyzer = struct {
                             // 可変束縛を定数化した最初の分割宣言位置だけを記録する。
                             // 定数への再宣言自体はこの行で診断済みであり、位置を
                             // 後ろへ動かすと先行する書き込みの判定まで変わる。
-                            if (symbol.is_mutable) symbol.constant_decl_span = name.span;
+                            if (symbol.is_mutable) {
+                                symbol.constant_decl_span = name.span;
+                                symbol.constant_decl_scope = scope;
+                                symbol.constant_decl_order = self.stream_order;
+                            }
                             symbol.kind = .constant;
                             symbol.is_mutable = false;
                         }
@@ -725,7 +741,7 @@ pub const Analyzer = struct {
         // 公式文言: 『定数「名」は既に定義済みなので、値を代入することは
         // できません』（main__ 接頭辞は #1223 で省略）。
         if ((node.kind == .assignment or node.kind == .increment) and !symbol.is_mutable and
-            !self.writeBeforeConstantDeclaration(symbol, module_index, node))
+            !self.writeBeforeConstantDeclaration(symbol, module_index, scope, node))
         {
             const shown = displayQualifiedName(symbol.qualified_name);
             // ユーザー定義関数も公式は『関数『名』に代入できません』で拒否する。
@@ -1226,11 +1242,23 @@ pub const Analyzer = struct {
     /// 分割定数宣言がこの書き込みより後にあるか。公式convDefLocalVarlistは
     /// 既存束縛を宣言位置から読み取り専用にするため、宣言前の代入・増減は
     /// 定数への再代入として診断しない（`A=0; 定数[A,B]=[4,5]`）。
-    fn writeBeforeConstantDeclaration(self: *Analyzer, symbol: Symbol, module_index: u32, node: *ast.Node) bool {
-        const declared = symbol.constant_decl_span orelse return false;
+    fn writeBeforeConstantDeclaration(self: *Analyzer, symbol: Symbol, module_index: u32, scope: ScopeId, node: *ast.Node) bool {
         // 位置比較は同一モジュール内の宣言順にだけ適用する。取り込み先の
         // シンボルを別モジュールから書く場合は従来どおり定数として拒否する。
         if (symbol.module_index != module_index) return false;
+        // 同じスコープの書き込みは、宣言名のファイル内バイト位置ではなく
+        // 展開済みの事前宣言走査順で比較する。関数内取り込みの宣言は
+        // 取り込み元ファイルの位置を持つため、単純なバイト位置比較では
+        // 取り込み先のコメント量で前後が逆転してしまう。
+        if (symbol.constant_decl_scope) |decl_scope| {
+            if (decl_scope == scope) {
+                if (symbol.constant_decl_order) |declared_order| {
+                    if (self.write_order.get(node)) |write_order|
+                        return write_order < declared_order;
+                }
+            }
+        }
+        const declared = symbol.constant_decl_span orelse return false;
         return self.positionAfter(symbol.module_index, declared, module_index, node.span);
     }
 
