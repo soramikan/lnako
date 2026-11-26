@@ -970,5 +970,9 @@
   {
     "id": "range-object-reference-parenthesized-issue297",
     "source": "A=[0,1,2,3,4,5]\nそれ=2\nJSONエンコード(Aの2から4までの範囲を参照)を表示。\n"
+  },
+  {
+    "id": "josi-alternatives-interleaved",
+    "source": "●試験(Aに|Bを|Aへ)\n[A,B]で戻る\nここまで。\n2を1へ試験してJSONエンコードして表示。\n1へ2を試験してJSONエンコードして表示。\n●カンマ(Aに|Bを,Aへ)\n[A,B]で戻る\nここまで。\n2を1へカンマしてJSONエンコードして表示。\n●重複(Aを|Aを)\nAで戻る\nここまで。\n1を重複して表示。\n●助詞なし(A,Aを)\nAで戻る\nここまで。\n1を助詞なしして表示。\n"
   }
 ]
