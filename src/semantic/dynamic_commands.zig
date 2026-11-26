@@ -27,6 +27,11 @@ pub const DynamicCommandAlias = struct {
     /// 抽出済み無修飾命令名に使用し、`dispatch_namespace` へ直接写像する。
     /// prefix一致や無修飾catch-allへ流さず、未登録名は診断させる。
     exact: bool = false,
+    /// 静的に「関数」と確認できた命令か。ESM plugin の `type: "const"` の
+    /// ような非関数entryを、実引数付きの戻り値候補として呼出しに消費しない
+    /// ために使う。native pluginの実行時登録名など、呼出し可能と分かって
+    /// いるaliasは既定値trueのままにする。
+    callable: bool = true,
 };
 
 /// 動的builtinとして束縛する命令名か判定する。直接取り込んだnative plugin
@@ -90,6 +95,39 @@ pub fn binds(allows_dynamic_commands: bool, allows_from: usize, aliases: []const
     if (selected_unqualified) |alias| return alias;
     if (allows_dynamic_commands and use_position >= allows_from) return .{ .source_namespace = name, .dispatch_namespace = name };
     return null;
+}
+
+/// 実引数付きの戻り値候補を、静的に呼出し可能と確認できる完全一致aliasへ
+/// だけ解決する。catch-all（`unqualified`）や、ESMの `type: "const"` の
+/// ような非関数entryは返さない。呼出し側は解決できなかった候補を値として
+/// 消費せず、未解決引数の診断へ戻す。
+pub fn bindsCallableExact(
+    allocator: std.mem.Allocator,
+    allows_dynamic_commands: bool,
+    allows_from: usize,
+    aliases: []const DynamicCommandAlias,
+    name: []const u8,
+    use_position: usize,
+) !?CandidateResolution {
+    const alias = binds(allows_dynamic_commands, allows_from, aliases, name, use_position) orelse return null;
+    if (!alias.exact or !alias.callable) return null;
+    return bindsWithFallbacks(allocator, allows_dynamic_commands, allows_from, aliases, name, use_position);
+}
+
+/// 実引数を持たない値参照を、静的に非関数と確認できる完全一致aliasへ解決
+/// する。ESM pluginの `type: "const"` を通常の値として読む経路に使い、
+/// 呼出し可能な関数entryやcatch-allは返さない。
+pub fn bindsValueExact(
+    allocator: std.mem.Allocator,
+    allows_dynamic_commands: bool,
+    allows_from: usize,
+    aliases: []const DynamicCommandAlias,
+    name: []const u8,
+    use_position: usize,
+) !?CandidateResolution {
+    const alias = binds(allows_dynamic_commands, allows_from, aliases, name, use_position) orelse return null;
+    if (!alias.exact or alias.callable) return null;
+    return bindsWithFallbacks(allocator, allows_dynamic_commands, allows_from, aliases, name, use_position);
 }
 
 pub const CandidateResolution = struct {
@@ -568,6 +606,133 @@ fn isPropertyNameTerminator(token: js_scanner.JavaScriptToken) bool {
     return isPunct(token, ":") or isPunct(token, "(") or isPunct(token, ",") or isPunct(token, "}");
 }
 
+/// `key: value` の値が、なでしこ plugin の関数entryとして静的に確認できるか。
+/// `type: "func"` を最優先し、`type: "const"` など明示された非関数entryや
+/// 型不明の値は false にする。メソッド宣言 `key() {}` と、直接の関数式
+/// （`function` / arrow）だけを関数とみなす。キーが存在するだけの
+/// 短縮プロパティや変数参照は、呼出し可能とは扱わない。
+fn propertyCallable(items: []const js_scanner.JavaScriptToken, header_index: usize) bool {
+    if (header_index >= items.len) return false;
+    // メソッド宣言 `key() { ... }`。
+    if (isPunct(items[header_index], "(")) return true;
+    if (!isPunct(items[header_index], ":")) return false;
+    const value_start = header_index + 1;
+    if (value_start >= items.len) return false;
+    const value = items[value_start];
+    if (value.kind == .identifier) {
+        if (std.mem.eql(u8, value.text, "function") or std.mem.eql(u8, value.text, "class")) {
+            return std.mem.eql(u8, value.text, "function");
+        }
+        if (std.mem.eql(u8, value.text, "async")) {
+            const next = value_start + 1;
+            if (next >= items.len) return false;
+            if (isIdent(items[next], "function")) return true;
+            return isArrowFunctionAt(items, next);
+        }
+        return isArrowFunctionAt(items, value_start);
+    }
+    if (isPunct(value, "{")) return objectEntryCallable(items, value_start);
+    if (isPunct(value, "(")) return isArrowFunctionAt(items, value_start);
+    return false;
+}
+
+/// scannerは`=>`を`=`と`>`の2 tokenへ分けるため、その並びを確認する。
+fn isArrowPunctuation(items: []const js_scanner.JavaScriptToken, start: usize) bool {
+    return start + 1 < items.len and isPunct(items[start], "=") and isPunct(items[start + 1], ">");
+}
+
+/// `(` ... `)` `=>` または `識別子 =>` のarrow関数か。
+fn isArrowFunctionAt(items: []const js_scanner.JavaScriptToken, start: usize) bool {
+    if (start >= items.len) return false;
+    if (items[start].kind == .identifier) {
+        return isArrowPunctuation(items, start + 1);
+    }
+    if (!isPunct(items[start], "(")) return false;
+    var depth: usize = 0;
+    var pos = start;
+    while (pos < items.len) : (pos += 1) {
+        const token = items[pos];
+        if (isOpenDelim(token)) {
+            depth += 1;
+        } else if (isCloseDelim(token)) {
+            if (depth == 0) return false;
+            depth -= 1;
+            if (depth == 0) return isArrowPunctuation(items, pos + 1);
+        }
+    }
+    return false;
+}
+
+/// plugin entry object `{ type: "func", fn: ... }` の最上位プロパティだけを
+/// 見て呼出し可否を決める。入れ子object内の `type` や、値が動的な式は
+/// 関数と確認できないため false のままにする。
+fn objectEntryCallable(items: []const js_scanner.JavaScriptToken, open_brace_index: usize) bool {
+    var saw_type = false;
+    var type_callable = false;
+    var saw_function_value = false;
+    var pos = open_brace_index + 1;
+    while (pos < items.len) {
+        if (isPunct(items[pos], "}")) break;
+        if (isPunct(items[pos], ",")) {
+            pos += 1;
+            continue;
+        }
+        // spread・算出キーは静的にプロパティを確定できない。
+        if ((pos + 2 < items.len and isPunct(items[pos], ".") and isPunct(items[pos + 1], ".") and isPunct(items[pos + 2], ".")) or
+            isPunct(items[pos], "["))
+        {
+            return false;
+        }
+        // `get`/`set`/`async` 修飾子付きはアクセサ・asyncメソッドであり、
+        // plugin entryの型判定には使わない。本体がメソッドなら呼出し可能。
+        if (items[pos].kind == .identifier and
+            (std.mem.eql(u8, items[pos].text, "get") or std.mem.eql(u8, items[pos].text, "set") or std.mem.eql(u8, items[pos].text, "async")) and
+            pos + 1 < items.len and !isPropertyNameTerminator(items[pos + 1]))
+        {
+            pos += 1;
+            if (isPunct(items[pos], "*")) pos += 1;
+            if (pos >= items.len) return false;
+        }
+        if (isPunct(items[pos], "*")) pos += 1;
+        if (pos >= items.len or (items[pos].kind != .identifier and items[pos].kind != .string)) return false;
+        const key = items[pos].text;
+        pos += 1;
+        if (pos >= items.len) return false;
+        if (isPunct(items[pos], "(")) return true;
+        if (!isPunct(items[pos], ":")) return false;
+        const value_start = pos + 1;
+        if (value_start >= items.len) return false;
+        if (std.mem.eql(u8, key, "type")) {
+            // 明示されたtypeが最優先。非文字列の動的typeは関数と確認できない。
+            if (items[value_start].kind != .string) return false;
+            saw_type = true;
+            type_callable = std.mem.eql(u8, items[value_start].text, "func");
+        } else if (std.mem.eql(u8, key, "fn") and isDirectFunctionValue(items, value_start)) {
+            saw_function_value = true;
+        }
+        pos = skipPropertyRemainder(items, value_start);
+    }
+    if (saw_type) return type_callable;
+    return saw_function_value;
+}
+
+/// 値の先頭が直接の関数式（`function` / arrow / async）か。
+fn isDirectFunctionValue(items: []const js_scanner.JavaScriptToken, start: usize) bool {
+    if (start >= items.len) return false;
+    const value = items[start];
+    if (value.kind == .identifier) {
+        if (std.mem.eql(u8, value.text, "function")) return true;
+        if (std.mem.eql(u8, value.text, "async")) {
+            const next = start + 1;
+            if (next >= items.len) return false;
+            if (isIdent(items[next], "function")) return true;
+            return isArrowFunctionAt(items, next);
+        }
+        return isArrowFunctionAt(items, start);
+    }
+    return isPunct(value, "(") and isArrowFunctionAt(items, start);
+}
+
 fn extractObjectLiteralKeys(
     allocator: std.mem.Allocator,
     aliases: *std.ArrayList(DynamicCommandAlias),
@@ -618,9 +783,11 @@ fn extractObjectLiteralKeys(
             continue;
         }
         var raw_key: ?[]const u8 = null;
+        var header_index: usize = pos;
         if (items[pos].kind == .identifier or items[pos].kind == .string) {
             const key_token = items[pos];
             pos += 1;
+            header_index = pos;
             const valid_header = if (pos >= items.len)
                 false
             else if (has_modifier)
@@ -666,6 +833,7 @@ fn extractObjectLiteralKeys(
                         .dispatch_namespace = dispatch,
                         .import_position = import_position,
                         .exact = true,
+                        .callable = propertyCallable(items, header_index),
                     });
                 }
             }
@@ -741,6 +909,71 @@ test "appendJavaScriptPluginAliases は export default と addPluginObject か�
     try std.testing.expect(aliases.items[0].exact);
     try std.testing.expectEqualStrings("外部乙", aliases.items[1].source_namespace);
     try std.testing.expectEqualStrings("外部丙", aliases.items[2].source_namespace);
+}
+
+test "appendJavaScriptPluginAliases は type func だけを呼出し可能とし const と型不明は拒否する" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var aliases: std.ArrayList(DynamicCommandAlias) = .empty;
+    const ok = try appendJavaScriptPluginAliases(allocator, &aliases,
+        \\export default {
+        \\  外部倍算: { type: "func", fn: (x) => Number(x) * 2 },
+        \\  外部定数: { type: "const", value: 8 },
+        \\  関数式: function (x) { return x; },
+        \\  矢印: (x) => x,
+        \\  型不明: buildEntry(),
+        \\};
+    , "pkg:test:calls.mjs", 7);
+    try std.testing.expect(ok);
+    try std.testing.expectEqual(@as(usize, 5), aliases.items.len);
+    const expected = [_]struct { name: []const u8, callable: bool }{
+        .{ .name = "外部倍算", .callable = true },
+        .{ .name = "外部定数", .callable = false },
+        .{ .name = "関数式", .callable = true },
+        .{ .name = "矢印", .callable = true },
+        .{ .name = "型不明", .callable = false },
+    };
+    for (expected) |item| {
+        var found = false;
+        for (aliases.items) |alias| {
+            if (!std.mem.eql(u8, alias.source_namespace, item.name)) continue;
+            try std.testing.expectEqual(item.callable, alias.callable);
+            found = true;
+        }
+        try std.testing.expect(found);
+    }
+
+    const callable = (try bindsCallableExact(allocator, false, 0, aliases.items, "外部倍算", 10)) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("pkg:test:calls.mjs__外部倍算", callable.resolved_name);
+    try std.testing.expect((try bindsCallableExact(allocator, false, 0, aliases.items, "外部定数", 10)) == null);
+    try std.testing.expect((try bindsCallableExact(allocator, false, 0, aliases.items, "型不明", 10)) == null);
+    try std.testing.expect((try bindsCallableExact(allocator, false, 0, aliases.items, "catch-allのみ", 10)) == null);
+
+    const value = (try bindsValueExact(allocator, false, 0, aliases.items, "外部定数", 10)) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("pkg:test:calls.mjs__外部定数", value.resolved_name);
+    try std.testing.expect((try bindsValueExact(allocator, false, 0, aliases.items, "外部倍算", 10)) == null);
+    try std.testing.expect((try bindsValueExact(allocator, false, 0, aliases.items, "catch-allのみ", 10)) == null);
+}
+
+test "bindsCallableExact はcatch-allや非関数exactを呼出し候補にしない" {
+    const allocator = std.testing.allocator;
+    const aliases = [_]DynamicCommandAlias{
+        .{ .source_namespace = "", .dispatch_namespace = "pkg:a:dyn.mjs", .import_position = 5, .unqualified = true },
+        .{ .source_namespace = "外部定数", .dispatch_namespace = "pkg:a:static.mjs__外部定数", .import_position = 5, .exact = true, .callable = false },
+    };
+    try std.testing.expect((try bindsCallableExact(allocator, false, 0, &aliases, "外部定数", 10)) == null);
+    try std.testing.expect((try bindsCallableExact(allocator, false, 0, &aliases, "外部関数", 10)) == null);
+    const only_exact = [_]DynamicCommandAlias{
+        .{ .source_namespace = "外部関数", .dispatch_namespace = "pkg:a:static.mjs__外部関数", .import_position = 5, .exact = true },
+    };
+    const resolved = (try bindsCallableExact(allocator, false, 0, &only_exact, "外部関数", 10)) orelse return error.TestUnexpectedResult;
+    defer {
+        for (resolved.fallback_names) |name| allocator.free(name);
+        allocator.free(resolved.fallback_names);
+        allocator.free(resolved.resolved_name);
+    }
+    try std.testing.expectEqualStrings("pkg:a:static.mjs__外部関数", resolved.resolved_name);
 }
 
 test "appendJavaScriptPluginAliases は spread や動的生成式で false を返し fallback を許容する" {

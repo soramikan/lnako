@@ -1065,6 +1065,149 @@ test "package内の先発静的ESMと後発動的ESMは非競合時にフォー�
     }
 }
 
+test "ローカルパッケージの戻り値候補はESM関数だけを実行し定数は実引数を拒否する" {
+    if (!lnako.compat.quickjs.available()) return error.SkipZigTest;
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var temporary = test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+
+    try temporary.dir.createDirPath(io, "packages/owned");
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "packages/owned/plugin.mjs",
+        .data =
+        \\export default {
+        \\  外部倍算: { type: "func", josi: [["を"]], fn: (value) => Number(value) * 2 },
+        \\  外部定数: { type: "const", value: 8 },
+        \\};
+        \\
+        ,
+    });
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "packages/owned/main.nako3",
+        .data =
+        \\!「./plugin.mjs」を取り込む。
+        \\●試験とは
+        \\  3を外部倍算で戻る。
+        \\ここまで
+        \\●C風とは
+        \\  外部倍算(3)を戻る。
+        \\ここまで
+        \\●定数値とは
+        \\  「x」と表示して外部定数を戻る。
+        \\ここまで
+        \\
+        ,
+    });
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "main.nako3",
+        .data =
+        \\!「pkg:owned」を取り込む
+        \\●束縛値とは
+        \\  N=5
+        \\  Nで戻る。
+        \\ここまで
+        \\●改行値とは
+        \\  改行で戻る。
+        \\ここまで
+        \\owned__試験()を表示
+        \\owned__C風()を表示
+        \\owned__定数値()を表示
+        \\束縛値()を表示
+        \\改行値()を表示
+        \\
+        ,
+    });
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "reject-main.nako3",
+        .data =
+        \\!「pkg:owned-bad」を取り込む
+        \\owned-bad__定数呼出()を表示
+        \\
+        ,
+    });
+    try temporary.dir.createDirPath(io, "packages/owned-bad");
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "packages/owned-bad/plugin.mjs",
+        .data = "export default { 外部定数: { type: 'const', value: 8 } };\n",
+    });
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "packages/owned-bad/main.nako3",
+        .data =
+        \\!「./plugin.mjs」を取り込む。
+        \\●定数呼出とは
+        \\  3を外部定数で戻る。
+        \\ここまで
+        \\
+        ,
+    });
+
+    const app_root = try temporary.dir.realPathFileAlloc(io, ".", gpa);
+    defer gpa.free(app_root);
+    const Resolver = struct {
+        root: []const u8,
+        fn resolve(context: *anyopaque, allocator: std.mem.Allocator, _: []const u8, _: ?[]const u8, specifier: []const u8) !lnako.semantic.module_graph.ResolvedPackageImport {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            if (std.mem.eql(u8, specifier, "pkg:owned")) {
+                return .{
+                    .path = try std.fs.path.join(allocator, &.{ self.root, "packages", "owned", "main.nako3" }),
+                    .canonical_id = try allocator.dupe(u8, "pkg:owned/main"),
+                    .namespace = "owned",
+                    .package_owner = try allocator.dupe(u8, "pkg:owned"),
+                    .package_root = try std.fs.path.join(allocator, &.{ self.root, "packages", "owned" }),
+                };
+            }
+            if (std.mem.eql(u8, specifier, "pkg:owned-bad")) {
+                return .{
+                    .path = try std.fs.path.join(allocator, &.{ self.root, "packages", "owned-bad", "main.nako3" }),
+                    .canonical_id = try allocator.dupe(u8, "pkg:owned-bad/main"),
+                    .namespace = "owned-bad",
+                    .package_owner = try allocator.dupe(u8, "pkg:owned-bad"),
+                    .package_root = try std.fs.path.join(allocator, &.{ self.root, "packages", "owned-bad" }),
+                };
+            }
+            return error.PackageNotFound;
+        }
+    };
+    var resolver = Resolver{ .root = app_root };
+
+    // Interpreter: 助詞呼出し・C風呼出しは6、値だけのESM定数は8、
+    // 普通の束縛は5、組み込みの値`改行`は空行を表示する。
+    {
+        const main_path = try std.fs.path.join(gpa, &.{ app_root, "main.nako3" });
+        defer gpa.free(main_path);
+        var stderr: std.Io.Writer.Allocating = .init(gpa);
+        defer stderr.deinit();
+        var program = (try compile_pipeline.compileInput(gpa, io, main_path, .{
+            .compat_js = true,
+            .package_resolver = .{ .context = &resolver, .resolveFn = Resolver.resolve },
+        }, &stderr.writer)) orelse return error.UnexpectedCompileFailure;
+        defer program.deinit();
+
+        var runtime = lnako.runtime.value.Runtime.init(gpa);
+        defer runtime.deinit();
+        var host = lnako.runtime.interpreter.BufferHost{ .allocator = gpa };
+        defer host.deinit();
+        var interpreter = lnako.runtime.interpreter.Interpreter.init(gpa, &runtime, program, host.host());
+        defer interpreter.deinit();
+        _ = try interpreter.run();
+        try testing.expectEqualStrings("6\n6\nx\n8\n5\n\n\n", host.written());
+    }
+
+    // 定数へ実引数を与えた戻り値候補は、Interpreterのcompileで拒否する。
+    {
+        const reject_path = try std.fs.path.join(gpa, &.{ app_root, "reject-main.nako3" });
+        defer gpa.free(reject_path);
+        var stderr: std.Io.Writer.Allocating = .init(gpa);
+        defer stderr.deinit();
+        try testing.expect((try compile_pipeline.compileInput(gpa, io, reject_path, .{
+            .compat_js = true,
+            .package_resolver = .{ .context = &resolver, .resolveFn = Resolver.resolve },
+        }, &stderr.writer)) == null);
+        try testing.expect(std.mem.indexOf(u8, stderr.written(), "『戻』文の直前に未解決の引数があります") != null);
+    }
+}
+
 test "package内の静的抽出が実登録を保証しない場合と依存ESMの自己登録でも先発pluginと依存登録の命令へ届く" {
     if (!lnako.compat.quickjs.available()) return error.SkipZigTest;
     const gpa = testing.allocator;

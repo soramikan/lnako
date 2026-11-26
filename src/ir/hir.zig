@@ -361,7 +361,7 @@ const Lowerer = struct {
             .null_value => .null_value,
             .string => .string,
             .string_template => .string_template,
-            .word => if (implicit_function != null) .call else if (self.bindingIsBuiltinCommand(node)) (if (std.mem.eql(u8, node.value, "エラー発生")) .throw_statement else .call) else if (self.bindingIsLocal(node)) .load_local else .load_global,
+            .word => if (implicit_function != null) .call else if (self.bindingIsBuiltinCommand(node)) (if (std.mem.eql(u8, node.value, "エラー発生")) .throw_statement else .call) else if (self.pendingDynamicCall(node)) .call else if (self.bindingIsLocal(node)) .load_local else .load_global,
             .assignment, .variable_definition => if (self.bindingIsLocal(node)) .store_local else .store_global,
             .variable_list_definition => .destructure_store,
             .array_assignment => .array_set,
@@ -475,6 +475,18 @@ const Lowerer = struct {
             return copies;
         };
         return &.{};
+    }
+
+    /// 動的命令へ束縛された戻り値候補を、実引数付きの呼出しとしてlowering
+    /// するか。意味解析は非関数entryやcatch-allをここへ束縛しないため、
+    /// 実引数がある候補だけを呼出しにすれば値を読む経路へ落ちない。
+    fn pendingDynamicCall(self: Lowerer, node: *ast.Node) bool {
+        if (node.kind != .word or !node.pending_return_arguments) return false;
+        if (!self.bindingIsDynamicBuiltin(node)) return false;
+        for (node.children) |child| {
+            if (!child.is_implicit_it) return true;
+        }
+        return false;
     }
 
     /// 組み込み命令へ束縛された`.word`ノードを暗黙呼出しにするか判定する。

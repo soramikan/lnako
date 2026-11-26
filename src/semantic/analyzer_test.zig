@@ -774,6 +774,68 @@ test "静的に読み取れる動的命令を戻り値の候補として実引�
     try std.testing.expectEqual(@as(usize, 1), dynamic_calls);
 }
 
+test "戻り値候補の動的命令は関数entryだけを呼出し、定数は実引数を拒否して値だけを読む" {
+    const parser = @import("../frontend/parser.zig");
+    const callable_aliases = [_]DynamicCommandAlias{.{
+        .source_namespace = "外部倍算",
+        .dispatch_namespace = "外部倍算",
+        .exact = true,
+    }};
+    var call = try parser.parse(std.testing.allocator, "●呼出とは\n3を外部倍算で戻る。\nここまで\n呼出()を表示。\n", "call.nako3");
+    defer call.deinit();
+    var call_program = try analyzeModules(std.testing.allocator, &.{.{
+        .name = "call",
+        .path = "call.nako3",
+        .root = call.root.?,
+        .dynamic_command_aliases = &callable_aliases,
+    }});
+    defer call_program.deinit();
+    try std.testing.expect(call_program.succeeded());
+    var call_bound = false;
+    for (call_program.bindings) |binding| {
+        if (binding.kind == .builtin and binding.dynamic_builtin and std.mem.eql(u8, binding.resolved_name, "外部倍算")) call_bound = true;
+    }
+    try std.testing.expect(call_bound);
+
+    const const_aliases = [_]DynamicCommandAlias{.{
+        .source_namespace = "外部定数",
+        .dispatch_namespace = "外部定数",
+        .exact = true,
+        .callable = false,
+    }};
+    var rejected = try parser.parse(std.testing.allocator, "●呼出とは\n3を外部定数で戻る。\nここまで\n呼出()を表示。\n", "const-call.nako3");
+    defer rejected.deinit();
+    var rejected_program = try analyzeModules(std.testing.allocator, &.{.{
+        .name = "const-call",
+        .path = "const-call.nako3",
+        .root = rejected.root.?,
+        .dynamic_command_aliases = &const_aliases,
+    }});
+    defer rejected_program.deinit();
+    try std.testing.expect(!rejected_program.succeeded());
+    var unresolved = false;
+    for (rejected_program.diagnostics) |item| {
+        if (item.code == .unresolved_word) unresolved = true;
+    }
+    try std.testing.expect(unresolved);
+
+    var value = try parser.parse(std.testing.allocator, "●呼出とは\n「x」と表示して外部定数で戻る。\nここまで\n呼出()を表示。\n", "const-value.nako3");
+    defer value.deinit();
+    var value_program = try analyzeModules(std.testing.allocator, &.{.{
+        .name = "const-value",
+        .path = "const-value.nako3",
+        .root = value.root.?,
+        .dynamic_command_aliases = &const_aliases,
+    }});
+    defer value_program.deinit();
+    try std.testing.expect(value_program.succeeded());
+    var value_bound = false;
+    for (value_program.bindings) |binding| {
+        if (binding.kind == .builtin and binding.dynamic_builtin and std.mem.eql(u8, binding.resolved_name, "外部定数")) value_bound = true;
+    }
+    try std.testing.expect(value_bound);
+}
+
 test "package qualified symbolは宣言したimporter以外から解決されない" {
     const parser = @import("../frontend/parser.zig");
     var package = try parser.parse(std.testing.allocator, "値=1\n", "math.nako3");
