@@ -925,5 +925,230 @@
   {
     "id": "dict-numeric-key-shorthand",
     "source": "A={10}\nA@\"10\"を表示\nB={10,20}\nB@\"10\"を表示\nB@\"20\"を表示\nC={10,a:1}\nC@\"10\"を表示\nC@\"a\"を表示\nD={a:1,10}\nD@\"10\"を表示\nD@\"a\"を表示\nE={001}\nE@\"1\"を表示\nF={1.50}\nF@\"1.5\"を表示\nG={1e3}\nG@\"1000\"を表示\nH={１０}\nH@\"10\"を表示\nI={10,}\nI@\"10\"を表示\nJ={10,\"10\":2}\nJ@\"10\"を表示\nK={\"10\":2,10}\nK@\"10\"を表示\n"
+  },
+  {
+    "id": "renbun-explicit-sore-chain-issue297",
+    "source": "3と5を足して、それに6を足して表示。\n3と5を足して、6を足して表示。\n10から3を引いて、それから2を引いて表示。\n10から3を引いて、2から引いて表示。\nカウント=0\n●(AとBを)記録足とは\nカウント=カウント+1\nA+Bで戻る\nここまで\n3と5を記録足して、それと6を記録足して表示。\nカウントを表示。\n"
+  },
+  {
+    "id": "cond-predicate-josi-call",
+    "source": "A=1。\nもし、Aが奇数ならば\n「奇数」と表示。\n違えば\n「偶数」と表示。\nここまで。\nA=2。\nもし、Aが偶数ならば\n「偶数」と表示。\n違えば\n「奇数」と表示。\nここまで。\nA=40\nもし、Aが30から50の範囲内ならば\n「範囲内」と表示。\n違えば\n「範囲外」と表示。\nここまで。\n「12345」が数列か判定して表示。\n「123a」が数列か判定して表示。\nもし、「12345」が数列か判定ならば\n「数列」と表示。\n違えば\n「数列でない」と表示。\nここまで。\nもし、Aが奇数でなければ\n「奇数でない」と表示。\n違えば\n「奇数」と表示。\nここまで。\n"
+  },
+  {
+    "id": "josi-alternatives-argument",
+    "source": "●全角判定(Sが|Sの|Sを)\n　　Sを「^[\\u0020-\\u007E\\uFF61-\\uFF9F]」で正規表現マッチ。\n　　もし、それがNULLならば、はいで戻る。\n　　違えば、いいえで戻る。\nここまで。\n\n「abc」が全角か判定して表示。\n「ａｂｃ」の全角か判定して表示。\n「いろは」を全角か判定して表示。\n"
+  },
+  {
+    "id": "string-search-variable-start",
+    "source": "0から連続検索\n●(Cから)連続検索\n　「しんぶんし」でCから「ん」を文字検索。\n　C=それ。Cを表示。\n　もし、C=0でなければ、\n　　C=C+1。\n　　Cから連続検索。\n　ここまで。\nここまで。\n"
+  },
+  {
+    "id": "varlist-reassignment-array-number-conversion",
+    "source": "「※ゼロ埋めされた日付が文字列としてそのまま表示されます」と表示。\n「2024/01/07」を「/」で区切る。\n年,月,日はそれ。\n「{月}月{日}日は七草です」と表示。\n改行を表示。\n\n「※配列数値変換します」と表示。\n「2024/01/07」を「/」で区切る。\n年,月,日はそれを配列数値変換。\n「{月}月{日}日は七草です」と表示。\n"
+  },
+  {
+    "id": "range-object-reference",
+    "source": "A = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]\nAの2から5までの範囲を参照してJSONエンコードして表示\n"
+  },
+  {
+    "id": "cond-range-inline-statement",
+    "source": "もし、30が30から50の範囲内ならば、「30は範囲内」と表示。\nもし、50が30から50の範囲内ならば、「50は範囲内」と表示。\n"
+  },
+  {
+    "id": "imported-function-return-issue297",
+    "files": {"sol-lib-single.nako3": "●倍算(Xを)\n  X*2で戻る\nここまで\n"},
+    "source": "!「./sol-lib-single.nako3」を取り込む。\n●呼出とは\n  2を倍算で戻る。\nここまで\n呼出()を表示。\n"
+  },
+  {
+    "id": "range-object-reference-missing-start-issue297",
+    "source": "A=[0,1,2,3,4,5]\nそれ=2\nAの4までの範囲を参照してJSONエンコードして表示。\n"
+  },
+  {
+    "id": "range-object-reference-missing-end-issue297",
+    "source": "A=[0,1,2,3,4,5]\nそれ=4\nAから2から範囲を参照してJSONエンコードして表示。\n"
+  },
+  {
+    "id": "range-object-reference-parenthesized-issue297",
+    "source": "A=[0,1,2,3,4,5]\nそれ=2\nJSONエンコード(Aの2から4までの範囲を参照)を表示。\n"
+  },
+  {
+    "id": "josi-alternatives-interleaved",
+    "source": "●試験(Aに|Bを|Aへ)\n[A,B]で戻る\nここまで。\n2を1へ試験してJSONエンコードして表示。\n1へ2を試験してJSONエンコードして表示。\n●カンマ(Aに|Bを,Aへ)\n[A,B]で戻る\nここまで。\n2を1へカンマしてJSONエンコードして表示。\n●重複(Aを|Aを)\nAで戻る\nここまで。\n1を重複して表示。\n●助詞なし(A,Aを)\nAで戻る\nここまで。\n1を助詞なしして表示。\n"
+  },
+  {
+    "id": "varlist-constant-after-assignment",
+    "source": "A=0\n定数[A,B]=[4,5]\nJSONエンコード([A,B])を表示。\n"
+  },
+  {
+    "id": "return-variable-alone-issue297",
+    "source": "●呼出とは\nV=5\nVで戻る。\nここまで\n呼出()を表示。\n"
+  },
+  {
+    "id": "return-normal-values-issue297",
+    "source": "●Aとは\n2で戻る\nここまで\n●Bとは\n2を戻る\nここまで\n●Cとは\n2を戻す\nここまで\nAを表示\nBを表示\nCを表示\n"
+  },
+  {
+    "id": "return-chained-implicit-marker-issue297",
+    "source": "●呼出とは\nV=5\n「x」と表示してVで戻る。\nここまで\n呼出()を表示。\n"
+  },
+  {
+    "id": "imported-function-return-chained-issue297",
+    "files": {"sol-lib-double.nako3": "●倍算(Xを)\n  X*2で戻る\nここまで\n"},
+    "source": "!「./sol-lib-double.nako3」を取り込む。\n●呼出とは\n  「x」と表示して3を倍算で戻る。\nここまで\n呼出()を表示。\n"
+  },
+  {
+    "id": "varlist-constant-import-before-assignment-issue297",
+    "files": {"varlist-const-before.nako3": "定数[A,B]=[4,5]\n"},
+    "source": "●呼出とは\nA=0\n!「./varlist-const-before.nako3」を取り込む。\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n"
+  },
+  {
+    "id": "varlist-constant-import-before-assignment-long-comment-issue297",
+    "files": {"varlist-const-before-long.nako3": "# xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n定数[A,B]=[4,5]\n"},
+    "source": "●呼出とは\nA=0\n!「./varlist-const-before-long.nako3」を取り込む。\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n"
+  },
+  {
+    "id": "varlist-constant-import-write-before-parent-issue297",
+    "files": {"varlist-const-import-own-before.nako3": "A=0\n定数[A,B]=[4,5]\n"},
+    "source": "●呼出とは\nA=0\n!「./varlist-const-import-own-before.nako3」を取り込む。\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n"
+  },
+  {
+    "id": "varlist-constant-parent-write-before-import-issue297",
+    "files": {"varlist-const-plain-before.nako3": "A=0\n"},
+    "source": "●呼出とは\nA=0\n!「./varlist-const-plain-before.nako3」を取り込む。\nA=7\n定数[A,B]=[4,5]\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n"
+  },
+  {
+    "id": "varlist-constant-nested-import-before-issue297",
+    "files": {"varlist-const-nested.nako3": "!「./varlist-const-init.nako3」を取り込む。\n定数[A,B]=[4,5]\n", "varlist-const-init.nako3": "A=7\n"},
+    "source": "●呼出とは\nA=0\n!「./varlist-const-nested.nako3」を取り込む。\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n"
+  },
+  {
+    "id": "varlist-constant-import-increment-before-issue297",
+    "files": {"varlist-const-increment.nako3": "Aを1増やす。\n定数[A,B]=[4,5]\n"},
+    "source": "●呼出とは\nA=0\n!「./varlist-const-increment.nako3」を取り込む。\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n"
+  },
+  {
+    "id": "varlist-constant-parameter-write-before-issue297",
+    "files": {"varlist-const-param.nako3": "A=7\n定数[A,B]=[4,5]\n"},
+    "source": "●呼出(Aを)とは\n!「./varlist-const-param.nako3」を取り込む。\n[A,B]で戻る\nここまで\nJSONエンコード(呼出(3))を表示。\n"
+  },
+  {
+    "id": "varlist-constant-parent-write-before-import-long-comment-issue297",
+    "files": {"varlist-const-plain-before-long.nako3": "# xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nA=0\n"},
+    "source": "# main comment\n●呼出とは\nA=0\n!「./varlist-const-plain-before-long.nako3」を取り込む。\nA=7\n定数[A,B]=[4,5]\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n"
+  },
+  {
+    "id": "varlist-constant-parent-increment-before-import-issue297",
+    "files": {"varlist-const-plain-before2.nako3": "A=0\n"},
+    "source": "●呼出とは\nA=0\n!「./varlist-const-plain-before2.nako3」を取り込む。\nAを1増やす\n定数[A,B]=[4,5]\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n"
+  },
+  {
+    "id": "return-builtin-value-noargs-issue297",
+    "source": "●呼出とは\n改行で戻る。\nここまで\nJSONエンコード(呼出())を表示。\n"
+  },
+  {
+    "id": "return-builtin-special-value-noargs-issue297",
+    "source": "●呼出とは\nそれで戻る。\nここまで\nJSONエンコード(呼出())を表示。\n"
+  },
+  {
+    "id": "return-builtin-value-implicit-noargs-issue297",
+    "source": "●呼出とは\n「x」と表示して改行で戻る。\nここまで\nJSONエンコード(呼出())を表示。\n"
+  },
+  {
+    "id": "return-builtin-command-args-issue297",
+    "source": "●呼出とは\n2を合計で戻る。\nここまで\nJSONエンコード(呼出())を表示。\n"
+  },
+  {
+    "id": "return-local-function-args-issue297",
+    "source": "●(Xを)倍算とは\nX*2で戻る\nここまで\n●呼出とは\n3を倍算で戻る。\nここまで\nJSONエンコード(呼出())を表示。\n"
+  },
+  {
+    "id": "capture-varlist-constant-before-import-short-comment-issue297",
+    "files": {
+      "capture-const-short.nako3": "定数[A,B]=[4,5]\n"
+    },
+    "source": "●呼出とは\nA=0\nF=関数()\nA=8\nここまで\n!「./capture-const-short.nako3」を取り込む。\nF()\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n"
+  },
+  {
+    "id": "capture-varlist-constant-before-import-long-comment-issue297",
+    "files": {
+      "capture-const-long.nako3": "# xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n定数[A,B]=[4,5]\n"
+    },
+    "source": "●呼出とは\nA=0\nF=関数()\nA=8\nここまで\n!「./capture-const-long.nako3」を取り込む。\nF()\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n"
+  },
+  {
+    "id": "capture-varlist-constant-after-import-short-comment-issue297",
+    "files": {
+      "capture-const-short-after.nako3": "定数[A,B]=[4,5]\n"
+    },
+    "source": "●呼出とは\nA=0\n!「./capture-const-short-after.nako3」を取り込む。\nF=関数()\nA=8\nここまで\nF()\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n",
+    "expectedDiagnostic": {
+      "code": "assign_to_constant",
+      "line": 5
+    }
+  },
+  {
+    "id": "capture-varlist-constant-after-import-long-comment-issue297",
+    "files": {
+      "capture-const-long-after.nako3": "# xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n定数[A,B]=[4,5]\n"
+    },
+    "source": "●呼出とは\nA=0\n!「./capture-const-long-after.nako3」を取り込む。\nF=関数()\nA=8\nここまで\nF()\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n",
+    "expectedDiagnostic": {
+      "code": "assign_to_constant",
+      "line": 5
+    }
+  },
+  {
+    "id": "capture-varlist-constant-independent-scope-same-name-issue297",
+    "files": {
+      "capture-const-other-scope.nako3": "A=9\n"
+    },
+    "source": "●定数側とは\n定数[A,B]=[4,5]\n[A,B]で戻る\nここまで\n●書込側とは\n!「./capture-const-other-scope.nako3」を取り込む。\nAで戻る\nここまで\nJSONエンコード(定数側())を表示。\n書込側()を表示。\n"
+  },
+  {
+    "id": "range-without-matching-particles-keeps-outer-argument",
+    "source": "●(XとYを)確認とは\n  JSONエンコード([X,Y])を表示\nここまで\nそれ=2\n「外」と範囲を確認\n"
+  },
+  {
+    "id": "range-name-shadowed-by-function",
+    "source": "●(XからYを)範囲とは\n  Xで戻る\nここまで\n2から3を範囲を表示\nJSONエンコード(2から3を範囲)を表示\n"
+  },
+  {
+    "id": "range-name-shadowed-by-imported-function",
+    "source": "!「./override.nako3」を取り込む\n2から3を範囲を表示\n",
+    "files": {
+      "override.nako3": "●(XからYを)範囲とは\n  Xで戻る\nここまで\n"
+    }
+  },
+  {
+    "id": "destructured-constant-initializer-captures-mutable-binding",
+    "source": "●確認とは\n  A=0\n  定数[A,B]=実行(関数()\n    A=8\n    [A,5]で戻る\n  ここまで)\n  Aを表示\nここまで\n確認\n"
+  },
+  {
+    "id": "destructured-constant-captured-after-initializer",
+    "source": "●確認とは\n  A=0\n  定数[A,B]=[4,5]\n  F=関数()\n    A=8\n  ここまで\n  F()\nここまで\n確認\n",
+    "expectedDiagnostic": {
+      "code": "assign_to_constant",
+      "line": 5
+    }
+  },
+  {
+    "id": "loops-before-destructured-constant",
+    "source": "A=0\nAを1から2まで繰り返す\n  Aを表示\nここまで\nAで[3,4]を反復\n  Aを表示\nここまで\n定数[A,B]=[4,5]\nAを表示\n"
+  },
+  {
+    "id": "for-rejects-destructured-constant-target",
+    "source": "A=0\n定数[A,B]=[4,5]\nAを1から2まで繰り返す\n  Aを表示\nここまで\n",
+    "expectedDiagnostic": {
+      "code": "assign_to_constant",
+      "line": 3
+    }
+  },
+  {
+    "id": "foreach-rejects-destructured-constant-target",
+    "source": "A=0\n定数[A,B]=[4,5]\nAで[1,2]を反復\n  Aを表示\nここまで\n",
+    "expectedDiagnostic": {
+      "code": "assign_to_constant",
+      "line": 3
+    }
   }
 ]

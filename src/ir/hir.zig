@@ -2,7 +2,6 @@ const std = @import("std");
 const ast = @import("../frontend/ast.zig");
 const semantic = @import("../semantic/analyzer.zig");
 const argument_completion = @import("../semantic/argument_completion.zig");
-const builtin_catalog = @import("../semantic/builtin_catalog.zig");
 const builtin_josi = @import("../semantic/builtin_josi.zig");
 
 pub const NodeId = u32;
@@ -361,7 +360,7 @@ const Lowerer = struct {
             .null_value => .null_value,
             .string => .string,
             .string_template => .string_template,
-            .word => if (implicit_function != null) .call else if (self.bindingIsBuiltinCommand(node)) (if (std.mem.eql(u8, node.value, "エラー発生")) .throw_statement else .call) else if (self.bindingIsLocal(node)) .load_local else .load_global,
+            .word => if (implicit_function != null) .call else if (self.bindingIsBuiltinCommand(node)) (if (std.mem.eql(u8, node.value, "エラー発生")) .throw_statement else .call) else if (self.pendingDynamicCall(node)) .call else if (self.bindingIsLocal(node)) .load_local else .load_global,
             .assignment, .variable_definition => if (self.bindingIsLocal(node)) .store_local else .store_global,
             .variable_list_definition => .destructure_store,
             .array_assignment => .array_set,
@@ -478,10 +477,23 @@ const Lowerer = struct {
     }
 
     /// 組み込み命令へ束縛された`.word`ノードを暗黙呼出しにするか判定する。
-    /// 「それ」「対象」など組み込み名の変数はarity表に無いため呼出しへ変換しない。
+    /// 「それ」「対象」など組み込み名の変数は命令表に無いため呼出しへ変換しない。
     fn bindingIsBuiltinCommand(self: Lowerer, node: *ast.Node) bool {
         if (!self.bindingIsBuiltin(node)) return false;
-        return builtin_catalog.findArity(node.value) != null;
+        return semantic.builtinIsCallable(node.value);
+    }
+
+    /// 実引数を伴う戻り値候補がESM/native pluginの動的命令へ束縛されたとき、
+    /// 値を読む`.word`ではなく通常の動的呼出しとしてloweringする。
+    /// 静的に抽出した完全一致aliasだけが対象で、実引数のない値参照や
+    /// 暗黙の『それ』だけの連文は従来どおり値として扱う。
+    fn pendingDynamicCall(self: *Lowerer, node: *ast.Node) bool {
+        if (node.kind != .word or !node.pending_return_arguments) return false;
+        if (!self.bindingIsDynamicBuiltin(node)) return false;
+        for (node.children) |child| {
+            if (!child.is_implicit_it) return true;
+        }
+        return false;
     }
 
     fn implicitFunction(self: *Lowerer, node: *ast.Node) ?semantic.Symbol {
@@ -736,6 +748,37 @@ test "複数引数の裸関数呼出しを「それ」で補完する" {
     try std.testing.expect(found);
 }
 
+test "連文の明示『それ』は暗黙補完のマーカーと重複しない" {
+    const parser = @import("../frontend/parser.zig");
+    const source = "3と5を足して、それに6を足して表示。\n";
+    var parsed = try parser.parse(std.testing.allocator, source, "explicit-sore-chain.nako3");
+    defer parsed.deinit();
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "explicit-sore-chain.nako3");
+    defer analyzed.deinit();
+    try std.testing.expect(analyzed.succeeded());
+    var program = try lowerSingle(std.testing.allocator, parsed.root.?, "explicit-sore-chain", "explicit-sore-chain.nako3", analyzed);
+    defer program.deinit();
+    var add_calls: usize = 0;
+    for (program.nodes) |node| {
+        if (node.kind != .call or !std.mem.eql(u8, node.name, "足")) continue;
+        add_calls += 1;
+        if (add_calls == 1) {
+            try std.testing.expectEqual(@as(usize, 2), node.children.len);
+            try std.testing.expectEqualStrings("3", program.node(node.children[0]).text);
+            try std.testing.expectEqualStrings("5", program.node(node.children[1]).text);
+            continue;
+        }
+        // 2回目は明示の『それに』と『6を』の2引数だけになり、連文マーカーを
+        // 位置引数として先頭へ渡さない（公式と同じ 8+6）。
+        try std.testing.expectEqual(@as(usize, 2), node.children.len);
+        const first = program.node(node.children[0]);
+        try std.testing.expectEqual(Kind.load_global, first.kind);
+        try std.testing.expectEqualStrings("それ", first.name);
+        try std.testing.expectEqualStrings("6", program.node(node.children[1]).text);
+    }
+    try std.testing.expectEqual(@as(usize, 2), add_calls);
+}
+
 test "値位置の組み込み命令語を「それ」補完付きの暗黙呼出しへ下げる" {
     const parser = @import("../frontend/parser.zig");
     const source = "それは「  abc  」\n空白除去して表示\n";
@@ -799,6 +842,37 @@ test "裸の「エラー発生」語をthrow_statementへ下げる" {
         found = true;
     }
     try std.testing.expect(found);
+}
+
+test "戻り値に使う低レイヤー命令の実引数と組み込み値の読み出しを保つ" {
+    const parser = @import("../frontend/parser.zig");
+    const source =
+        "●確認とは\n「truncate」を低レイヤー機能対応判定で戻る\nここまで\n" ++
+        "●改行確認とは\n改行で戻る\nここまで\n";
+    var parsed = try parser.parse(std.testing.allocator, source, "main.nako3");
+    defer parsed.deinit();
+    try std.testing.expect(parsed.succeeded());
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "main.nako3");
+    defer analyzed.deinit();
+    try std.testing.expect(analyzed.succeeded());
+    var program = try lowerSingle(std.testing.allocator, parsed.root.?, "main", "main.nako3", analyzed);
+    defer program.deinit();
+    var saw_call = false;
+    var saw_value = false;
+    for (program.nodes) |node| {
+        if (std.mem.eql(u8, node.name, "低レイヤー機能対応判定")) {
+            try std.testing.expectEqual(Kind.call, node.kind);
+            try std.testing.expect(node.is_builtin_call);
+            try std.testing.expectEqual(@as(usize, 1), node.children.len);
+            try std.testing.expectEqualStrings("truncate", program.nodes[node.children[0]].text);
+            saw_call = true;
+        } else if (std.mem.eql(u8, node.name, "改行")) {
+            try std.testing.expectEqual(Kind.load_global, node.kind);
+            try std.testing.expect(!node.is_builtin_call);
+            saw_value = true;
+        }
+    }
+    try std.testing.expect(saw_call and saw_value);
 }
 
 test "組み込み名の変数は暗黙呼出しへ変換しない" {

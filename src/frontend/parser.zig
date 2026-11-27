@@ -11,13 +11,13 @@ const Kind = token_mod.Kind;
 
 pub const helpers = @import("parser/helpers.zig");
 pub const builder = @import("parser/builder.zig");
+const conditions = @import("parser/conditions.zig");
 const declarations = @import("parser/declarations.zig");
 const loops = @import("parser/loops.zig");
 pub const expressions = @import("parser/expressions.zig");
 pub const commands = @import("parser/commands.zig");
 
 const isConditionalJosi = helpers.isConditionalJosi;
-const isNegativeConditionJosi = helpers.isNegativeConditionJosi;
 const isSequenceJosi = helpers.isSequenceJosi;
 const isTargetJosi = helpers.isTargetJosi;
 const isValueJosi = helpers.isValueJosi;
@@ -28,7 +28,6 @@ const canStartExpression = helpers.canStartExpression;
 const tokenStem = helpers.tokenStem;
 const isIncrementTargetPath = helpers.isIncrementTargetPath;
 const emptyToken = helpers.emptyToken;
-const clearConditionalJosi = helpers.clearConditionalJosi;
 
 pub const Error = lexer.Error || syntax_transform.Error || std.mem.Allocator.Error;
 
@@ -59,6 +58,8 @@ pub const ParseOptions = struct {
     /// （`大文字変換を表示` = `表示(大文字変換(それ))`）。既定は生成済みの
     /// 一覧（`builtin_commands.function_names`）で、空を渡すと連鎖解決しない。
     builtin_commands: []const []const u8 = &builtin_commands.function_names,
+    /// 取り込みを含むモジュールグラフで公開された同名関数がある。
+    has_exported_range_function: bool = false,
 };
 
 /// 式・命令の再帰下降の入れ子の上限。公式も極端に深い入れ子を文法エラー
@@ -130,6 +131,7 @@ pub fn parseWithMode(backing_allocator: std.mem.Allocator, source: []const u8, f
         .own_mode = orMode(options.initial orelse .{}, options.forced),
         .tail_modes = options.tail_modes,
         .builtin_commands = options.builtin_commands,
+        .has_exported_range_function = options.has_exported_range_function,
         .user_functions = try helpers.collectUserFunctionNames(allocator, stream.tokens),
     };
     var root = parser.parseProgram() catch |err| switch (err) {
@@ -193,6 +195,8 @@ pub const Parser = struct {
     /// 公式はユーザー定義関数も`func token`にするため、助詞付きの単独語を
     /// 命令呼出しとして解決できるようにする。
     user_functions: []const []const u8 = &.{},
+    has_exported_range_function: bool = false,
+    range_parameter_visible: bool = false,
     tail_cursor: usize = 0,
     import_modes: std.ArrayList(ImportMode) = .empty,
     index: usize = 0,
@@ -446,153 +450,12 @@ pub const Parser = struct {
                 std.mem.eql(u8, token.value, "パフォーマンスモニタ適用")));
     }
 
-    /// 公式`yIFCond`相当の条件式解析。`もし`以降の条件を、演算子比較式・
-    /// C風呼出しに加えて、助詞`が`の比較形（`AがBならば`＝`A=B`）と
-    /// 助詞付きの命令呼出し（`Aが3以下ならば`＝`以下(A,3)`）でも受理する。
-    /// 公式のトークン列では「ならば」「でなければ」が独立トークンになるが、
-    /// lnakoの字句解析は直前の語へ助詞として付けるため、ここで吸収する。
-    pub fn parseIfCondition(self: *Parser) ParseFailure!*ast.Node {
-        const first = try expressions.parseExpression(self, 0);
-        if (isConditionalJosi(first.josi)) return self.finishCondition(first);
-        if (self.identifierValue("ならば")) {
-            _ = self.advance();
-            try clearConditionalJosi(self.allocator, first);
-            return first;
-        }
-        // チェック: `AがBならば` --- 「A = B」のとき。公式`yIFCond`は一度
-        // 二番目の値を読み、条件助詞が付かなければ位置を戻して呼出し解決へ進む。
-        if (std.mem.eql(u8, first.josi, "が")) {
-            const saved = self.index;
-            const second = try expressions.parseExpression(self, 0);
-            if (isConditionalJosi(second.josi)) {
-                const result = try builder.makeNodeWithChildren(self, .binary_operator, self.peekPrevious(), try builder.copyChildren(self, &.{ first, second }));
-                result.operator = if (isNegativeConditionJosi(second.josi)) "noteq" else "eq";
-                result.josi = "";
-                result.raw_josi = "";
-                return result;
-            }
-            self.index = saved;
-        }
-        // チェック: `AがBならば` --- 「関数B(A)」のとき
-        const result = try self.parseJosiCallExpression(first);
-        if (isConditionalJosi(result.josi)) return self.finishCondition(result);
-        if (self.identifierValue("ならば")) {
-            _ = self.advance();
-            try clearConditionalJosi(self.allocator, result);
-            return result;
-        }
-        return self.fail(.invalid_control_statement, "『もし』文の条件末尾に『ならば』が必要です", self.peek());
-    }
-
-    /// 公式parserは「Aでなければ」を条件式Aの否定ノードとして保持する。
-    /// DNCLの「Aでないならば」はsyntax_transformで同じ助詞へ正規化されるため、
-    /// 条件式のjosiを消す前にnotへ包む必要がある。公式の字句解析は
-    /// 「でなければ」「しなければ」「なければ」をすべて否定の条件助詞にする。
-    fn finishCondition(self: *Parser, condition: *ast.Node) ParseFailure!*ast.Node {
-        var result = condition;
-        if (isNegativeConditionJosi(result.josi)) {
-            result = try builder.unary(self, "not", result, self.peekPrevious());
-        }
-        try clearConditionalJosi(self.allocator, result);
-        return result;
-    }
-
-    /// 公式`yCall`相当の助詞シーケンス収集。先頭の値`first`に続けて助詞付きの
-    /// 値と既知命令名を読み、命令名の手前までに集まった値をその命令の引数として
-    /// 呼出し式を組み立てる（`Aが3以下`＝`以下(A,3)`、
-    /// `Dに"a"が辞書キー存在`＝`辞書キー存在(D,"a")`）。
-    /// 命令の助詞が無い、または連文助詞の場合はそこで呼出しが確定する
-    /// （公式`yCallFunc`の言い切り相当）。
-    /// カンマは公式`yValue`の読み飛ばしと同じく透過的に扱う。
-    /// 戻り値は解決後に残ったノード列で、`first`を先頭に含む。
-    pub fn collectJosiSequence(self: *Parser, first: *ast.Node) ParseFailure![]*ast.Node {
-        var stack: std.ArrayList(*ast.Node) = .empty;
-        try stack.append(self.allocator, first);
-        while (true) {
-            if (self.at(.identifier) and self.isKnownCommandName(self.peek().value)) {
-                const command = self.advance();
-                const call = try self.makeCommandCall(command, try stack.toOwnedSlice(self.allocator));
-                stack = .empty;
-                try stack.append(self.allocator, call);
-                // 言い切り・連文の助詞はそこで一度切る（公式`yCallFunc`）。
-                // ただし直後に演算子が続くなら、公式`yCall`は呼出し結果へ
-                // `yGetArgOperator`を適用してシーケンスを続ける
-                // （`Aの要素数+Bの要素数`の後半`要素数`は演算式全体を引数に取る）。
-                if (command.josi.len == 0 or isSequenceJosi(command.josi)) {
-                    if (helpers.operatorInfo(self.peek().kind) == null) break;
-                    stack.items[stack.items.len - 1] = try expressions.parseOperatorTail(self, call, 0);
-                }
-                continue;
-            }
-            if (self.at(.comma)) {
-                _ = self.advance();
-                continue;
-            }
-            if (!canStartExpression(self.peek().kind)) break;
-            try stack.append(self.allocator, try expressions.parseExpression(self, 0));
-        }
-        return stack.toOwnedSlice(self.allocator);
-    }
-
-    /// 公式`yCall`相当の式解析。`collectJosiSequence`の収集結果が単一の値に
-    /// 解決されるときだけ受理し、残った値があれば文法エラーにする。
-    pub fn parseJosiCallExpression(self: *Parser, first: *ast.Node) ParseFailure!*ast.Node {
-        const stack = try self.collectJosiSequence(first);
-        if (stack.len == 1) return stack[0];
-        return self.fail(.unexpected_token, "命令呼び出しを構成できません", self.peek());
-    }
-
-    pub fn parseIf(self: *Parser) ParseFailure!*ast.Node {
-        const start = self.advance();
-        self.skipCommas();
-        const condition = try self.parseIfCondition();
-        return self.parseIfThen(start, condition);
-    }
-
-    /// 公式`yIfThen`相当。条件式を受けて真節・偽節を解析する。公式は「もし」を
-    /// 伴わない条件文（`Aが5と等しいならば`）も同じ`yIfThen`へ入る。
-    pub fn parseIfThen(self: *Parser, start: Token, condition: *ast.Node) ParseFailure!*ast.Node {
-        var multiline = false;
-        var true_block: *ast.Node = undefined;
-        if (self.at(.eol)) {
-            multiline = true;
-            self.skipEols();
-            true_block = try self.parseBlock(.{ .end = true, .else_branch = true });
-        } else {
-            true_block = try builder.wrapSingle(self, try self.parseStatement());
-            // 公式`yIfThen`は真節のあとの改行を読み飛ばしてから『違えば』を
-            // 調べる。lnakoのASTは改行を保持するため、直後に『違えば』がある
-            // 場合だけ読み飛ばし、単文の真節でも偽節を繋げられるようにする
-            // （`もし、A=1ならば、「OK」と表示。` の次行の `違えば、…`）。
-            const after_true = self.index;
-            self.skipEols();
-            if (!self.at(.keyword_else)) self.index = after_true;
-        }
-
-        var false_block = try builder.emptyBlock(self, self.peek());
-        if (self.at(.keyword_else)) {
-            _ = self.advance();
-            self.skipCommas();
-            if (self.at(.eol)) {
-                self.skipEols();
-                false_block = try self.parseBlock(.{ .end = true });
-            } else {
-                // 公式parserは、複数行の真節でも違えば節が同じ行から
-                // 始まる場合を「短文」として扱い、外側のここまでを要求しない。
-                // これにより「そうでなくもし」を、内側のもし文だけが
-                // インライン分岐として閉じる公式のASTに合わせる。
-                multiline = false;
-                false_block = try builder.wrapSingle(self, try self.parseStatement());
-            }
-        }
-        if (multiline) try self.requireEnd("『もし』文");
-        const result = try builder.makeNodeWithChildren(self, .if_statement, start, try builder.copyChildren(self, &.{ condition, true_block, false_block }));
-        // 公式`yIfThen`の`if`ノードは助詞を持たない。「もし」省略形では開始
-        // トークンが条件式の先頭語（`Aが…`）になるため、助詞を落とす。
-        result.josi = "";
-        result.raw_josi = "";
-        return result;
-    }
+    pub const parseIfCondition = conditions.parseIfCondition;
+    const finishCondition = conditions.finishCondition;
+    pub const collectJosiSequence = commands.collectJosiSequence;
+    pub const parseJosiCallExpression = commands.parseJosiCallExpression;
+    pub const parseIf = conditions.parseIf;
+    pub const parseIfThen = conditions.parseIfThen;
 
     pub fn parsePostTestLoop(self: *Parser) ParseFailure!*ast.Node {
         const start = self.advance();
@@ -645,6 +508,11 @@ pub const Parser = struct {
             return self.fail(.invalid_function_definition, "関数名の後ろには『とは』が必要です", name_token);
         }
 
+        // 名前付き関数の本体は外側の仮引数を捕捉しない。
+        const saved_range_parameter = self.range_parameter_visible;
+        self.range_parameter_visible = helpers.hasRangeParameter(arguments);
+        defer self.range_parameter_visible = saved_range_parameter;
+
         const body = if (self.at(.eol) or self.at(.keyword_here_from)) blk: {
             if (self.at(.keyword_here_from)) _ = self.advance();
             self.skipEols();
@@ -662,16 +530,55 @@ pub const Parser = struct {
 
     pub fn parseArguments(self: *Parser) ParseFailure![]ast.Argument {
         _ = try self.require(.left_paren, "引数を始める『(』が必要です");
+        // 公式の字句後処理`preDefineFunc`は`|`・カンマ・空白で区切られた
+        // 仮引数名の出現をすべて集め、名前ごとに助詞候補をまとめたうえで
+        // 初出順の1引数として登録する。`(Aに|Bを|Aへ)`はAの候補[に,へ]と
+        // Bの候補[を]になり、Aが2スロットにはならない。
+        //
+        // 候補は名前ごとの可変長リストへ積み、最後に1回だけ`|`区切りへ
+        // 連結する。以前のように候補を追加するたびに累積文字列全体を
+        // コピーすると、同じ名前の候補n個でO(n^2)の領域と時間を要する。
         var arguments: std.ArrayList(ast.Argument) = .empty;
+        var candidates: std.ArrayList(std.ArrayList([]const u8)) = .empty;
+        var slot_by_name: std.StringHashMapUnmanaged(usize) = .empty;
+        // `arguments`と候補の内容は呼出し元のarenaへ残す。エラー時は
+        // 呼出し元がarenaごと破棄するため、ここでは途中結果を解放しない。
+        errdefer slot_by_name.deinit(self.allocator);
         while (!self.at(.right_paren) and !self.at(.eof)) {
-            if (self.at(.comma)) {
+            if (self.at(.comma) or self.at(.pipe)) {
                 _ = self.advance();
                 continue;
             }
             const token = try self.require(.identifier, "引数名が必要です");
-            try arguments.append(self.allocator, .{ .name = token.value, .josi = token.josi, .span = token.span });
+            const slot = slot_by_name.get(token.value) orelse blk: {
+                const index = arguments.items.len;
+                try slot_by_name.put(self.allocator, token.value, index);
+                try arguments.append(self.allocator, .{ .name = token.value, .josi = "", .span = token.span });
+                try candidates.append(self.allocator, .empty);
+                break :blk index;
+            };
+            try candidates.items[slot].append(self.allocator, token.josi);
         }
         _ = try self.require(.right_paren, "引数定義を閉じる『)』が必要です");
+        for (arguments.items, 0..) |*argument, slot| {
+            const choices = &candidates.items[slot];
+            var length: usize = if (choices.items.len > 0) choices.items.len - 1 else 0;
+            for (choices.items) |choice| length += choice.len;
+            const josi = try self.allocator.alloc(u8, length);
+            var offset: usize = 0;
+            for (choices.items, 0..) |choice, index| {
+                if (index > 0) {
+                    josi[offset] = '|';
+                    offset += 1;
+                }
+                @memcpy(josi[offset..][0..choice.len], choice);
+                offset += choice.len;
+            }
+            argument.josi = josi;
+            choices.deinit(self.allocator);
+        }
+        slot_by_name.deinit(self.allocator);
+        candidates.deinit(self.allocator);
         return arguments.toOwnedSlice(self.allocator);
     }
 
@@ -1146,6 +1053,7 @@ pub const Parser = struct {
     pub const isBuiltinCommandName = commands.isBuiltinCommandName;
     pub const isKnownCommandName = commands.isKnownCommandName;
     pub const isChainedBuiltinCommand = commands.isChainedBuiltinCommand;
+    pub const rangeCallParts = commands.rangeCallParts;
     pub const callChainedBuiltinCommand = commands.callChainedBuiltinCommand;
     pub const makeCommandCall = commands.makeCommandCall;
     pub const parseImplicitCallbackCall = commands.parseImplicitCallbackCall;
@@ -1170,45 +1078,7 @@ pub const Parser = struct {
         return result;
     }
 
-    pub fn parseSwitch(self: *Parser, start: Token, condition: *ast.Node) ParseFailure!*ast.Node {
-        self.skipEols();
-        var default_block = try builder.emptyBlock(self, start);
-        var cases: std.ArrayList(*ast.Node) = .empty;
-        var default_done = false;
-        while (!self.at(.keyword_here_end) and !self.at(.eof)) {
-            if (self.at(.keyword_else)) {
-                _ = self.advance();
-                self.skipCommas();
-                default_block = try self.parseBlock(.{ .end = true });
-                // 公式`ySwitch`は『違えば』とペアの『ここまで』を消費し、続けて
-                // 『条件分岐』本体の『ここまで』も消費する。節を同じ行で閉じる形
-                // （`違えば、…。ここまで。`）と、本体の終端を1つだけ書く形の
-                // 両方を受理し、本体の終端を二重に要求しない。
-                if (self.at(.keyword_here_end)) _ = self.advance();
-                self.skipEols();
-                if (self.at(.keyword_here_end)) _ = self.advance();
-                default_done = true;
-                break;
-            }
-            const case_value = try expressions.parseExpression(self, 0);
-            if (!isConditionalJosi(case_value.josi)) return self.fail(.invalid_control_statement, "条件分岐の値に『ならば』が必要です", self.peekPrevious());
-            try clearConditionalJosi(self.allocator, case_value);
-            self.skipEols();
-            const case_body = try self.parseBlock(.{ .end = true });
-            try self.requireEnd("『条件分岐』の節");
-            try cases.append(self.allocator, case_value);
-            try cases.append(self.allocator, case_body);
-            self.skipEols();
-        }
-        if (!default_done) try self.requireEnd("『条件分岐』文");
-        var children: std.ArrayList(*ast.Node) = .empty;
-        try children.append(self.allocator, condition);
-        try children.append(self.allocator, default_block);
-        try children.appendSlice(self.allocator, cases.items);
-        const result = try builder.makeNodeWithChildren(self, .switch_statement, start, try children.toOwnedSlice(self.allocator));
-        result.josi = "";
-        return result;
-    }
+    pub const parseSwitch = conditions.parseSwitch;
 
     pub fn parseCallExpression(self: *Parser) ParseFailure!*ast.Node {
         if (self.at(.def_func)) return self.parseAnonymousFunction();
@@ -1277,6 +1147,9 @@ pub const Parser = struct {
     pub fn parseAnonymousFunction(self: *Parser) ParseFailure!*ast.Node {
         const start = self.advance();
         const arguments: []ast.Argument = if (self.at(.left_paren)) try self.parseArguments() else &.{};
+        const saved_range_parameter = self.range_parameter_visible;
+        self.range_parameter_visible = saved_range_parameter or helpers.hasRangeParameter(arguments);
+        defer self.range_parameter_visible = saved_range_parameter;
         if (self.at(.eol)) self.skipEols();
         const body = try self.parseBlock(.{ .end = true });
         try self.requireEnd("無名関数");

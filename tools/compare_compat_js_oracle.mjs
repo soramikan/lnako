@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -157,6 +157,149 @@ try {
   if (invalidEmit.status !== 2 || invalidEmit.error != null || !(invalidEmit.stderr ?? "").includes("--emit exeだけ")) {
     failures += 1;
     console.error(`QuickJS互換の不正emitを拒否しませんでした: ${JSON.stringify(normalize(invalidEmit))}`);
+  }
+
+  // ESM pluginの戻り値候補（`3を外部倍算で戻る`）は、既存のpackage動的
+  // 呼出し経路を通る。公式・Interpreter・AOTを同じ一時packageで比較し、
+  // 助詞付き候補が6を返すことを固定する。fixture件数契約は増やさない。
+  {
+    const pkgRoot = join(temporary, "esm-return-package");
+    const ownedRoot = join(pkgRoot, "packages", "owned");
+    await mkdir(ownedRoot, { recursive: true });
+    await writeFile(
+      join(pkgRoot, "nako.toml"),
+      [
+        "[package]",
+        'name = "esm-return-host"',
+        'version = "0.1.0"',
+        'license = "MIT"',
+        "",
+        "[profiles.compat]",
+        'runtime = "lnako"',
+        'os = "linux"',
+        'cpu = "x86_64"',
+        'abi = "gnu"',
+        "compat-js = true",
+        "",
+        "[dependencies.path]",
+        'owned = { path = "packages/owned" }',
+        "",
+      ].join("\n"),
+    );
+    await writeFile(
+      join(ownedRoot, "nako.toml"),
+      [
+        "[package]",
+        'name = "owned"',
+        'version = "1.0.0"',
+        'license = "MIT"',
+        "",
+        "[[exports]]",
+        'name = "main"',
+        'path = "main.nako3"',
+        "",
+      ].join("\n"),
+    );
+    await writeFile(
+      join(ownedRoot, "plugin.mjs"),
+      'export default { 外部倍算: { type: "func", josi: [["を"]], fn: (value) => Number(value) * 2 }, 外部命令: { type: "func", josi: [["を"]], fn: (...args) => args.length, isVariableJosi: Boolean(0) } };\n',
+    );
+    await writeFile(
+      join(ownedRoot, "main.nako3"),
+      "!「./plugin.mjs」を取り込む。\n●試験とは\n3を外部倍算で戻る。\nここまで\n●連文とは\n「x」と表示して3を外部命令で戻る。\nここまで\n",
+    );
+    await writeFile(join(ownedRoot, "oracle.nako3"), "!「./plugin.mjs」を取り込む。\n●試験とは\n3を外部倍算で戻る。\nここまで\n試験()を表示。\n");
+    await writeFile(join(pkgRoot, "main.nako3"), "!「pkg:owned」を取り込む。\nowned__試験()を表示。\nowned__連文()を表示。\n");
+
+    const packageOptions = { ...options, cwd: pkgRoot };
+    const officialCandidate = spawnSync(process.execPath, [officialCli, join(ownedRoot, "oracle.nako3")], {
+      ...options,
+      cwd: ownedRoot,
+    });
+    const interpreterCandidate = spawnSync(
+      executable,
+      ["run", "main.nako3", "--compat-js", "--profile", "compat", "--offline"],
+      packageOptions,
+    );
+    const generatedCandidate = join(pkgRoot, `native${executableSuffix}`);
+    const buildCandidate = spawnSync(
+      executable,
+      ["build", "main.nako3", "-o", generatedCandidate, "--compat-js", "--profile", "compat", "--offline", "--backend", "aot"],
+      packageOptions,
+    );
+    const aotCandidate = buildCandidate.status === 0 ? spawnSync(generatedCandidate, [], packageOptions) : buildCandidate;
+    if (
+      officialCandidate.status !== 0 ||
+      officialCandidate.stdout !== "6\n" ||
+      interpreterCandidate.status !== 0 ||
+      interpreterCandidate.stdout !== "6\nx\n3\n" ||
+      buildCandidate.status !== 0 ||
+      aotCandidate.status !== 0 ||
+      aotCandidate.stdout !== "6\nx\n3\n"
+    ) {
+      failures += 1;
+      console.error(
+        `ESM戻り値候補のpackage回帰差分:\nofficial=${JSON.stringify(normalize(officialCandidate), null, 2)}\n` +
+          `interpreter=${JSON.stringify(normalize(interpreterCandidate), null, 2)}\n` +
+          `build=${JSON.stringify(normalize(buildCandidate), null, 2)}\n` +
+          `aot=${JSON.stringify(normalize(aotCandidate), null, 2)}`,
+      );
+    }
+  }
+
+  // 直接取り込んだ ESM plugin も、取り込み位置以降の戻り値候補を既存の
+  // 動的命令call経路で実行する。package を介さない同じ構成で、公式・
+  // Interpreter・既存 embedded 実行ファイルが6を返すことを固定する。
+  // 直接取り込みの LLVM AOT は起点から `opcode=call` の未対応診断のまま
+  // 据え置き、追加実装しない。
+  {
+    const directRoot = join(temporary, "esm-return-direct");
+    await mkdir(directRoot, { recursive: true });
+    await writeFile(
+      join(directRoot, "plugin.mjs"),
+      'export default { 外部倍算: { type: "func", josi: [["を"]], fn: (value) => Number(value) * 2 } };\n',
+    );
+    const directSource =
+      "!「./plugin.mjs」を取り込む。\n●試験とは\n3を外部倍算で戻る。\nここまで\n試験()を表示。\n";
+    await writeFile(join(directRoot, "main.nako3"), directSource);
+    await writeFile(join(directRoot, "oracle.nako3"), directSource);
+
+    const directOptions = { ...options, cwd: directRoot };
+    const officialDirect = spawnSync(process.execPath, [officialCli, "oracle.nako3"], directOptions);
+    const interpreterDirect = spawnSync(executable, ["run", "main.nako3", "--compat-js"], directOptions);
+    const generatedDirect = join(directRoot, `embedded${executableSuffix}`);
+    const buildDirect = spawnSync(
+      executable,
+      ["build", "main.nako3", "-o", generatedDirect, "--compat-js", "--backend", "embedded"],
+      directOptions,
+    );
+    const embeddedDirect = buildDirect.status === 0 ? spawnSync(generatedDirect, [], directOptions) : buildDirect;
+    const generatedDirectAot = join(directRoot, `native${executableSuffix}`);
+    const buildDirectAot = spawnSync(
+      executable,
+      ["build", "main.nako3", "-o", generatedDirectAot, "--compat-js", "--backend", "aot", "-O0"],
+      directOptions,
+    );
+    if (
+      officialDirect.status !== 0 ||
+      officialDirect.stdout !== "6\n" ||
+      interpreterDirect.status !== 0 ||
+      interpreterDirect.stdout !== "6\n" ||
+      buildDirect.status !== 0 ||
+      embeddedDirect.status !== 0 ||
+      embeddedDirect.stdout !== "6\n" ||
+      buildDirectAot.status === 0 ||
+      !(buildDirectAot.stderr ?? "").includes("UnsupportedInstruction")
+    ) {
+      failures += 1;
+      console.error(
+        `ESM戻り値候補の直接取り込み回帰差分:\nofficial=${JSON.stringify(normalize(officialDirect), null, 2)}\n` +
+          `interpreter=${JSON.stringify(normalize(interpreterDirect), null, 2)}\n` +
+          `embeddedBuild=${JSON.stringify(normalize(buildDirect), null, 2)}\n` +
+          `embedded=${JSON.stringify(normalize(embeddedDirect), null, 2)}\n` +
+          `aotBuild=${JSON.stringify(normalize(buildDirectAot), null, 2)}`,
+      );
+    }
   }
 
   if (failures > 0) throw new Error(`QuickJS互換モードの公式差分が${failures}件あります`);

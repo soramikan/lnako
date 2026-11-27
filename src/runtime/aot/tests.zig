@@ -2368,6 +2368,41 @@ test "AOT文字長検索と要素数はUnicode scalarとUTF-16を区別する" {
     try std.testing.expectEqual(@as(f64, 2), @as(f64, @bitCast(roots[10].payload)));
 }
 
+test "AOT要素数はArrayBufferの添字とbyte viewのown propertyを区別する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    var roots = @as([12]Value, @splat(.{}));
+    var frame = RootFrame{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    roots[0] = try state.active_runtime.?.createBytes(&.{ 1, 2, 3 });
+    roots[1] = try state.active_runtime.?.createUint8Array(&.{ 4, 5, 6 });
+    roots[2] = try state.active_runtime.?.createArrayBuffer(&.{ 7, 8, 9 });
+    lnako_aot_builtin_call(&roots[3], @ptrCast(&roots[0]), 1, @backingInt(aot_builtin.Command.element_count));
+    lnako_aot_builtin_call(&roots[4], @ptrCast(&roots[1]), 1, @backingInt(aot_builtin.Command.element_count));
+    lnako_aot_builtin_call(&roots[5], @ptrCast(&roots[2]), 1, @backingInt(aot_builtin.Command.element_count));
+    try std.testing.expectEqual(@as(f64, 3), valueToNumber(roots[3]));
+    try std.testing.expectEqual(@as(f64, 3), valueToNumber(roots[4]));
+    try std.testing.expectEqual(@as(f64, 0), valueToNumber(roots[5]));
+
+    const custom_key = staticStringValue("x");
+    try state.active_runtime.?.setDictionary(&roots[0].object().?.array_properties, custom_key, numberValue(7));
+    try state.active_runtime.?.setDictionary(&roots[1].object().?.array_properties, custom_key, numberValue(7));
+    try state.active_runtime.?.setDictionary(&roots[2].object().?.array_properties, custom_key, numberValue(7));
+    lnako_aot_builtin_call(&roots[6], @ptrCast(&roots[0]), 1, @backingInt(aot_builtin.Command.element_count));
+    lnako_aot_builtin_call(&roots[7], @ptrCast(&roots[1]), 1, @backingInt(aot_builtin.Command.element_count));
+    lnako_aot_builtin_call(&roots[8], @ptrCast(&roots[2]), 1, @backingInt(aot_builtin.Command.element_count));
+    try std.testing.expectEqual(@as(f64, 4), valueToNumber(roots[6]));
+    try std.testing.expectEqual(@as(f64, 4), valueToNumber(roots[7]));
+    try std.testing.expectEqual(@as(f64, 1), valueToNumber(roots[8]));
+}
+
 test "AOT文字数専用ABIは文字列化・例外・ToPrimitive境界をgenericと揃える" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();

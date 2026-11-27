@@ -44,6 +44,14 @@ fn match(allocator: std.mem.Allocator, slots: []const Slot, arguments: []const *
     errdefer allocator.free(used);
     @memset(assigned, null);
     @memset(used, false);
+    // 連文が引数列へ挿入した暗黙の『それ』は、ユーザーが書いた実引数ではない。
+    // 公式`yCallFunc`もこのマーカーをスタックへ積まず、不足スロットだけを
+    // 変数「それ」で補完する。実引数として照合すると、明示の『それに』などが
+    // スロットへ埋まった後もマーカーが未使用として残り、補完計画全体が
+    // 破棄されて位置引数として二重に渡ってしまう。
+    for (arguments, 0..) |argument, index| {
+        if (isChainImplicitIt(argument)) used[index] = true;
+    }
     var variable_arguments: std.ArrayList(usize) = .empty;
     errdefer variable_arguments.deinit(allocator);
 
@@ -52,6 +60,7 @@ fn match(allocator: std.mem.Allocator, slots: []const Slot, arguments: []const *
         // 可変長の末尾スロットは公式と同じく最初に処理し、助詞が一致する引数を
         // 元の並びのまま全て取り出す。
         for (arguments, 0..) |argument, index| {
+            if (used[index]) continue;
             if (!matches(slots[slots.len - 1], argument.josi)) continue;
             used[index] = true;
             try variable_arguments.append(allocator, index);
@@ -139,6 +148,14 @@ fn matches(slot: Slot, josi: []const u8) bool {
     return false;
 }
 
+/// `implicitIt`が連文継続用に挿入した暗黙の『それ』マーカーか判定する。
+/// `is_implicit_it`は`には`コールバックの合成ノードにも立つため、
+/// `implicitIt`が作る助詞なしの`.word`「それ」に限定する。
+fn isChainImplicitIt(argument: *ast.Node) bool {
+    return argument.is_implicit_it and argument.kind == .word and
+        std.mem.eql(u8, argument.value, "それ") and argument.josi.len == 0;
+}
+
 /// 生成済みの助詞スロット表を`Slot`の並びへ展開する。
 pub fn builtinSlots(allocator: std.mem.Allocator, entry: builtin_josi.BuiltinJosi) ![]Slot {
     const slots = try allocator.alloc(Slot, entry.slot_starts.len);
@@ -150,11 +167,25 @@ pub fn builtinSlots(allocator: std.mem.Allocator, entry: builtin_josi.BuiltinJos
 }
 
 /// ユーザー定義関数の仮引数助詞（宣言順）を1スロット1助詞の定義へ変換する。
+/// `(Sが|Sの|Sを)`の助詞候補は`が|の|を`のように『|』区切りで保持される
+/// ため、1スロットの異表記リストへ分割する。
 pub fn parameterSlots(allocator: std.mem.Allocator, parameter_josi: []const []const u8) ![]Slot {
     const slots = try allocator.alloc(Slot, parameter_josi.len);
     for (parameter_josi, 0..) |josi, index| {
-        const alternatives = try allocator.alloc([]const u8, 1);
-        alternatives[0] = josi;
+        var count: usize = 1;
+        for (josi) |character| if (character == '|') {
+            count += 1;
+        };
+        const alternatives = try allocator.alloc([]const u8, count);
+        var start: usize = 0;
+        var position: usize = 0;
+        for (josi, 0..) |character, offset| {
+            if (character != '|') continue;
+            alternatives[position] = josi[start..offset];
+            position += 1;
+            start = offset + 1;
+        }
+        alternatives[position] = josi[start..];
         slots[index] = .{ .josi = alternatives };
     }
     return slots;
@@ -178,6 +209,49 @@ test "助詞が一致するスロットへ引数を割り当て不足分を「�
     try std.testing.expectEqual(Operand.implicit_it, result.operands[0]);
     try std.testing.expectEqual(@as(usize, 0), result.operands[1].provided);
     try std.testing.expectEqual(@as(usize, 1), result.operands[2].provided);
+}
+
+test "連文の暗黙マーカーを実引数に数えず明示の『それに』でスロットを埋める" {
+    // `3と5を足して、それに6を足して表示` の2回目の呼出し。
+    // 公式`yCallFunc`は連文が積んだ暗黙の『それ』ではなく、ユーザーが
+    // 書いた『それに』を第1スロットへ割り当てる。
+    var nodes = [_]ast.Node{
+        .{ .kind = .word, .value = "それ", .span = ast.emptySpan(), .end_span = ast.emptySpan(), .is_implicit_it = true },
+        .{ .kind = .word, .value = "それ", .span = ast.emptySpan(), .end_span = ast.emptySpan(), .josi = "に" },
+        .{ .kind = .number, .span = ast.emptySpan(), .end_span = ast.emptySpan(), .josi = "を" },
+    };
+    const arguments = [_]*ast.Node{ &nodes[0], &nodes[1], &nodes[2] };
+    const slots = [_]Slot{ .{ .josi = &.{ "に", "と" } }, .{ .josi = &.{"を"} } };
+    const result = (try plan(std.testing.allocator, &slots, &arguments, false)).?;
+    defer std.testing.allocator.free(result.operands);
+    try std.testing.expectEqual(@as(usize, 2), result.provided);
+    try std.testing.expectEqual(@as(usize, 0), result.missing);
+    try std.testing.expectEqual(@as(usize, 1), result.operands[0].provided);
+    try std.testing.expectEqual(@as(usize, 2), result.operands[1].provided);
+}
+
+test "連文の暗黙マーカーだけなら不足スロットを『それ』で補完する" {
+    var marker = ast.Node{ .kind = .word, .value = "それ", .span = ast.emptySpan(), .end_span = ast.emptySpan(), .is_implicit_it = true };
+    const arguments = [_]*ast.Node{&marker};
+    const slots = [_]Slot{ .{ .josi = &.{ "に", "と" } }, .{ .josi = &.{"を"} } };
+    const result = (try plan(std.testing.allocator, &slots, &arguments, false)).?;
+    defer std.testing.allocator.free(result.operands);
+    try std.testing.expectEqual(@as(usize, 0), result.provided);
+    try std.testing.expectEqual(@as(usize, 2), result.missing);
+    try std.testing.expectEqual(Operand.implicit_it, result.operands[0]);
+    try std.testing.expectEqual(Operand.implicit_it, result.operands[1]);
+}
+
+test "『には』コールバックの合成ノードは暗黙マーカーとして除外しない" {
+    // `is_implicit_it`はコールバックにも立つ。助詞なしの`.word`「それ」だけを
+    // 連文マーカーとして扱い、匿名関数は実引数のままスロットへ割り当てる。
+    var callback = ast.Node{ .kind = .anonymous_function, .span = ast.emptySpan(), .end_span = ast.emptySpan(), .is_implicit_it = true };
+    const arguments = [_]*ast.Node{&callback};
+    const slots = [_]Slot{.{ .josi = &.{""} }};
+    const result = (try plan(std.testing.allocator, &slots, &arguments, false)).?;
+    defer std.testing.allocator.free(result.operands);
+    try std.testing.expectEqual(@as(usize, 1), result.provided);
+    try std.testing.expectEqual(@as(usize, 0), result.operands[0].provided);
 }
 
 test "全引数を省略したスロットを宣言順に「それ」で補完する" {
@@ -284,4 +358,20 @@ test "アンダースコア始まりの仮引数でも助詞スロットが正�
     try std.testing.expectEqualSlices([]const u8, &.{ "へ", "に" }, image.josi[0..2]);
     try std.testing.expectEqualSlices([]const u8, &.{"と"}, image.josi[2..3]);
     try std.testing.expectEqualSlices([]const u8, &.{"を"}, image.josi[3..4]);
+}
+
+test "仮引数の助詞候補『|』を異表記スロットへ分割する" {
+    const parameter_josi = [_][]const u8{ "が|の|を", "へ" };
+    const slots = try parameterSlots(std.testing.allocator, &parameter_josi);
+    defer {
+        for (slots) |slot| std.testing.allocator.free(slot.josi);
+        std.testing.allocator.free(slots);
+    }
+    try std.testing.expectEqual(@as(usize, 2), slots.len);
+    try std.testing.expectEqual(@as(usize, 3), slots[0].josi.len);
+    try std.testing.expectEqualStrings("が", slots[0].josi[0]);
+    try std.testing.expectEqualStrings("の", slots[0].josi[1]);
+    try std.testing.expectEqualStrings("を", slots[0].josi[2]);
+    try std.testing.expectEqual(@as(usize, 1), slots[1].josi.len);
+    try std.testing.expectEqualStrings("へ", slots[1].josi[0]);
 }

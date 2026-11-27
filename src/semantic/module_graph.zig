@@ -689,6 +689,11 @@ pub fn load(backing_allocator: std.mem.Allocator, entry_path: []const u8, provid
     // include guardで最初に処理された辺だけへ内容を展開する（同一ファイルの
     // 複数取り込みでは最後の取り込み文に内容が載る）。
     try loader.markEffectiveEdges(entry);
+    loader.has_exported_range_function = for (loader.modules.items) |module| {
+        const parsed = module.parsed orelse continue;
+        const root = parsed.root orelse continue;
+        if (rangeFunctionExported(root) orelse false) break true;
+    } else false;
     try loader.propagateModes(entry);
     try variants.buildCopyVariants(&loader);
     try variants.attachInlineExpansions(&loader, entry);
@@ -716,6 +721,18 @@ pub fn load(backing_allocator: std.mem.Allocator, entry_path: []const u8, provid
 
 // 循環コピー変体・関数内展開の構築は module_graph_variants.zig へ分離している
 // （サイズガードレール対応）。Loaderの状態を共有するためpubで公開する。
+/// 裸名で取り込める『範囲』の定義を探す。関数の登録はAnalyzerと同じく後勝ち。
+fn rangeFunctionExported(node: *const ast.Node) ?bool {
+    if (node.kind == .import) return null;
+    var index = node.children.len;
+    while (index > 0) {
+        index -= 1;
+        if (rangeFunctionExported(node.children[index])) |exported| return exported;
+    }
+    return if ((node.kind == .function_definition or node.kind == .test_definition) and
+        std.mem.eql(u8, node.name, "範囲")) node.is_export else null;
+}
+
 pub const Loader = struct {
     backing_allocator: std.mem.Allocator,
     allocator: std.mem.Allocator,
@@ -727,6 +744,7 @@ pub const Loader = struct {
     /// `loadOne`の現在の再帰の深さ。取り込み1件ごとに1増える。
     /// 上限を超えた入力はプロセススタックを使い切る前に位置付き診断にする。
     load_depth: usize = 0,
+    has_exported_range_function: bool = false,
 
     fn deinitModules(self: *Loader) void {
         for (self.modules.items) |module| {
@@ -1111,11 +1129,13 @@ pub const Loader = struct {
         if (module.kind != .nako3 or module.parsed == null) return;
 
         // 正しい初期モードで必要なら再パースし、取り込み文位置のモードを更新する
-        if (!modeEql(module.parse_initial, initial)) {
+        const initial_changed = !modeEql(module.parse_initial, initial);
+        if (initial_changed) {
             const reparsed = parser.parseWithMode(self.backing_allocator, module.source, module.path, .{
                 .forced = module.forced_mode,
                 .initial = initial,
                 .builtin_commands = &builtin_catalog.function_names,
+                .has_exported_range_function = self.has_exported_range_function,
             }) catch |err| {
                 try self.importDiagnostic(null, module.path, "取り込み先を字句解析できません");
                 return err;
@@ -1147,12 +1167,15 @@ pub const Loader = struct {
                 try tail_modes.append(self.allocator, .{ .position = item.span.start, .mode = target_parsed.final_mode });
             }
         }
-        if (tail_modes.items.len > 0) {
+        // 取り込み先の公開関数は読み込み後に判明する。宣言位置に依存せず
+        // 解決されるため、取り込み文のない側のモジュールにも適用する。
+        if (tail_modes.items.len > 0 or (self.has_exported_range_function and !initial_changed)) {
             const reparsed = parser.parseWithMode(self.backing_allocator, module.source, module.path, .{
                 .forced = module.forced_mode,
                 .initial = initial,
                 .tail_modes = tail_modes.items,
                 .builtin_commands = &builtin_catalog.function_names,
+                .has_exported_range_function = self.has_exported_range_function,
             }) catch |err| {
                 try self.importDiagnostic(null, module.path, "取り込み先を字句解析できません");
                 return err;

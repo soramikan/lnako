@@ -42,6 +42,99 @@ test "識別子変数を途中の命令と誤認せず複数引数を構文解�
     try std.testing.expectEqualStrings("を", call.children[1].josi);
 }
 
+test "助詞付きの変数を命令名と誤認せず文字検索の3引数を構文解析する" {
+    // 公式はfunclistにない`C`を値として扱う。`Cから`を未定義関数の呼出しに
+    // すると、`「ん」を`が別の呼出しになって文字検索の引数が不足する。
+    var result = try parse(std.testing.allocator, "C=1\n「しんぶんし」でCから「ん」を文字検索。\n", "search.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    var call: ?*ast.Node = null;
+    for (result.root.?.children) |child| {
+        if (child.kind == .function_call and std.mem.eql(u8, child.name, "文字検索")) {
+            call = child;
+            break;
+        }
+    }
+    const search = call orelse return error.MissingSearchCall;
+    try std.testing.expectEqual(@as(usize, 3), search.children.len);
+    try std.testing.expectEqual(ast.Kind.word, search.children[1].kind);
+    try std.testing.expectEqualStrings("C", search.children[1].value);
+    try std.testing.expectEqualStrings("から", search.children[1].josi);
+}
+
+test "引数定義の『|』区切り助詞候補を1引数へまとめる" {
+    // 公式の`preDefineFunc`は`(Sが|Sの|Sを)`を1引数Sの助詞リスト
+    // [が,の,を]として登録する。lnakoはASTの1引数へ『|』区切りで保持する。
+    var result = try parse(std.testing.allocator, "●全角判定(Sが|Sの|Sを)\nSで戻る\nここまで。\n", "josi-alternatives.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    var definition: ?*ast.Node = null;
+    for (result.root.?.children) |child| {
+        if (child.kind == .function_definition) {
+            definition = child;
+            break;
+        }
+    }
+    const function = definition orelse return error.MissingFunctionDefinition;
+    try std.testing.expectEqual(@as(usize, 1), function.arguments.len);
+    try std.testing.expectEqualStrings("S", function.arguments[0].name);
+    try std.testing.expectEqualStrings("が|の|を", function.arguments[0].josi);
+}
+
+test "引数定義の『|』区切り同名候補を初出順の名前ごとに集約する" {
+    // 公式`preDefineFunc`は`(Aに|Bを|Aへ)`をA[に,へ]・B[を]の2引数にし、
+    // Aを2スロットとして扱わない。現行lnakoは名前が変わるたびに確定して
+    // いたため、Aの重複定義になっていた。
+    var result = try parse(std.testing.allocator, "●試験(Aに|Bを|Aへ)\n[A,B]で戻る\nここまで。\n", "josi-interleaved.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const function = try firstFunctionDefinition(result.root.?);
+    try std.testing.expectEqual(@as(usize, 2), function.arguments.len);
+    try std.testing.expectEqualStrings("A", function.arguments[0].name);
+    try std.testing.expectEqualStrings("に|へ", function.arguments[0].josi);
+    try std.testing.expectEqualStrings("B", function.arguments[1].name);
+    try std.testing.expectEqualStrings("を", function.arguments[1].josi);
+}
+
+test "引数定義のカンマ・空白区切りでも同名候補を集約する" {
+    const cases = [_]struct { source: []const u8, josi: []const u8 }{
+        .{ .source = "●試験(Aに|Bを,Aへ)\n[A,B]で戻る\nここまで。\n", .josi = "に|へ" },
+        .{ .source = "●試験(Aに|Aへ Bを)\n[A,B]で戻る\nここまで。\n", .josi = "に|へ" },
+    };
+    for (cases) |case| {
+        var result = try parse(std.testing.allocator, case.source, "josi-separators.nako3");
+        defer result.deinit();
+        try std.testing.expect(result.succeeded());
+        const function = try firstFunctionDefinition(result.root.?);
+        try std.testing.expectEqual(@as(usize, 2), function.arguments.len);
+        try std.testing.expectEqualStrings("A", function.arguments[0].name);
+        try std.testing.expectEqualStrings(case.josi, function.arguments[0].josi);
+        try std.testing.expectEqualStrings("B", function.arguments[1].name);
+        try std.testing.expectEqualStrings("を", function.arguments[1].josi);
+    }
+}
+
+test "助詞なしの出現も同じスロットの候補として集約する" {
+    var result = try parse(std.testing.allocator, "●試験(A,Aを)\nAで戻る\nここまで。\n", "josi-empty-candidate.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const function = try firstFunctionDefinition(result.root.?);
+    try std.testing.expectEqual(@as(usize, 1), function.arguments.len);
+    try std.testing.expectEqualStrings("A", function.arguments[0].name);
+    try std.testing.expectEqualStrings("|を", function.arguments[0].josi);
+}
+
+test "引数定義の重複した助詞候補を保持する" {
+    // 公式は重複した候補もそのまま助詞リストへ積むため、lnakoも脱落させない。
+    var result = try parse(std.testing.allocator, "●試験(Aを|Aを)\nAで戻る\nここまで。\n", "josi-duplicate.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const function = try firstFunctionDefinition(result.root.?);
+    try std.testing.expectEqual(@as(usize, 1), function.arguments.len);
+    try std.testing.expectEqualStrings("A", function.arguments[0].name);
+    try std.testing.expectEqualStrings("を|を", function.arguments[0].josi);
+}
+
 test "助詞はを代入演算子として構文解析する" {
     var result = try parse(std.testing.allocator, "Fはそれ\n", "assignment.nako3");
     defer result.deinit();
@@ -163,6 +256,61 @@ test "「Aが3以下ならば」を助詞呼出しの条件式へ変換する" {
     try std.testing.expectEqualStrings("", condition.children[1].josi);
 }
 
+test "「AがBからCの範囲内ならば」の同行真節を条件式へ取り込まない" {
+    // Issue #297: 条件末尾の`ならば`を呼出し列の継続として扱うと、同じ行の
+    // 真節（`「30は範囲内」と表示。`）が範囲内の第4引数として吸収され、
+    // `invalid_control_statement`になっていた。条件助詞で呼出しを切る。
+    var result = try parse(std.testing.allocator, "もし、30が30から50の範囲内ならば、「30は範囲内」と表示。\nもし、50が30から50の範囲内ならば、「50は範囲内」と表示。\n", "josi-range-inline.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    var statements: [2]*ast.Node = undefined;
+    var statement_count: usize = 0;
+    for (result.root.?.children) |child| {
+        if (child.kind != .if_statement) continue;
+        if (statement_count < statements.len) statements[statement_count] = child;
+        statement_count += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 2), statement_count);
+    const expected_values = [_][]const u8{ "30", "50" };
+    const expected_messages = [_][]const u8{ "30は範囲内", "50は範囲内" };
+    for (statements, expected_values, expected_messages) |statement, expected_value, expected_message| {
+        try std.testing.expectEqual(ast.Kind.if_statement, statement.kind);
+        const condition = statement.children[0];
+        try std.testing.expectEqual(ast.Kind.function_call, condition.kind);
+        try std.testing.expectEqualStrings("範囲内", condition.name);
+        try std.testing.expectEqualStrings("", condition.josi);
+        try std.testing.expectEqual(@as(usize, 3), condition.children.len);
+        try std.testing.expectEqualStrings(expected_value, condition.children[0].value);
+        try std.testing.expectEqualStrings("30", condition.children[1].value);
+        try std.testing.expectEqualStrings("50", condition.children[2].value);
+        const true_block = statement.children[1];
+        try std.testing.expectEqual(ast.Kind.block, true_block.kind);
+        try std.testing.expectEqual(@as(usize, 1), true_block.children.len);
+        const display = true_block.children[0];
+        try std.testing.expectEqual(ast.Kind.function_call, display.kind);
+        try std.testing.expectEqualStrings("表示", display.name);
+        try std.testing.expectEqual(@as(usize, 1), display.children.len);
+        try std.testing.expectEqualStrings(expected_message, display.children[0].value);
+    }
+}
+
+test "条件助詞付き呼出しの同行真節を引数へ続けない" {
+    // 範囲内に限らず、`ならば`付きの呼出し条件は同じ行の真節を吸収しない。
+    var result = try parse(std.testing.allocator, "もし、Aが3以下ならば、「OK」と表示。\n", "josi-call-inline.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const statement = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.if_statement, statement.kind);
+    const condition = statement.children[0];
+    try std.testing.expectEqual(ast.Kind.function_call, condition.kind);
+    try std.testing.expectEqualStrings("以下", condition.name);
+    try std.testing.expectEqual(@as(usize, 2), condition.children.len);
+    const true_block = statement.children[1];
+    try std.testing.expectEqual(ast.Kind.block, true_block.kind);
+    try std.testing.expectEqual(@as(usize, 1), true_block.children.len);
+    try std.testing.expectEqualStrings("表示", true_block.children[0].name);
+}
+
 test "「AがBと等しいならば」を助詞呼出しの条件式へ変換する" {
     var result = try parse(std.testing.allocator, "もし、AがBと等しいならば\nC=1\nここまで\n", "josi-equal-call.nako3");
     defer result.deinit();
@@ -173,6 +321,73 @@ test "「AがBと等しいならば」を助詞呼出しの条件式へ変換す
     try std.testing.expectEqual(@as(usize, 2), condition.children.len);
     try std.testing.expectEqualStrings("B", condition.children[1].value);
     try std.testing.expectEqualStrings("と", condition.children[1].josi);
+}
+
+test "がの比較条件の右辺で既知命令のC風呼出しを読む" {
+    for ([_][]const u8{ "ならば", "でなければ" }, [_][]const u8{ "eq", "noteq" }) |josi, operator| {
+        const source = try std.fmt.allocPrint(std.testing.allocator, "もし、AがINT(3){s}、B=1\n", .{josi});
+        defer std.testing.allocator.free(source);
+        var result = try parse(std.testing.allocator, source, "main.nako3");
+        defer result.deinit();
+        try std.testing.expect(result.succeeded());
+        const condition = result.root.?.children[0].children[0];
+        try std.testing.expectEqual(ast.Kind.binary_operator, condition.kind);
+        try std.testing.expectEqualStrings(operator, condition.operator);
+        const rhs = condition.children[1];
+        try std.testing.expect(rhs.is_c_style_call);
+        try std.testing.expectEqualStrings("INT", rhs.name);
+        try std.testing.expectEqualStrings("3", rhs.children[0].value);
+    }
+}
+
+test "「Aが奇数ならば」を既知命令の条件呼出しへ変換する" {
+    // 公式`yIFCond`は`A`の直後が`func`トークンなら`奇数(A)`を作る。
+    // `A=奇数`の等価比較へ落とすと条件が常に偽になるため、呼出し形状を固定する。
+    var result = try parse(std.testing.allocator, "もし、Aが奇数ならば\nB=1\nここまで\n", "josi-predicate-odd.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const condition = result.root.?.children[0].children[0];
+    try std.testing.expectEqual(ast.Kind.function_call, condition.kind);
+    try std.testing.expectEqualStrings("奇数", condition.name);
+    try std.testing.expectEqualStrings("", condition.josi);
+    try std.testing.expectEqual(@as(usize, 1), condition.children.len);
+    try std.testing.expectEqualStrings("A", condition.children[0].value);
+    try std.testing.expectEqualStrings("が", condition.children[0].josi);
+}
+
+test "「Aが偶数ならば」を既知命令の条件呼出しへ変換する" {
+    var result = try parse(std.testing.allocator, "もし、Aが偶数ならば\nB=1\nここまで\n", "josi-predicate-even.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const condition = result.root.?.children[0].children[0];
+    try std.testing.expectEqual(ast.Kind.function_call, condition.kind);
+    try std.testing.expectEqualStrings("偶数", condition.name);
+    try std.testing.expectEqual(@as(usize, 1), condition.children.len);
+    try std.testing.expectEqualStrings("A", condition.children[0].value);
+}
+
+test "「Aが数列か判定ならば」を正規化済み命令の条件呼出しへ変換する" {
+    var result = try parse(std.testing.allocator, "もし、対象が数列か判定ならば\nB=1\nここまで\n", "josi-predicate-suretu.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const condition = result.root.?.children[0].children[0];
+    try std.testing.expectEqual(ast.Kind.function_call, condition.kind);
+    // 公式の関数名は`数列判定`で、`数列か判定`は字句変換で同じ名前に解決する。
+    try std.testing.expectEqualStrings("数列判定", condition.name);
+    try std.testing.expectEqual(@as(usize, 1), condition.children.len);
+    try std.testing.expectEqualStrings("対象", condition.children[0].value);
+}
+
+test "「Aが奇数でなければ」を既知命令の条件否定へ変換する" {
+    var result = try parse(std.testing.allocator, "もし、Aが奇数でなければ\nB=1\nここまで\n", "josi-predicate-odd-not.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const condition = result.root.?.children[0].children[0];
+    try std.testing.expectEqual(ast.Kind.unary_operator, condition.kind);
+    try std.testing.expectEqualStrings("not", condition.operator);
+    try std.testing.expectEqual(ast.Kind.function_call, condition.children[0].kind);
+    try std.testing.expectEqualStrings("奇数", condition.children[0].name);
+    try std.testing.expectEqualStrings("A", condition.children[0].children[0].value);
 }
 
 test "「DにAが辞書キー存在するならば」を助詞呼出しの条件式へ変換する" {
@@ -271,6 +486,166 @@ test "助詞付き命令呼出しの直後の「戻る」は呼出し結果を�
         // 命令呼出し自身の助詞は保持される。
         try std.testing.expectEqualStrings(case.josi, value.josi);
     }
+}
+
+test "取り込み先の関数呼出し候補を『戻る』の直前で実引数付きの語として保持する" {
+    // Issue #297: 取り込み先の関数はこのファイルの解析時点ではfunclistに
+    // 無い。`2を倍算で戻る`の`倍算`を値として固定すると実引数`2`が失われ、
+    // 取り込み後に呼出しへ解決できない。公式`yReturn`の直前呼出しと同じく、
+    // 実引数を子に持つ語として残し、意味解析で関数か変数を決める。
+    var result = try parse(
+        std.testing.allocator,
+        "●呼出とは\n2を倍算で戻る。\nここまで\n",
+        "imported-return-candidate.nako3",
+    );
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const body = result.root.?.children[0].children[0];
+    const statement = body.children[0];
+    try std.testing.expectEqual(ast.Kind.return_statement, statement.kind);
+    const value = statement.children[0];
+    try std.testing.expectEqual(ast.Kind.word, value.kind);
+    try std.testing.expectEqualStrings("倍算", value.value);
+    try std.testing.expectEqualStrings("で", value.josi);
+    try std.testing.expectEqual(@as(usize, 1), value.children.len);
+    try std.testing.expectEqual(ast.Kind.number, value.children[0].kind);
+    try std.testing.expectEqualStrings("2", value.children[0].value);
+    try std.testing.expectEqualStrings("を", value.children[0].josi);
+
+    // 変数なら従来どおり語として戻り値になる（子は持たない）。
+    var variable = try parse(
+        std.testing.allocator,
+        "●Fとは\nA=2\nAで戻る\nここまで\n",
+        "variable-return-candidate.nako3",
+    );
+    defer variable.deinit();
+    try std.testing.expect(variable.succeeded());
+    const variable_body = variable.root.?.children[0].children[0];
+    var variable_return: ?*ast.Node = null;
+    for (variable_body.children) |child| {
+        if (child.kind == .return_statement) variable_return = child;
+    }
+    const fallback = variable_return orelse return error.MissingReturn;
+    try std.testing.expectEqual(ast.Kind.word, fallback.children[0].kind);
+    try std.testing.expectEqualStrings("A", fallback.children[0].value);
+    try std.testing.expectEqual(@as(usize, 0), fallback.children[0].children.len);
+}
+
+test "組み込みの範囲に一致する助詞がなければ外側の引数を全て残す" {
+    var result = try parse(std.testing.allocator, "1と範囲を表示\n", "main.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const display = result.root.?.children[0];
+    try std.testing.expectEqualStrings("表示", display.name);
+    try std.testing.expectEqual(@as(usize, 2), display.children.len);
+    try std.testing.expectEqualStrings("1", display.children[0].value);
+    const range = display.children[1];
+    try std.testing.expectEqualStrings("範囲", range.name);
+    try std.testing.expectEqual(@as(usize, 0), range.children.len);
+}
+
+test "利用者が定義した範囲を連鎖とC風呼出しの引数で組み込み扱いしない" {
+    const definition = "●(XからYを)範囲とは\nXで戻る\nここまで\n";
+    const cases = [_][]const u8{ "2から3を範囲を表示\n", "表示(2から3を範囲)\n" };
+    for (cases) |line| {
+        const source = try std.mem.concat(std.testing.allocator, u8, &.{ line, definition });
+        defer std.testing.allocator.free(source);
+        var result = try parse(std.testing.allocator, source, "main.nako3");
+        defer result.deinit();
+        try std.testing.expect(result.succeeded());
+        const display = result.root.?.children[0];
+        try std.testing.expectEqualStrings("表示", display.name);
+        try std.testing.expectEqual(@as(usize, 1), display.children.len);
+        const range = display.children[0];
+        try std.testing.expectEqualStrings("範囲", range.name);
+        try std.testing.expectEqual(@as(usize, 2), range.children.len);
+        try std.testing.expectEqualStrings("3", range.children[1].value);
+        try std.testing.expectEqualStrings("を", range.children[1].josi);
+    }
+}
+
+test "同名の仮引数に束縛される範囲は連鎖内で実引数を全て保持する" {
+    const source =
+        "●(範囲を)確認とは\n" ++
+        "2から3を範囲を表示\n" ++
+        "JSONエンコード(2から3を範囲)を表示\n" ++
+        "ここまで\n";
+    var parsed = try parse(std.testing.allocator, source, "main.nako3");
+    defer parsed.deinit();
+    try std.testing.expect(parsed.succeeded());
+    const body = parsed.root.?.children[0].children[0];
+    const statement_range = body.children[0].children[0];
+    const expression_range = body.children[2].children[0].children[0];
+    for ([_]*ast.Node{ statement_range, expression_range }) |call| {
+        try std.testing.expectEqualStrings("範囲", call.name);
+        try std.testing.expectEqual(@as(usize, 2), call.children.len);
+        try std.testing.expectEqualStrings("から", call.children[0].josi);
+        try std.testing.expectEqualStrings("を", call.children[1].josi);
+    }
+}
+
+test "片端省略の範囲を『それ』で補完し外側の引数を参照へ残す" {
+    // Issue #297: 公式`yCallFunc`は範囲の助詞スロットに一致する引数だけを
+    // 消費する。`Aの4まで`では`Aの`が外側の参照の第1引数として残り、
+    // 欠けた開始位置は『それ』で補完される。
+    var missing_start = try parse(
+        std.testing.allocator,
+        "A=[0,1,2,3,4,5]\nそれ=2\nAの4までの範囲を参照してJSONエンコードして表示。\n",
+        "range-missing-start.nako3",
+    );
+    defer missing_start.deinit();
+    try std.testing.expect(missing_start.succeeded());
+    const start_reference = findCallNamed(missing_start.root.?, "参照") orelse return error.MissingReferenceCall;
+    try std.testing.expectEqual(@as(usize, 2), start_reference.children.len);
+    try std.testing.expectEqualStrings("A", start_reference.children[0].value);
+    try std.testing.expectEqualStrings("の", start_reference.children[0].josi);
+    const start_range = start_reference.children[1];
+    try std.testing.expectEqualStrings("範囲", start_range.name);
+    try std.testing.expectEqual(@as(usize, 2), start_range.children.len);
+    try std.testing.expectEqual(ast.Kind.word, start_range.children[0].kind);
+    try std.testing.expectEqualStrings("それ", start_range.children[0].value);
+    try std.testing.expectEqualStrings("4", start_range.children[1].value);
+    try std.testing.expectEqualStrings("までの", start_range.children[1].josi);
+
+    // `Aから2から範囲`では2番目の『から』が開始位置、外側の`Aから`が残る。
+    var missing_end = try parse(
+        std.testing.allocator,
+        "A=[0,1,2,3,4,5]\nそれ=4\nAから2から範囲を参照してJSONエンコードして表示。\n",
+        "range-missing-end.nako3",
+    );
+    defer missing_end.deinit();
+    try std.testing.expect(missing_end.succeeded());
+    const end_reference = findCallNamed(missing_end.root.?, "参照") orelse return error.MissingReferenceCall;
+    try std.testing.expectEqual(@as(usize, 2), end_reference.children.len);
+    try std.testing.expectEqualStrings("A", end_reference.children[0].value);
+    try std.testing.expectEqualStrings("から", end_reference.children[0].josi);
+    const end_range = end_reference.children[1];
+    try std.testing.expectEqualStrings("範囲", end_range.name);
+    try std.testing.expectEqual(@as(usize, 2), end_range.children.len);
+    try std.testing.expectEqualStrings("2", end_range.children[0].value);
+    try std.testing.expectEqualStrings("から", end_range.children[0].josi);
+    try std.testing.expectEqual(ast.Kind.word, end_range.children[1].kind);
+    try std.testing.expectEqualStrings("それ", end_range.children[1].value);
+
+    // 括弧内の式でも同じスロット選択を行い、`Aの`を外側へ残す。
+    var parenthesized = try parse(
+        std.testing.allocator,
+        "JSONエンコード(Aの2から4までの範囲を参照)を表示。\n",
+        "range-parenthesized.nako3",
+    );
+    defer parenthesized.deinit();
+    try std.testing.expect(parenthesized.succeeded());
+    const paren_reference = findCallNamed(parenthesized.root.?, "参照") orelse return error.MissingReferenceCall;
+    try std.testing.expectEqual(@as(usize, 2), paren_reference.children.len);
+    try std.testing.expectEqualStrings("A", paren_reference.children[0].value);
+    try std.testing.expectEqualStrings("の", paren_reference.children[0].josi);
+    const paren_range = paren_reference.children[1];
+    try std.testing.expectEqualStrings("範囲", paren_range.name);
+    try std.testing.expectEqual(@as(usize, 2), paren_range.children.len);
+    try std.testing.expectEqualStrings("2", paren_range.children[0].value);
+    try std.testing.expectEqualStrings("から", paren_range.children[0].josi);
+    try std.testing.expectEqualStrings("4", paren_range.children[1].value);
+    try std.testing.expectEqualStrings("までの", paren_range.children[1].josi);
 }
 
 test "連文の途中でも「戻る」は直前の呼出し・値を戻り値にする" {
@@ -1264,6 +1639,41 @@ test "範囲オブジェクトの繰り返しは一時変数の先頭/末尾参�
     }
 }
 
+test "範囲オブジェクトの前の外側引数を参照の第1引数へ残す" {
+    // Issue #297: 公式yCallFuncは`範囲`の助詞スロット（から/まで）に一致する
+    // 2引数だけをポップする。`Aの`は範囲の引数ではなく、外側の`参照`の
+    // 第1引数として残る（マニュアル範囲.txt:30）。
+    var result = try parse(
+        std.testing.allocator,
+        "A = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]\nAの2から5までの範囲を参照してJSONエンコードして表示\n",
+        "range-reference.nako3",
+    );
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    var reference: ?*ast.Node = null;
+    for (result.root.?.children) |child| {
+        if (child.kind == .block) {
+            for (child.children) |item| {
+                if (item.kind == .function_call and std.mem.eql(u8, item.name, "参照")) reference = item;
+            }
+        }
+    }
+    const call = reference orelse return error.MissingReferenceCall;
+    try std.testing.expectEqual(@as(usize, 2), call.children.len);
+    try std.testing.expectEqual(ast.Kind.word, call.children[0].kind);
+    try std.testing.expectEqualStrings("A", call.children[0].value);
+    try std.testing.expectEqualStrings("の", call.children[0].josi);
+    const range = call.children[1];
+    try std.testing.expectEqual(ast.Kind.function_call, range.kind);
+    try std.testing.expectEqualStrings("範囲", range.name);
+    try std.testing.expectEqualStrings("を", range.josi);
+    try std.testing.expectEqual(@as(usize, 2), range.children.len);
+    try std.testing.expectEqualStrings("2", range.children[0].value);
+    try std.testing.expectEqualStrings("から", range.children[0].josi);
+    try std.testing.expectEqualStrings("5", range.children[1].value);
+    try std.testing.expectEqualStrings("までの", range.children[1].josi);
+}
+
 test "『…』範囲式の繰り返しも一時変数へ展開し変数省略時は『それ』にする" {
     // Issue #117の形: `1…3を繰り返す`・`A…Bを繰り返す`。`…`演算子の範囲
     // function_callも`AからBの範囲`と同じ一時変数展開を受け、ループ変数の
@@ -1801,6 +2211,19 @@ fn variableDefinitions(allocator: std.mem.Allocator, root: *ast.Node) ![]const *
     var collected: std.ArrayList(*ast.Node) = .empty;
     for (root.children) |child| if (child.kind == .variable_definition) try collected.append(allocator, child);
     return collected.toOwnedSlice(allocator);
+}
+
+/// 指定した命令名の呼出しをAST全体から深さ優先で探す。
+fn findCallNamed(node: *ast.Node, name: []const u8) ?*ast.Node {
+    if (node.kind == .function_call and std.mem.eql(u8, node.name, name)) return node;
+    for (node.children) |child| if (findCallNamed(child, name)) |found| return found;
+    return null;
+}
+
+/// 最初の名前付き関数定義を返す（仮引数集約テスト用）。
+fn firstFunctionDefinition(root: *ast.Node) !*ast.Node {
+    for (root.children) |child| if (child.kind == .function_definition) return child;
+    return error.MissingFunctionDefinition;
 }
 
 test "『定める』は定数を生成し匿名関数も右辺に取れる" {

@@ -365,5 +365,46 @@
     "source": "回数()\n",
     "code": "undefined_symbol",
     "checkMessage": true
+  },
+  {
+    "id": "semantic-diagnostic-varlist-constant-after-declaration",
+    "source": "A=0\n定数[A,B]=[4,5]\nA=9\n",
+    "code": "assign_to_constant"
+  },
+  {
+    "id": "semantic-diagnostic-return-pending-variable-issue297",
+    "source": "V=5\n2をVで戻る。\n",
+    "code": "unresolved_word",
+    "checkMessage": true
+  },
+  {
+    "id": "semantic-diagnostic-return-pending-undefined-issue297",
+    "source": "V=5\n2を未知関数で戻る。\n",
+    "code": "unresolved_word",
+    "checkMessage": true
+  },
+  {
+    "id": "semantic-diagnostic-return-pending-builtin-lf-issue297",
+    "source": "2を改行で戻る。\n",
+    "code": "unresolved_word",
+    "checkMessage": true
+  },
+  {
+    "id": "semantic-diagnostic-return-pending-builtin-it-issue297",
+    "source": "2をそれで戻る。\n",
+    "code": "unresolved_word",
+    "checkMessage": true
+  },
+  {
+    "id": "semantic-diagnostic-return-pending-builtin-motherpath-issue297",
+    "source": "2を母艦パスで戻る。\n",
+    "code": "unresolved_word",
+    "checkMessage": true
+  },
+  {
+    "id": "semantic-diagnostic-return-pending-builtin-implicit-issue297",
+    "source": "「x」と表示して2を改行で戻る。\n",
+    "code": "unresolved_word",
+    "checkMessage": true
   }
 ]

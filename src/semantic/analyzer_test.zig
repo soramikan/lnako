@@ -662,6 +662,199 @@ test "助詞が正しい呼出しと暗黙『それ』連文は未解決語に�
     }
 }
 
+test "戻る直前の候補が変数・未定義名・非関数の組み込みなら保留した実引数を診断する" {
+    // Issue #297: `2をVで戻る`のVが変数、または未知関数のままなら、
+    // 構文解析で保持した`2を`を黙って捨てず、公式`yReturn`と同じ
+    // 『戻』文の未解決引数にする。連文の暗黙マーカーは実引数ではない。
+    const parser = @import("../frontend/parser.zig");
+    const expected_message = "『戻』文の直前に未解決の引数があります。『(式)を戻す』のように式をカッコで括ってください。";
+    const cases = [_]struct { source: []const u8, line: usize }{
+        .{ .source = "●呼出とは\nV=5\n2をVで戻る。\nここまで\n呼出()を表示。\n", .line = 2 },
+        .{ .source = "●呼出とは\n2を未知関数で戻る。\nここまで\n呼出()を表示。\n", .line = 1 },
+        .{ .source = "●呼出とは\nV=5\n「x」と表示して2をVで戻る。\nここまで\n呼出()を表示。\n", .line = 2 },
+        .{ .source = "!厳しくチェック\n●呼出とは\n2を未知関数で戻る。\nここまで\n呼出()を表示。\n", .line = 2 },
+        // 値として解決する組み込み（文字列定数・特殊変数・プラグイン定数）
+        // でも、保留した実引数を黙って捨てない。
+        .{ .source = "2を改行で戻る。\n", .line = 0 },
+        .{ .source = "2をそれで戻る。\n", .line = 0 },
+        .{ .source = "2を母艦パスで戻る。\n", .line = 0 },
+        .{ .source = "2をそで戻る。\n", .line = 0 },
+        .{ .source = "2をエラー内容で戻る。\n", .line = 0 },
+        .{ .source = "「x」と表示して2を改行で戻る。\n", .line = 0 },
+        .{ .source = "●呼出とは\n2を改行で戻る。\nここまで\n呼出()を表示。\n", .line = 1 },
+    };
+    for (cases) |case| {
+        var parsed = try parser.parse(std.testing.allocator, case.source, "main.nako3");
+        defer parsed.deinit();
+        var program = try analyzer.analyzeWithSource(std.testing.allocator, parsed.root.?, "main.nako3", parsed.stream.source.text);
+        defer program.deinit();
+        try std.testing.expect(!program.succeeded());
+        try std.testing.expectEqual(@as(usize, 1), program.diagnostics.len);
+        const found = program.diagnostics[0];
+        // 未解決の実引数と、候補名の未定義変数診断を混同しない。
+        try std.testing.expectEqual(diagnostic.Code.unresolved_word, found.code);
+        try std.testing.expectEqual(case.line, found.span.line);
+        try std.testing.expectEqualStrings(expected_message, found.message);
+    }
+}
+
+test "戻る直前の候補が関数・実命令なら実引数を保ち引数なしの戻りは成功する" {
+    const parser = @import("../frontend/parser.zig");
+    const valid = [_][]const u8{
+        // 先行引数のない`Vで戻る`は従来どおり変数値を返す。
+        "●呼出とは\nV=5\nVで戻る。\nここまで\n呼出()を表示。\n",
+        // 従来の普通の戻り値（で・を・戻す）。
+        "●Aとは\n2で戻る\nここまで\n●Bとは\n2を戻る\nここまで\n●Cとは\n2を戻す\nここまで\nAを表示\nBを表示\nCを表示\n",
+        // 連文が挿入した暗黙マーカーだけなら実引数として診断しない。
+        "●呼出とは\nV=5\n「x」と表示してVで戻る。\nここまで\n呼出()を表示。\n",
+        // 変数で始まる文字検索の`Cから`を候補扱いしない。
+        "0から連続検索\n●(Cから)連続検索\n「しんぶんし」でCから「ん」を文字検索。\nC=それ。Cを表示。\nもし、C=0でなければ、\nC=C+1。\nCから連続検索。\nここまで。\nここまで。\n",
+        // 値として解決する組み込みは先行引数がなければ従来どおり値を返す。
+        "●呼出とは\n改行で戻る。\nここまで\n呼出()を表示。\n",
+        "●呼出とは\nそれで戻る。\nここまで\n呼出()を表示。\n",
+        // 組み込みの実命令は実引数を従来の引数照合で消費する。
+        "●呼出とは\n2を合計で戻る。\nここまで\n呼出()を表示。\n",
+        "●呼出とは\n2を表示で戻る。\nここまで\n呼出()を表示。\n",
+        // ローカル関数・テスト関数は候補でも実引数を保持する。
+        "●(Xを)倍算とは\nX*2で戻る\nここまで\n●呼出とは\n3を倍算で戻る。\nここまで\n呼出()を表示。\n",
+        "●テスト:(Xを)倍算とは\nX*2で戻る\nここまで\n●呼出とは\n3を倍算で戻る。\nここまで\n呼出()を表示。\n",
+    };
+    for (valid) |source| {
+        var parsed = try parser.parse(std.testing.allocator, source, "main.nako3");
+        defer parsed.deinit();
+        var program = try analyzer.analyzeWithSource(std.testing.allocator, parsed.root.?, "main.nako3", parsed.stream.source.text);
+        defer program.deinit();
+        try std.testing.expect(program.succeeded());
+    }
+}
+
+test "取り込んだ関数を戻り値の候補として実引数付きで呼び出す" {
+    const parser = @import("../frontend/parser.zig");
+    var library = try parser.parse(std.testing.allocator, "●(Xを)倍算とは\nX*2で戻る\nここまで\n", "lib.nako3");
+    defer library.deinit();
+    var main = try parser.parse(std.testing.allocator, "●呼出とは\n「x」と表示して3を倍算で戻る。\nここまで\n呼出()を表示。\n", "main.nako3");
+    defer main.deinit();
+    var program = try analyzeModules(std.testing.allocator, &.{
+        .{ .name = "lib", .path = "lib.nako3", .root = library.root.? },
+        .{ .name = "main", .path = "main.nako3", .root = main.root.?, .marker_rank = 1 },
+    });
+    defer program.deinit();
+    try std.testing.expect(program.succeeded());
+    var imported_calls: usize = 0;
+    for (program.bindings) |binding| {
+        if (binding.kind == .call and std.mem.eql(u8, binding.resolved_name, "lib__倍算")) imported_calls += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 1), imported_calls);
+}
+
+test "静的に読み取れる動的命令を戻り値の候補として実引数付きで呼び出す" {
+    // 戻る直前の`.word`候補がESM plugin等から読み取った命令名なら、
+    // 非関数値として実引数を捨てず、従来どおり動的builtinへ束縛する。
+    const parser = @import("../frontend/parser.zig");
+    const aliases = [_]DynamicCommandAlias{.{
+        .source_namespace = "外部倍算",
+        .dispatch_namespace = "外部倍算",
+        .exact = true,
+    }};
+    var parsed = try parser.parse(std.testing.allocator, "●呼出とは\n3を外部倍算で戻る。\nここまで\n呼出()を表示。\n", "dynamic-return.nako3");
+    defer parsed.deinit();
+    var program = try analyzeModules(std.testing.allocator, &.{.{
+        .name = "dynamic-return",
+        .path = "dynamic-return.nako3",
+        .root = parsed.root.?,
+        .dynamic_command_aliases = &aliases,
+    }});
+    defer program.deinit();
+    try std.testing.expect(program.succeeded());
+    var dynamic_calls: usize = 0;
+    for (program.bindings) |binding| {
+        if (binding.kind == .builtin and binding.dynamic_builtin and
+            std.mem.eql(u8, binding.resolved_name, "外部倍算")) dynamic_calls += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 1), dynamic_calls);
+}
+
+test "直接取り込んだ動的命令を戻り値の候補として実引数付きで呼び出す" {
+    // 直接取り込みは package の exact alias を持たず、取り込み位置以降の
+    // 未知命令を allows_dynamic_commands で実行時登録へ委ねる。戻る直前の
+    // `.word`候補も同じ可視範囲で動的builtinへ束縛し、実引数を保持する。
+    const parser = @import("../frontend/parser.zig");
+    var parsed = try parser.parse(std.testing.allocator, "●呼出とは\n3を外部倍算で戻る。\nここまで\n呼出()を表示。\n", "direct-dynamic-return.nako3");
+    defer parsed.deinit();
+    var program = try analyzeModules(std.testing.allocator, &.{.{
+        .name = "direct-dynamic-return",
+        .path = "direct-dynamic-return.nako3",
+        .root = parsed.root.?,
+        .allows_dynamic_commands = true,
+        .allows_dynamic_commands_from = 0,
+    }});
+    defer program.deinit();
+    try std.testing.expect(program.succeeded());
+    var dynamic_calls: usize = 0;
+    for (program.bindings) |binding| {
+        if (binding.kind == .builtin and binding.dynamic_builtin and
+            std.mem.eql(u8, binding.resolved_name, "外部倍算")) dynamic_calls += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 1), dynamic_calls);
+}
+
+test "取り込み位置より前と取り込みなしの戻り値候補は診断する" {
+    // 直接取り込みの許可は取り込み文の位置以降だけに効く。取り込み前と
+    // 取り込みなしでは、戻る直前の実引数を従来どおり未解決引数にする。
+    const parser = @import("../frontend/parser.zig");
+    const expected_message = "『戻』文の直前に未解決の引数があります。『(式)を戻す』のように式をカッコで括ってください。";
+    const cases = [_]struct { name: []const u8, allows: bool, from: usize }{
+        .{ .name = "before-import", .allows = true, .from = std.math.maxInt(usize) },
+        .{ .name = "no-import", .allows = false, .from = 0 },
+    };
+    for (cases) |case| {
+        var parsed = try parser.parse(std.testing.allocator, "●呼出とは\n3を外部倍算で戻る。\nここまで\n呼出()を表示。\n", case.name);
+        defer parsed.deinit();
+        var program = try analyzeModules(std.testing.allocator, &.{.{
+            .name = case.name,
+            .path = case.name,
+            .root = parsed.root.?,
+            .allows_dynamic_commands = case.allows,
+            .allows_dynamic_commands_from = case.from,
+        }});
+        defer program.deinit();
+        try std.testing.expect(!program.succeeded());
+        try std.testing.expectEqual(@as(usize, 1), program.diagnostics.len);
+        try std.testing.expectEqual(diagnostic.Code.unresolved_word, program.diagnostics[0].code);
+        try std.testing.expectEqualStrings(expected_message, program.diagnostics[0].message);
+    }
+}
+
+test "直接取り込み後でも普通の変数・定数・非関数組み込みの実引数は診断する" {
+    // 動的命令の許可より前に、宣言済みの変数・定数・値として解決する
+    // 組み込みが優先される。これらへ保留した実引数を渡した場合は、従来
+    // どおり『戻』文の未解決引数にする。
+    const parser = @import("../frontend/parser.zig");
+    const expected_message = "『戻』文の直前に未解決の引数があります。『(式)を戻す』のように式をカッコで括ってください。";
+    const cases = [_][]const u8{
+        "V=5\n●呼出とは\n2をVで戻る。\nここまで\n呼出()を表示。\n",
+        "定数 C=5\n●呼出とは\n2をCで戻る。\nここまで\n呼出()を表示。\n",
+        "●呼出とは\n2を改行で戻る。\nここまで\n呼出()を表示。\n",
+        "●呼出とは\n2をそれで戻る。\nここまで\n呼出()を表示。\n",
+    };
+    for (cases) |source| {
+        var parsed = try parser.parse(std.testing.allocator, source, "direct-dynamic-values.nako3");
+        defer parsed.deinit();
+        var program = try analyzeModules(std.testing.allocator, &.{.{
+            .name = "direct-dynamic-values",
+            .path = "direct-dynamic-values.nako3",
+            .root = parsed.root.?,
+            .allows_dynamic_commands = true,
+            .allows_dynamic_commands_from = 0,
+        }});
+        defer program.deinit();
+        try std.testing.expect(!program.succeeded());
+        try std.testing.expectEqual(@as(usize, 1), program.diagnostics.len);
+        try std.testing.expectEqual(diagnostic.Code.unresolved_word, program.diagnostics[0].code);
+        try std.testing.expectEqualStrings(expected_message, program.diagnostics[0].message);
+    }
+}
+
 test "package qualified symbolは宣言したimporter以外から解決されない" {
     const parser = @import("../frontend/parser.zig");
     var package = try parser.parse(std.testing.allocator, "値=1\n", "math.nako3");
@@ -906,6 +1099,292 @@ test "動的評価へ引き継いだ実行時登録命令名に無い呼出し�
         if (std.mem.eql(u8, item.message, "関数『未登録命令』が見当たりません。")) diagnosed = true;
     }
     try std.testing.expect(diagnosed);
+}
+
+test "分割定数宣言は宣言位置以降の代入だけを拒否する" {
+    const parser = @import("../frontend/parser.zig");
+    const Case = struct {
+        fn expectAssignments(source: []const u8, expected: usize, expected_line: ?usize) !void {
+            var parsed = try parser.parse(std.testing.allocator, source, "main.nako3");
+            defer parsed.deinit();
+            var program = try analyze(std.testing.allocator, parsed.root.?, "main.nako3");
+            defer program.deinit();
+            var assignments: usize = 0;
+            var first_line: ?usize = null;
+            for (program.diagnostics) |item| {
+                if (item.code != .assign_to_constant) continue;
+                assignments += 1;
+                if (first_line == null) first_line = item.span.line;
+            }
+            try std.testing.expectEqual(expected, assignments);
+            if (expected == 0) try std.testing.expect(program.succeeded());
+            if (expected_line) |line| {
+                try std.testing.expectEqual(line, first_line orelse @as(usize, 0));
+            }
+        }
+    };
+    // 公式convDefLocalVarlistは既存束縛を宣言位置から定数化する。宣言前の
+    // 代入は有効なまま、宣言以後の代入だけを拒否する（0始まりの行番号）。
+    try Case.expectAssignments("A=0\n定数[A,B]=[4,5]\nJSONエンコード([A,B])を表示。\n", 0, null);
+    try Case.expectAssignments("A=0\n定数[A,B]=[4,5]\nA=9\n", 1, 2);
+    // 変数リストによる再代入も定数化後の各名で拒否する。宣言前の行は
+    // 診断せず、再代入の行だけを指す。
+    try Case.expectAssignments("A=0\n定数[A,B]=[4,5]\n変数[A,B]=[1,2]\n", 2, 2);
+    // 可変のままの既存変数への分割再代入は従来どおり成功する。
+    try Case.expectAssignments("A=0\nB=0\n変数[A,B]=[4,5]\nA=9\nJSONエンコード([A,B])を表示。\n", 0, null);
+    const declaration = "定数[A,B]=[4,5]\n";
+    const loops = [_][]const u8{
+        "Aを1から2まで繰り返す\nAを表示\nここまで\n",
+        "Aで[1,2]を反復\nAを表示\nここまで\n",
+    };
+    inline for (loops) |loop| {
+        try Case.expectAssignments("A=0\n" ++ loop ++ declaration, 0, null);
+        try Case.expectAssignments("A=0\n" ++ declaration ++ loop, 1, 2);
+    }
+
+    try Case.expectAssignments("A=0\n" ++ declaration ++ "●Fとは\n" ++ loops[0] ++ "ここまで\nF\n", 1, 3);
+    try Case.expectAssignments("●Fとは\nA=0\n" ++ declaration ++ "G=関数()\n" ++ loops[1] ++ "ここまで\nG()\nここまで\nF\n", 1, 4);
+
+    inline for (loops) |loop| {
+        try Case.expectAssignments("定数 A=13\n●Fとは\n" ++ loop ++ declaration ++ "ここまで\nF\n", 1, 2);
+        try Case.expectAssignments("定数 A=13\n●Fとは\n変数 A=0\n" ++ loop ++ "ここまで\nF\n", 0, null);
+    }
+
+    // 初期化式に含まれる匿名関数の変換は、分割宣言が束縛を定数化する前。
+    try Case.expectAssignments("●Fとは\nA=0\n定数[A,B]=実行(関数()\nA=8\n[A,5]で戻る\nここまで)\nAを表示\nここまで\nF\n", 0, null);
+    try Case.expectAssignments("●Fとは\nA=0\n定数[A,B]=[4,5]\nG=関数()\nA=8\nここまで\nG()\nここまで\nF\n", 1, 4);
+
+    // 増減も同じ位置規則で拒否する。
+    try Case.expectAssignments("A=0\n定数[A,B]=[4,5]\nAを1増やす\n", 1, 2);
+    // 関数スコープでも宣言前は成功し、宣言後の増減だけを拒否する。
+    try Case.expectAssignments("●Fとは\nA=0\n定数[A,B]=[4,5]\nJSONエンコード([A,B])を表示。\nここまで\nF\n", 0, null);
+    try Case.expectAssignments("●Fとは\nA=0\n定数[A,B]=[4,5]\nAを1増やす\nここまで\nF\n", 1, 3);
+}
+
+test "関数内取り込みの分割定数宣言は展開済み順序で前後を判定する" {
+    const module_graph = @import("module_graph.zig");
+    const Provider = struct {
+        main_source: []const u8,
+        module_source: []const u8,
+        nested_source: ?[]const u8 = null,
+
+        fn sourceProvider(self: *@This()) module_graph.SourceProvider {
+            return .{ .context = self, .readFn = read };
+        }
+
+        fn read(context: *anyopaque, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            if (pathHasSuffix(path, "main.nako3")) return allocator.dupe(u8, self.main_source);
+            if (pathHasSuffix(path, "定数部.nako3")) return allocator.dupe(u8, self.module_source);
+            if (self.nested_source) |source| {
+                if (pathHasSuffix(path, "初期化.nako3")) return allocator.dupe(u8, source);
+            }
+            return error.FileNotFound;
+        }
+
+        fn pathHasSuffix(path: []const u8, suffix: []const u8) bool {
+            if (suffix.len > path.len) return false;
+            const start = path.len - suffix.len;
+            if (start > 0 and path[start - 1] != '/' and path[start - 1] != '\\') return false;
+            for (suffix, 0..) |char, index| {
+                const path_char = path[start + index];
+                const normalized_path_char: u8 = if (path_char == '\\') '/' else path_char;
+                const normalized_suffix_char: u8 = if (char == '\\') '/' else char;
+                if (normalized_path_char != normalized_suffix_char) return false;
+            }
+            return true;
+        }
+    };
+    const Result = struct {
+        assignments: usize = 0,
+        first_line: ?usize = null,
+    };
+    const Runner = struct {
+        fn count(main_source: []const u8, module_source: []const u8) !Result {
+            return countWith(Provider{ .main_source = main_source, .module_source = module_source });
+        }
+
+        fn countNested(main_source: []const u8, module_source: []const u8, nested_source: []const u8) !Result {
+            return countWith(Provider{
+                .main_source = main_source,
+                .module_source = module_source,
+                .nested_source = nested_source,
+            });
+        }
+
+        fn countWith(provider: Provider) !Result {
+            var mutable_provider = provider;
+            var graph = try module_graph.load(std.testing.allocator, "main.nako3", mutable_provider.sourceProvider(), .{});
+            defer graph.deinit();
+            var program = try graph.analyze(std.testing.allocator);
+            defer program.deinit();
+            var result = Result{};
+            for (program.diagnostics) |item| {
+                if (item.code != .assign_to_constant) continue;
+                result.assignments += 1;
+                if (result.first_line == null) result.first_line = item.span.line;
+            }
+            if (result.assignments == 0) try std.testing.expect(program.succeeded());
+            return result;
+        }
+    };
+    const run = Runner.count;
+    const runNested = Runner.countNested;
+
+    const main_before = "●呼出とは\nA=0\n!「./定数部.nako3」を取り込む。\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n";
+    const main_after = "●呼出とは\nA=0\n!「./定数部.nako3」を取り込む。\nA=9\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n";
+    const main_after_increment = "●呼出とは\nA=0\n!「./定数部.nako3」を取り込む。\nAを1増やす\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n";
+    const main_plain = "●呼出とは\n!「./定数部.nako3」を取り込む。\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n";
+    const const_decl = "定数[A,B]=[4,5]\n";
+    // 取り込み元のコメント量で宣言のバイト位置が変わっても、取り込み前の
+    // 代入と取り込み後の代入・増減の判定は展開済みの走査順で一定になる。
+    const long_const_decl =
+        "# xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n" ++ const_decl;
+    // 書き込み側のファイルに長いコメントを置いても、展開順の判定は変わらない。
+    const long_pre_write_module =
+        "# xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nA=0\n";
+    try std.testing.expectEqual(@as(usize, 0), (try run(main_before, const_decl)).assignments);
+    try std.testing.expectEqual(@as(usize, 0), (try run(main_before, long_const_decl)).assignments);
+    const after_short = try run(main_after, const_decl);
+    try std.testing.expectEqual(@as(usize, 1), after_short.assignments);
+    try std.testing.expectEqual(@as(usize, 3), after_short.first_line.?);
+    const after_long = try run(main_after, long_const_decl);
+    try std.testing.expectEqual(@as(usize, 1), after_long.assignments);
+    try std.testing.expectEqual(@as(usize, 3), after_long.first_line.?);
+    const after_increment = try run(main_after_increment, long_const_decl);
+    try std.testing.expectEqual(@as(usize, 1), after_increment.assignments);
+    try std.testing.expectEqual(@as(usize, 3), after_increment.first_line.?);
+    // 取り込み元ファイル内の宣言前後も同じ走査順で判定する。宣言後の
+    // 書き込みは、取り込み元モジュール単体の解析とインライン展開の
+    // 双方で同じ診断になる。
+    try std.testing.expectEqual(@as(usize, 0), (try run(main_plain, "A=0\n定数[A,B]=[4,5]\n")).assignments);
+    const inside_after = try run(main_plain, "定数[A,B]=[4,5]\nA=9\n");
+    try std.testing.expectEqual(@as(usize, 2), inside_after.assignments);
+    try std.testing.expectEqual(@as(usize, 1), inside_after.first_line.?);
+    // 可変の分割宣言は取り込み後も書き込みを拒否しない。
+    try std.testing.expectEqual(@as(usize, 0), (try run(main_after, "変数[A,B]=[4,5]\n")).assignments);
+    // 取り込み先の定数へ取り込み元から書き込む場合は従来どおり拒否する。
+    const main_const_then_import = "●呼出とは\n定数[A,B]=[4,5]\n!「./定数部.nako3」を取り込む。\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n";
+    const cross_module = try run(main_const_then_import, "A=9\n");
+    try std.testing.expectEqual(@as(usize, 1), cross_module.assignments);
+    try std.testing.expectEqual(@as(usize, 0), cross_module.first_line.?);
+    const cross_module_increment = try run(main_const_then_import, "Aを1増やす\n");
+    try std.testing.expectEqual(@as(usize, 1), cross_module_increment.assignments);
+    try std.testing.expectEqual(@as(usize, 0), cross_module_increment.first_line.?);
+
+    // 取り込み先（呼出側）の宣言前の書き込みも、取り込み元の宣言と同じ
+    // 関数スコープへ展開される。書き込みを最初に作ったファイルと宣言の
+    // ファイルが違っても、展開済みの走査順で宣言前なら許可する。
+    const parent_before = "●呼出とは\nA=0\n!「./定数部.nako3」を取り込む。\nA=7\n定数[A,B]=[4,5]\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n";
+    try std.testing.expectEqual(@as(usize, 0), (try run(parent_before, "A=0\n")).assignments);
+    try std.testing.expectEqual(@as(usize, 0), (try run(parent_before, long_pre_write_module)).assignments);
+    const parent_before_increment = "●呼出とは\nA=0\nAを1増やす\n!「./定数部.nako3」を取り込む。\nA=7\n定数[A,B]=[4,5]\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n";
+    try std.testing.expectEqual(@as(usize, 0), (try run(parent_before_increment, "A=0\n")).assignments);
+    // 逆に、書き込みを最初に作ったのが取り込み元でも、宣言前なら通る。
+    try std.testing.expectEqual(@as(usize, 0), (try run(main_before, "A=0\n" ++ const_decl)).assignments);
+    try std.testing.expectEqual(@as(usize, 0), (try run(main_before, "Aを1増やす\n" ++ const_decl)).assignments);
+    // 仮引数も同じ関数スコープの既存束縛なので、宣言前の取り込み元書き込みを許す。
+    const main_parameter = "●呼出(Aを)とは\n!「./定数部.nako3」を取り込む。\n[A,B]で戻る\nここまで\nJSONエンコード(呼出(3))を表示。\n";
+    try std.testing.expectEqual(@as(usize, 0), (try run(main_parameter, "A=7\n" ++ const_decl)).assignments);
+    // 入れ子の取り込みでも、展開後の関数スコープと走査順で判定する。
+    const main_nested = "●呼出とは\nA=0\n!「./定数部.nako3」を取り込む。\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n";
+    try std.testing.expectEqual(@as(usize, 0), (try runNested(main_nested, "!「./初期化.nako3」を取り込む。\n" ++ const_decl, "A=7\n")).assignments);
+    // 同じ関数スコープでも宣言後の書き込みは、由来ファイルにかかわらず拒否する。
+    const parent_after = "●呼出とは\nA=0\n!「./定数部.nako3」を取り込む。\n定数[A,B]=[4,5]\nA=7\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n";
+    const parent_after_result = try run(parent_after, "A=0\n");
+    try std.testing.expectEqual(@as(usize, 1), parent_after_result.assignments);
+    try std.testing.expectEqual(@as(usize, 4), parent_after_result.first_line.?);
+
+    // 別スコープの定数は書き換えられない。モジュール定数へ取り込み元から
+    // 書く場合と、取り込んだ別モジュールの定数へ取り込み先から書く場合の
+    // 双方を拒否する。
+    const main_module_const = "定数 A=0\n●呼出とは\n!「./定数部.nako3」を取り込む。\nAを表示\nここまで\n呼出()\n";
+    const module_const_write = try run(main_module_const, "A=9\n");
+    try std.testing.expectEqual(@as(usize, 1), module_const_write.assignments);
+    try std.testing.expectEqual(@as(usize, 0), module_const_write.first_line.?);
+    const main_write_imported_const = "!「./定数部.nako3」を取り込む。\nA=9\n";
+    const imported_const_write = try run(main_write_imported_const, "定数 A=0\n");
+    try std.testing.expectEqual(@as(usize, 1), imported_const_write.assignments);
+    try std.testing.expectEqual(@as(usize, 1), imported_const_write.first_line.?);
+    // 別の関数のローカル定数と同名でも、新しい関数ローカルは独立して書ける。
+    const main_other_scope = "●定数側とは\n定数[A,B]=[4,5]\n[A,B]で戻る\nここまで\n●書込側とは\n!「./定数部.nako3」を取り込む。\nAを表示\nここまで\nJSONエンコード(定数側())を表示。\n書込側()\n";
+    try std.testing.expectEqual(@as(usize, 0), (try run(main_other_scope, "A=9\n")).assignments);
+    // 分割宣言以外のスカラー定数は、従来どおり宣言後の書き込みだけを拒否する。
+    try std.testing.expectEqual(@as(usize, 1), (try run("定数 A=0\nA=9\n", "A=0\n")).assignments);
+    try std.testing.expectEqual(@as(usize, 1), (try run("●Fとは\n定数 A=0\nA=9\nここまで\nF()\n", "A=0\n")).assignments);
+}
+
+test "分割定数を捕捉した匿名関数は宣言の展開位置と関数定義位置で判定する" {
+    const module_graph = @import("module_graph.zig");
+    const Provider = struct {
+        main_source: []const u8,
+        module_source: []const u8,
+
+        fn sourceProvider(self: *@This()) module_graph.SourceProvider {
+            return .{ .context = self, .readFn = read };
+        }
+
+        fn read(context: *anyopaque, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            if (std.mem.endsWith(u8, path, "main.nako3")) return allocator.dupe(u8, self.main_source);
+            if (std.mem.endsWith(u8, path, "定数部.nako3")) return allocator.dupe(u8, self.module_source);
+            return error.FileNotFound;
+        }
+    };
+    const Result = struct { count: usize = 0, line: ?usize = null };
+    const count = struct {
+        fn assignments(main_source: []const u8, module_source: []const u8) !Result {
+            var provider = Provider{ .main_source = main_source, .module_source = module_source };
+            var graph = try module_graph.load(std.testing.allocator, "main.nako3", provider.sourceProvider(), .{});
+            defer graph.deinit();
+            var program = try graph.analyze(std.testing.allocator);
+            defer program.deinit();
+            var result = Result{};
+            for (program.diagnostics) |item| {
+                if (item.code != .assign_to_constant) continue;
+                result.count += 1;
+                if (result.line == null) result.line = item.span.line;
+            }
+            if (result.count == 0) try std.testing.expect(program.succeeded());
+            return result;
+        }
+    }.assignments;
+
+    const const_decl = "定数[A,B]=[4,5]\n";
+    const long_const_decl = "# xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n" ++ const_decl;
+    const before_import = "●呼出とは\nA=0\nF=関数()\nA=8\nここまで\n!「./定数部.nako3」を取り込む。\nF()\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n";
+    const after_import = "●呼出とは\nA=0\n!「./定数部.nako3」を取り込む。\nF=関数()\nA=8\nここまで\nF()\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n";
+    // 取り込み前に関数定義があれば、書き込みは宣言前の可変束縛として通る。
+    // 取り込み後に定義された関数は定数化後の束縛を捕捉するため拒否する。
+    // どちらも宣言側コメント量に依存しない。
+    try std.testing.expectEqual(@as(usize, 0), (try count(before_import, const_decl)).count);
+    try std.testing.expectEqual(@as(usize, 0), (try count(before_import, long_const_decl)).count);
+    const after_short = try count(after_import, const_decl);
+    try std.testing.expectEqual(@as(usize, 1), after_short.count);
+    try std.testing.expectEqual(@as(usize, 4), after_short.line.?);
+    const after_long = try count(after_import, long_const_decl);
+    try std.testing.expectEqual(@as(usize, 1), after_long.count);
+    try std.testing.expectEqual(@as(usize, 4), after_long.line.?);
+
+    // 同じファイルへ直接置いた対照も、匿名関数の定義位置で同じ前後になる。
+    const inline_before = "●呼出とは\nA=0\nF=関数()\nA=8\nここまで\n定数[A,B]=[4,5]\nF()\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n";
+    const inline_after = "●呼出とは\nA=0\n定数[A,B]=[4,5]\nF=関数()\nA=8\nここまで\nF()\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n";
+    try std.testing.expectEqual(@as(usize, 0), (try count(inline_before, "")).count);
+    const inline_after_result = try count(inline_after, "");
+    try std.testing.expectEqual(@as(usize, 1), inline_after_result.count);
+    try std.testing.expectEqual(@as(usize, 4), inline_after_result.line.?);
+
+    // 無名関数が複数段でも、宣言スコープ直下の関数定義位置で判定する。
+    const nested_before = "●呼出とは\nA=0\nF=関数()\nG=関数()\nA=8\nここまで\nG()\nここまで\n!「./定数部.nako3」を取り込む。\nF()\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n";
+    const nested_after = "●呼出とは\nA=0\n!「./定数部.nako3」を取り込む。\nF=関数()\nG=関数()\nA=8\nここまで\nG()\nここまで\nF()\n[A,B]で戻る\nここまで\nJSONエンコード(呼出())を表示。\n";
+    try std.testing.expectEqual(@as(usize, 0), (try count(nested_before, const_decl)).count);
+    const nested_after_result = try count(nested_after, const_decl);
+    try std.testing.expectEqual(@as(usize, 1), nested_after_result.count);
+    try std.testing.expectEqual(@as(usize, 5), nested_after_result.line.?);
+
+    // 関係のない別関数の同名変数は独立して書ける。
+    const other_scope = "●定数側とは\n定数[A,B]=[4,5]\n[A,B]で戻る\nここまで\n●書込側とは\n!「./定数部.nako3」を取り込む。\nAを表示\nここまで\nJSONエンコード(定数側())を表示。\n書込側()\n";
+    try std.testing.expectEqual(@as(usize, 0), (try count(other_scope, "A=9\n")).count);
 }
 
 test "package内scopeの依存命令は所有者修飾のdispatch名へ束縛する" {

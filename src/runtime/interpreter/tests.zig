@@ -222,9 +222,8 @@ test "助詞付き命令呼出しの直後の『戻る』は呼出し結果を�
 
 test "連文の途中でも『戻る』は先行呼出しを実行して戻り値を返す" {
     // 連文のあとの助詞付き呼出し・変数・裸の『戻る』は、先行する連文を
-    // 実行したうえで戻り値を返す。連鎖中の呼出し引数には『して』の
-    // 暗黙『それ』も含まれるため、`要素数`は『それ』を引数に取る
-    // （`XしてYを表示`と同じ連鎖引数モデル）。
+    // 実行したうえで戻り値を返す。`「abc」の要素数`は明示引数がスロットを
+    // 埋めるため、連文が挿入した暗黙『それ』を重ねて渡さない（公式も3）。
     const source =
         "●Fとは\n" ++
         "「x」と表示して「abc」の要素数で戻る\n" ++
@@ -251,7 +250,7 @@ test "連文の途中でも『戻る』は先行呼出しを実行して戻り�
     defer interpreter.deinit();
 
     _ = try interpreter.run();
-    try std.testing.expectEqualStrings("x\n1\nx\nabc\nx\nundefined\n", host.written());
+    try std.testing.expectEqualStrings("x\n3\nx\nabc\nx\nundefined\n", host.written());
 }
 
 test "条件助詞付き呼出しのあとの『戻る』は条件文の分岐になる" {
@@ -287,6 +286,28 @@ test "条件助詞付き呼出しのあとの『戻る』は条件文の分岐�
 
     _ = try interpreter.run();
     try std.testing.expectEqualStrings("9\n9\n1\n1\n", host.written());
+}
+
+test "範囲内の条件式で同行の真節を実行する" {
+    // Issue #297: `ならば`の後ろの同行真節が条件呼出しの引数へ吸収されると
+    // 実行されない。条件式は`範囲内(A,B,C)`として評価し、真節を実行する。
+    const source =
+        "もし、30が30から50の範囲内ならば、「30は範囲内」と表示。\n" ++
+        "もし、50が30から50の範囲内ならば、「50は範囲内」と表示。\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("30は範囲内\n50は範囲内\n", host.written());
 }
 
 test "『引数』宣言は同名ローカルとして再利用する" {

@@ -8,9 +8,9 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 809,
-    "nativeAot": 445,
-    "interpreter": 374,
+    "total": 864,
+    "nativeAot": 449,
+    "interpreter": 425,
     "compatJs": 9
   },
   "fixtureCoverageStates": {
@@ -4377,6 +4377,7 @@
         "plugin-system-math"
       ],
       "aotFixtureIds": [
+        "native-cond-predicate-josi-call",
         "native-cut-commands",
         "native-system-arithmetic-comparison-commands"
       ],
@@ -4389,6 +4390,9 @@
           ]
         },
         "aot": {
+          "native-cond-predicate-josi-call": [
+            "fixture.commands"
+          ],
           "native-cut-commands": [
             "fixture.commands"
           ],
@@ -4428,6 +4432,7 @@
         "plugin-system-math"
       ],
       "aotFixtureIds": [
+        "native-cond-predicate-josi-call",
         "native-cut-commands",
         "native-system-arithmetic-comparison-commands"
       ],
@@ -4440,6 +4445,9 @@
           ]
         },
         "aot": {
+          "native-cond-predicate-josi-call": [
+            "fixture.commands"
+          ],
           "native-cut-commands": [
             "fixture.commands"
           ],
@@ -4993,6 +5001,8 @@
         "plugin-system-math"
       ],
       "aotFixtureIds": [
+        "native-cond-predicate-josi-call",
+        "native-cond-range-inline-statement",
         "native-cut-commands",
         "native-system-arithmetic-comparison-commands"
       ],
@@ -5005,6 +5015,12 @@
           ]
         },
         "aot": {
+          "native-cond-predicate-josi-call": [
+            "fixture.commands"
+          ],
+          "native-cond-range-inline-statement": [
+            "fixture.commands"
+          ],
           "native-cut-commands": [
             "fixture.commands"
           ],
@@ -8906,6 +8922,7 @@
         "plugin-system-string-conversion"
       ],
       "aotFixtureIds": [
+        "native-cond-predicate-josi-call",
         "native-cut-commands",
         "native-system-format-and-character-predicate-commands"
       ],
@@ -8918,6 +8935,9 @@
           ]
         },
         "aot": {
+          "native-cond-predicate-josi-call": [
+            "fixture.commands"
+          ],
           "native-cut-commands": [
             "fixture.commands"
           ],
@@ -9185,6 +9205,7 @@
       ],
       "aotFixtureIds": [
         "native-cut-commands",
+        "native-system-byte-buffer-element-count",
         "native-system-string-length-search-boundary-commands"
       ],
       "compatJsFixtureIds": [],
@@ -9197,6 +9218,9 @@
         },
         "aot": {
           "native-cut-commands": [
+            "fixture.commands"
+          ],
+          "native-system-byte-buffer-element-count": [
             "fixture.commands"
           ],
           "native-system-string-length-search-boundary-commands": [
@@ -9235,6 +9259,7 @@
       ],
       "aotFixtureIds": [
         "native-cut-commands",
+        "native-system-byte-buffer-element-count",
         "native-system-string-length-search-boundary-commands"
       ],
       "compatJsFixtureIds": [],
@@ -9247,6 +9272,9 @@
         },
         "aot": {
           "native-cut-commands": [
+            "fixture.commands"
+          ],
+          "native-system-byte-buffer-element-count": [
             "fixture.commands"
           ],
           "native-system-string-length-search-boundary-commands": [
@@ -16744,6 +16772,8 @@
         "plugin-system-stdio"
       ],
       "aotFixtureIds": [
+        "native-cond-predicate-josi-call",
+        "native-cond-range-inline-statement",
         "native-cut-commands",
         "native-dictionary-numeric-key-boundaries",
         "native-numeric-pow-ecmascript-specials",
@@ -16772,6 +16802,12 @@
           ]
         },
         "aot": {
+          "native-cond-predicate-josi-call": [
+            "fixture.commands"
+          ],
+          "native-cond-range-inline-statement": [
+            "fixture.commands"
+          ],
           "native-cut-commands": [
             "fixture.commands"
           ],
@@ -25963,6 +25999,7 @@
         "native-system-byte-buffer-backing",
         "native-system-byte-buffer-backing-identity",
         "native-system-byte-buffer-direct-properties",
+        "native-system-byte-buffer-element-count",
         "native-system-byte-buffer-method-calls",
         "native-system-byte-buffer-null-prototype",
         "native-system-byte-buffer-property",
@@ -26009,6 +26046,9 @@
             "fixture.commands"
           ],
           "native-system-byte-buffer-direct-properties": [
+            "fixture.commands"
+          ],
+          "native-system-byte-buffer-element-count": [
             "fixture.commands"
           ],
           "native-system-byte-buffer-method-calls": [
@@ -26157,6 +26197,7 @@
         "native-system-byte-buffer-backing",
         "native-system-byte-buffer-backing-identity",
         "native-system-byte-buffer-direct-properties",
+        "native-system-byte-buffer-element-count",
         "native-system-byte-buffer-null-prototype",
         "native-system-byte-buffer-property",
         "native-system-dictionary-byte-buffer-enumeration",
@@ -26191,6 +26232,9 @@
             "fixture.commands"
           ],
           "native-system-byte-buffer-direct-properties": [
+            "fixture.commands"
+          ],
+          "native-system-byte-buffer-element-count": [
             "fixture.commands"
           ],
           "native-system-byte-buffer-null-prototype": [

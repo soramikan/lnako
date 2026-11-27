@@ -10,7 +10,7 @@
     "nativeEntries": 523,
     "nativeUniqueNames": 492,
     "fixtureSelection": "the default command-bearing selection plus the nine node-http callback/Promise/value/Discord/LINE-discontinued fixtures, one HTTP-server dispatch fixture, seven explicit plugin-route fixtures, and all native-cases command-bearing fixtures, excluding explicit error/termination/host gaps",
-    "fixtureCount": 232,
+    "fixtureCount": 235,
     "excludedFixtures": [
       {
         "key": "system-runtime-cases.json/system-runtime-execution-and-debug",
@@ -156,7 +156,7 @@
       "treeHashAlgorithm": "sha256-json-records-v3",
       "treeSha256": "7009b9bc0e96e9dfa3b51ad6a39685abfd4821435b202763b71ac53c6d444e64"
     },
-    "auditScriptSha256": "de08f228156c997895de3ab9f87889014e60c8bfc04c7abd93976b6c09c7df55"
+    "auditScriptSha256": "9ff54fa92a2b8d29576967c9245c238cd1860abf2a05fd2d63e0b54ff696e3ce"
   },
   "coverage": {
     "unambiguousObservedNativeEntries": 429,
@@ -25554,6 +25554,257 @@
         "traceSha256": "8748d264b962b8dc136e75661947b1b0c3037667044cb3807b3a8aec2838a4e2",
         "compileManifestSha256": "9cb56b6c5f476365689e58f51a1c04aa306cc21f83ff645b4d7c4da157d76284"
       }
+    },
+    {
+      "id": "native-system-byte-buffer-element-count",
+      "file": "native-cases.json",
+      "sourceSha256": "9f08ffe2e519a658dcc00b1da15b2b00176c611f7cc650afed0d3a20192f2751",
+      "associatedCommandNames": [
+        "ハッシュ値計算",
+        "ランダム配列生成",
+        "LEN",
+        "要素数"
+      ],
+      "associationWithoutDispatch": [],
+      "observedStaticCommandNames": [
+        "LEN",
+        "ハッシュ値計算",
+        "ランダム配列生成",
+        "表示",
+        "要素数"
+      ],
+      "observedDispatchCommandNames": [
+        "LEN",
+        "ハッシュ値計算",
+        "ランダム配列生成",
+        "表示",
+        "要素数"
+      ],
+      "dispatchExpectations": [],
+      "officialComparison": {
+        "oracle": "officialSource",
+        "routes": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "selectedOracleEquivalent": true,
+        "officialGeneratedAvailable": true,
+        "officialGeneratedRouteUnavailableReason": null,
+        "officialRoutesEquivalent": true,
+        "officialSourceStderrIncludes": null,
+        "results": {
+          "officialSource": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "2ead0cc57a7a40b69bcd46b28a9cdaf2f8b15c81c6977df833e3c6ef72fa0095",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "officialGenerated": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "2ead0cc57a7a40b69bcd46b28a9cdaf2f8b15c81c6977df833e3c6ef72fa0095",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "lnakoRun": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "2ead0cc57a7a40b69bcd46b28a9cdaf2f8b15c81c6977df833e3c6ef72fa0095",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "lnakoNativeO0": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "2ead0cc57a7a40b69bcd46b28a9cdaf2f8b15c81c6977df833e3c6ef72fa0095",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        }
+      },
+      "interpreter": {
+        "dispatchEventCount": 14,
+        "staticSuccessSiteCount": 14,
+        "expectedFailureSiteCount": 0,
+        "expectedFailureDispatchCount": 0,
+        "staticSiteWithoutAotManifestCount": 0,
+        "traceSha256": "5e2197191c5c4a225aaa0c117e632fbd4af5a84976b63da7f04970b629a752c4"
+      },
+      "aot": {
+        "manifestEntryCount": 14,
+        "dispatchAttemptCount": 14,
+        "dispatchResultCount": 14,
+        "staticSuccessSiteCount": 14,
+        "expectedFailureSiteCount": 0,
+        "expectedFailureDispatchCount": 0,
+        "failedDispatchCount": 0,
+        "traceSha256": "5b3204b71d05499ea6ab3dbbb11106470ae2a01770961673bed8cb6847c0fe89",
+        "compileManifestSha256": "cf4f0ce73afea0b31680114779e264aa934004319016309db2764680b7757e68"
+      }
+    },
+    {
+      "id": "native-cond-predicate-josi-call",
+      "file": "native-cases.json",
+      "sourceSha256": "71a93cbb6055838289c5fcc550f2016258e80bd5052c3817ccfdc842cf5fc971",
+      "associatedCommandNames": [
+        "奇数",
+        "偶数",
+        "範囲内",
+        "数列判定",
+        "表示"
+      ],
+      "associationWithoutDispatch": [],
+      "observedStaticCommandNames": [
+        "偶数",
+        "奇数",
+        "数列判定",
+        "範囲内",
+        "表示"
+      ],
+      "observedDispatchCommandNames": [
+        "偶数",
+        "奇数",
+        "数列判定",
+        "範囲内",
+        "表示"
+      ],
+      "dispatchExpectations": [],
+      "officialComparison": {
+        "oracle": "officialSource",
+        "routes": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "selectedOracleEquivalent": true,
+        "officialGeneratedAvailable": true,
+        "officialGeneratedRouteUnavailableReason": null,
+        "officialRoutesEquivalent": true,
+        "officialSourceStderrIncludes": null,
+        "results": {
+          "officialSource": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "8531d47c20786b89d47ce417bfdf3d0e026b4c4168851975bda0557c4f755048",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "officialGenerated": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "8531d47c20786b89d47ce417bfdf3d0e026b4c4168851975bda0557c4f755048",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "lnakoRun": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "8531d47c20786b89d47ce417bfdf3d0e026b4c4168851975bda0557c4f755048",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "lnakoNativeO0": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "8531d47c20786b89d47ce417bfdf3d0e026b4c4168851975bda0557c4f755048",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        }
+      },
+      "interpreter": {
+        "dispatchEventCount": 14,
+        "staticSuccessSiteCount": 14,
+        "expectedFailureSiteCount": 0,
+        "expectedFailureDispatchCount": 0,
+        "staticSiteWithoutAotManifestCount": 0,
+        "traceSha256": "ebdcde22c4871a14b3684901393299a974811afa055506f933dd9c85ec7008b5"
+      },
+      "aot": {
+        "manifestEntryCount": 19,
+        "dispatchAttemptCount": 14,
+        "dispatchResultCount": 14,
+        "staticSuccessSiteCount": 14,
+        "expectedFailureSiteCount": 0,
+        "expectedFailureDispatchCount": 0,
+        "failedDispatchCount": 0,
+        "traceSha256": "86a1419a99f0ab88d47365ff86c1087aab418c5871d4c1609b4ad1d72db85fbe",
+        "compileManifestSha256": "3a55f799ab518f4dd0728f5210a76e20b2d20f519551077177ed26c554720344"
+      }
+    },
+    {
+      "id": "native-cond-range-inline-statement",
+      "file": "native-cases.json",
+      "sourceSha256": "941409ce5f9b3cdf6f26513c622902fa5069bd4e976bc105466cc59f9a958ece",
+      "associatedCommandNames": [
+        "範囲内",
+        "表示"
+      ],
+      "associationWithoutDispatch": [],
+      "observedStaticCommandNames": [
+        "範囲内",
+        "表示"
+      ],
+      "observedDispatchCommandNames": [
+        "範囲内",
+        "表示"
+      ],
+      "dispatchExpectations": [],
+      "officialComparison": {
+        "oracle": "officialSource",
+        "routes": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "selectedOracleEquivalent": true,
+        "officialGeneratedAvailable": true,
+        "officialGeneratedRouteUnavailableReason": null,
+        "officialRoutesEquivalent": true,
+        "officialSourceStderrIncludes": null,
+        "results": {
+          "officialSource": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "ebc7df82eebe3a1c866d0061ea7c0d89a7749c9acefdce5a74d7f87db06e6469",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "officialGenerated": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "ebc7df82eebe3a1c866d0061ea7c0d89a7749c9acefdce5a74d7f87db06e6469",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "lnakoRun": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "ebc7df82eebe3a1c866d0061ea7c0d89a7749c9acefdce5a74d7f87db06e6469",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "lnakoNativeO0": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "ebc7df82eebe3a1c866d0061ea7c0d89a7749c9acefdce5a74d7f87db06e6469",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        }
+      },
+      "interpreter": {
+        "dispatchEventCount": 4,
+        "staticSuccessSiteCount": 4,
+        "expectedFailureSiteCount": 0,
+        "expectedFailureDispatchCount": 0,
+        "staticSiteWithoutAotManifestCount": 0,
+        "traceSha256": "c94a546b056a8090c32dfae72471a92eb658c6e229996ce4a786268057d4c3b8"
+      },
+      "aot": {
+        "manifestEntryCount": 4,
+        "dispatchAttemptCount": 4,
+        "dispatchResultCount": 4,
+        "staticSuccessSiteCount": 4,
+        "expectedFailureSiteCount": 0,
+        "expectedFailureDispatchCount": 0,
+        "failedDispatchCount": 0,
+        "traceSha256": "e751996232d656cdb417067b12502dafa14b370b577b7417697b015a952b8be7",
+        "compileManifestSha256": "1e7e2b06a501f99dbd27a7738be2b07a57c4f5f23fafdc030ddb7f6abb6306fb"
+      }
     }
   ],
   "sites": [
@@ -25801,6 +26052,438 @@
       "fixtureId": "native-caniuse-browsers",
       "file": "native-cases.json",
       "siteId": "0x0000000000000006",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtimeRoutes": [
+        "direct-display"
+      ],
+      "interpreterRoutes": [
+        "interpreter-core"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-cond-predicate-josi-call",
+      "file": "native-cases.json",
+      "siteId": "0x0000000000000001",
+      "sourceName": "奇数",
+      "canonicalOpcode": "is_odd",
+      "opcode": 23,
+      "route": "builtin",
+      "runtimeRoutes": [
+        "builtin"
+      ],
+      "interpreterRoutes": [
+        "plugin_system"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0091",
+      "name": "奇数",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-cond-predicate-josi-call",
+      "file": "native-cases.json",
+      "siteId": "0x0000000000000002",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtimeRoutes": [
+        "direct-display"
+      ],
+      "interpreterRoutes": [
+        "interpreter-core"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-cond-predicate-josi-call",
+      "file": "native-cases.json",
+      "siteId": "0x0000000000000004",
+      "sourceName": "偶数",
+      "canonicalOpcode": "is_even",
+      "opcode": 22,
+      "route": "builtin",
+      "runtimeRoutes": [
+        "builtin"
+      ],
+      "interpreterRoutes": [
+        "plugin_system"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0090",
+      "name": "偶数",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-cond-predicate-josi-call",
+      "file": "native-cases.json",
+      "siteId": "0x0000000000000005",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtimeRoutes": [
+        "direct-display"
+      ],
+      "interpreterRoutes": [
+        "interpreter-core"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-cond-predicate-josi-call",
+      "file": "native-cases.json",
+      "siteId": "0x0000000000000007",
+      "sourceName": "範囲内",
+      "canonicalOpcode": "in_range",
+      "opcode": 32,
+      "route": "builtin",
+      "runtimeRoutes": [
+        "builtin"
+      ],
+      "interpreterRoutes": [
+        "plugin_system"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0102",
+      "name": "範囲内",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-cond-predicate-josi-call",
+      "file": "native-cases.json",
+      "siteId": "0x0000000000000008",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtimeRoutes": [
+        "direct-display"
+      ],
+      "interpreterRoutes": [
+        "interpreter-core"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-cond-predicate-josi-call",
+      "file": "native-cases.json",
+      "siteId": "0x000000000000000a",
+      "sourceName": "数列判定",
+      "canonicalOpcode": "number_sequence_predicate",
+      "opcode": 138,
+      "route": "builtin",
+      "runtimeRoutes": [
+        "builtin"
+      ],
+      "interpreterRoutes": [
+        "plugin_system"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0176",
+      "name": "数列判定",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-cond-predicate-josi-call",
+      "file": "native-cases.json",
+      "siteId": "0x000000000000000b",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtimeRoutes": [
+        "direct-display"
+      ],
+      "interpreterRoutes": [
+        "interpreter-core"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-cond-predicate-josi-call",
+      "file": "native-cases.json",
+      "siteId": "0x000000000000000c",
+      "sourceName": "数列判定",
+      "canonicalOpcode": "number_sequence_predicate",
+      "opcode": 138,
+      "route": "builtin",
+      "runtimeRoutes": [
+        "builtin"
+      ],
+      "interpreterRoutes": [
+        "plugin_system"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0176",
+      "name": "数列判定",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-cond-predicate-josi-call",
+      "file": "native-cases.json",
+      "siteId": "0x000000000000000d",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtimeRoutes": [
+        "direct-display"
+      ],
+      "interpreterRoutes": [
+        "interpreter-core"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-cond-predicate-josi-call",
+      "file": "native-cases.json",
+      "siteId": "0x000000000000000e",
+      "sourceName": "数列判定",
+      "canonicalOpcode": "number_sequence_predicate",
+      "opcode": 138,
+      "route": "builtin",
+      "runtimeRoutes": [
+        "builtin"
+      ],
+      "interpreterRoutes": [
+        "plugin_system"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0176",
+      "name": "数列判定",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-cond-predicate-josi-call",
+      "file": "native-cases.json",
+      "siteId": "0x000000000000000f",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtimeRoutes": [
+        "direct-display"
+      ],
+      "interpreterRoutes": [
+        "interpreter-core"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-cond-predicate-josi-call",
+      "file": "native-cases.json",
+      "siteId": "0x0000000000000011",
+      "sourceName": "奇数",
+      "canonicalOpcode": "is_odd",
+      "opcode": 23,
+      "route": "builtin",
+      "runtimeRoutes": [
+        "builtin"
+      ],
+      "interpreterRoutes": [
+        "plugin_system"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0091",
+      "name": "奇数",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-cond-predicate-josi-call",
+      "file": "native-cases.json",
+      "siteId": "0x0000000000000012",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtimeRoutes": [
+        "direct-display"
+      ],
+      "interpreterRoutes": [
+        "interpreter-core"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-cond-range-inline-statement",
+      "file": "native-cases.json",
+      "siteId": "0x0000000000000001",
+      "sourceName": "範囲内",
+      "canonicalOpcode": "in_range",
+      "opcode": 32,
+      "route": "builtin",
+      "runtimeRoutes": [
+        "builtin"
+      ],
+      "interpreterRoutes": [
+        "plugin_system"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0102",
+      "name": "範囲内",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-cond-range-inline-statement",
+      "file": "native-cases.json",
+      "siteId": "0x0000000000000002",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtimeRoutes": [
+        "direct-display"
+      ],
+      "interpreterRoutes": [
+        "interpreter-core"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-cond-range-inline-statement",
+      "file": "native-cases.json",
+      "siteId": "0x0000000000000003",
+      "sourceName": "範囲内",
+      "canonicalOpcode": "in_range",
+      "opcode": 32,
+      "route": "builtin",
+      "runtimeRoutes": [
+        "builtin"
+      ],
+      "interpreterRoutes": [
+        "plugin_system"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0102",
+      "name": "範囲内",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-cond-range-inline-statement",
+      "file": "native-cases.json",
+      "siteId": "0x0000000000000004",
       "sourceName": "表示",
       "canonicalOpcode": "display",
       "opcode": 0,
@@ -71111,6 +71794,342 @@
     },
     {
       "fixtureId": "native-system-byte-buffer-direct-properties",
+      "file": "native-cases.json",
+      "siteId": "0x000000000000000e",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtimeRoutes": [
+        "direct-display"
+      ],
+      "interpreterRoutes": [
+        "interpreter-core"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-system-byte-buffer-element-count",
+      "file": "native-cases.json",
+      "siteId": "0x0000000000000001",
+      "sourceName": "ハッシュ値計算",
+      "canonicalOpcode": "node_hash_value",
+      "opcode": 293,
+      "route": "builtin",
+      "runtimeRoutes": [
+        "builtin"
+      ],
+      "interpreterRoutes": [
+        "plugin_node"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0792",
+      "name": "ハッシュ値計算",
+      "plugin": "plugin_node",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-system-byte-buffer-element-count",
+      "file": "native-cases.json",
+      "siteId": "0x0000000000000002",
+      "sourceName": "LEN",
+      "canonicalOpcode": "element_count",
+      "opcode": 55,
+      "route": "builtin",
+      "runtimeRoutes": [
+        "builtin"
+      ],
+      "interpreterRoutes": [
+        "plugin_system"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0182",
+      "name": "LEN",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-system-byte-buffer-element-count",
+      "file": "native-cases.json",
+      "siteId": "0x0000000000000003",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtimeRoutes": [
+        "direct-display"
+      ],
+      "interpreterRoutes": [
+        "interpreter-core"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-system-byte-buffer-element-count",
+      "file": "native-cases.json",
+      "siteId": "0x0000000000000004",
+      "sourceName": "LEN",
+      "canonicalOpcode": "element_count",
+      "opcode": 55,
+      "route": "builtin",
+      "runtimeRoutes": [
+        "builtin"
+      ],
+      "interpreterRoutes": [
+        "plugin_system"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0182",
+      "name": "LEN",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-system-byte-buffer-element-count",
+      "file": "native-cases.json",
+      "siteId": "0x0000000000000005",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtimeRoutes": [
+        "direct-display"
+      ],
+      "interpreterRoutes": [
+        "interpreter-core"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-system-byte-buffer-element-count",
+      "file": "native-cases.json",
+      "siteId": "0x0000000000000006",
+      "sourceName": "LEN",
+      "canonicalOpcode": "element_count",
+      "opcode": 55,
+      "route": "builtin",
+      "runtimeRoutes": [
+        "builtin"
+      ],
+      "interpreterRoutes": [
+        "plugin_system"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0182",
+      "name": "LEN",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-system-byte-buffer-element-count",
+      "file": "native-cases.json",
+      "siteId": "0x0000000000000007",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtimeRoutes": [
+        "direct-display"
+      ],
+      "interpreterRoutes": [
+        "interpreter-core"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-system-byte-buffer-element-count",
+      "file": "native-cases.json",
+      "siteId": "0x0000000000000008",
+      "sourceName": "LEN",
+      "canonicalOpcode": "element_count",
+      "opcode": 55,
+      "route": "builtin",
+      "runtimeRoutes": [
+        "builtin"
+      ],
+      "interpreterRoutes": [
+        "plugin_system"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0182",
+      "name": "LEN",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-system-byte-buffer-element-count",
+      "file": "native-cases.json",
+      "siteId": "0x0000000000000009",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtimeRoutes": [
+        "direct-display"
+      ],
+      "interpreterRoutes": [
+        "interpreter-core"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-system-byte-buffer-element-count",
+      "file": "native-cases.json",
+      "siteId": "0x000000000000000a",
+      "sourceName": "ランダム配列生成",
+      "canonicalOpcode": "node_random_array",
+      "opcode": 295,
+      "route": "builtin",
+      "runtimeRoutes": [
+        "builtin"
+      ],
+      "interpreterRoutes": [
+        "plugin_node"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0794",
+      "name": "ランダム配列生成",
+      "plugin": "plugin_node",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-system-byte-buffer-element-count",
+      "file": "native-cases.json",
+      "siteId": "0x000000000000000b",
+      "sourceName": "要素数",
+      "canonicalOpcode": "element_count",
+      "opcode": 55,
+      "route": "builtin",
+      "runtimeRoutes": [
+        "builtin"
+      ],
+      "interpreterRoutes": [
+        "plugin_system"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0181",
+      "name": "要素数",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-system-byte-buffer-element-count",
+      "file": "native-cases.json",
+      "siteId": "0x000000000000000c",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtimeRoutes": [
+        "direct-display"
+      ],
+      "interpreterRoutes": [
+        "interpreter-core"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-system-byte-buffer-element-count",
+      "file": "native-cases.json",
+      "siteId": "0x000000000000000d",
+      "sourceName": "要素数",
+      "canonicalOpcode": "element_count",
+      "opcode": 55,
+      "route": "builtin",
+      "runtimeRoutes": [
+        "builtin"
+      ],
+      "interpreterRoutes": [
+        "plugin_system"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0181",
+      "name": "要素数",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-system-byte-buffer-element-count",
       "file": "native-cases.json",
       "siteId": "0x000000000000000e",
       "sourceName": "表示",

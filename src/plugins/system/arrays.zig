@@ -208,6 +208,32 @@ test "関数とPromiseの要素数はObject.keysと同じ0にする" {
     try std.testing.expectEqual(@as(f64, 0), (try call(&runtime, "LEN", &.{promise}, null)).?.number);
 }
 
+test "バイト列の要素数はArrayBufferの添字とown propertyを区別する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.setGcStress(true);
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    var buffer = try runtime.createBytes(&.{ 1, 2, 3 });
+    try roots.protect(&buffer);
+    var uint8_array = try runtime.createUint8Array(&.{ 4, 5, 6 });
+    try roots.protect(&uint8_array);
+    var array_buffer = try runtime.createArrayBuffer(&.{ 7, 8, 9 });
+    try roots.protect(&array_buffer);
+    try std.testing.expectEqual(@as(f64, 3), (try call(&runtime, "配列要素数", &.{buffer}, null)).?.number);
+    try std.testing.expectEqual(@as(f64, 3), (try call(&runtime, "要素数", &.{uint8_array}, null)).?.number);
+    try std.testing.expectEqual(@as(f64, 0), (try call(&runtime, "LEN", &.{array_buffer}, null)).?.number);
+
+    var key = try runtime.stringUtf8("x");
+    try roots.protect(&key);
+    try buffer.bytes.properties.append(runtime.allocator(), .{ .key = key.string, .value = .{ .number = 7 } });
+    try uint8_array.bytes.properties.append(runtime.allocator(), .{ .key = key.string, .value = .{ .number = 7 } });
+    try array_buffer.bytes.properties.append(runtime.allocator(), .{ .key = key.string, .value = .{ .number = 7 } });
+    try std.testing.expectEqual(@as(f64, 4), (try call(&runtime, "配列要素数", &.{buffer}, null)).?.number);
+    try std.testing.expectEqual(@as(f64, 4), (try call(&runtime, "要素数", &.{uint8_array}, null)).?.number);
+    try std.testing.expectEqual(@as(f64, 1), (try call(&runtime, "LEN", &.{array_buffer}, null)).?.number);
+}
+
 test "配列と表の破壊的操作・コピー・検索を処理する" {
     var runtime = Runtime.init(std.testing.allocator);
     defer runtime.deinit();

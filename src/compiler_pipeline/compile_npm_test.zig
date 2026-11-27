@@ -1191,3 +1191,130 @@ test "package内の静的抽出が実登録を保証しない場合と依存ESM�
         try testing.expectEqualStrings(case.expected, host.written());
     }
 }
+
+test "package内のESM関数を戻り値の助詞付き候補として呼び出す" {
+    // Issue #297: `3を外部倍算で戻る` の候補は、daa0c09c 以降は実引数を
+    // 保つ`.word`として解析される。package内で静的に抽出した完全一致aliasへ
+    // 束縛できた場合は、既存の動的命令呼出し経路で6を返す（第8回の
+    // 評価順・助詞シグネチャ用IRは使わない）。
+    if (!lnako.compat.quickjs.available()) return error.SkipZigTest;
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var temporary = test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+
+    try temporary.dir.createDirPath(io, "packages/owned");
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "packages/owned/plugin.mjs",
+        .data =
+        \\export default {
+        \\  外部倍算: { type: "func", josi: [["を"]], fn: (value) => Number(value) * 2 },
+        \\  外部命令: { type: "func", josi: [["を"]], fn: (...args) => args.length, isVariableJosi: Boolean(0) },
+        \\};
+        \\
+        ,
+    });
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "packages/owned/main.nako3",
+        .data =
+        \\!「./plugin.mjs」を取り込む。
+        \\●試験とは
+        \\3を外部倍算で戻る。
+        \\ここまで
+        \\●連文とは
+        \\「x」と表示して3を外部命令で戻る。
+        \\ここまで
+        \\
+        ,
+    });
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "main.nako3",
+        .data = "!「pkg:owned」を取り込む。\nowned__試験()を表示。\nowned__連文()を表示。\n",
+    });
+
+    const app_root = try temporary.dir.realPathFileAlloc(io, ".", gpa);
+    defer gpa.free(app_root);
+    const Resolver = struct {
+        root: []const u8,
+        fn resolve(context: *anyopaque, allocator: std.mem.Allocator, _: []const u8, _: ?[]const u8, specifier: []const u8) !lnako.semantic.module_graph.ResolvedPackageImport {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            if (!std.mem.eql(u8, specifier, "pkg:owned")) return error.PackageNotFound;
+            return .{
+                .path = try std.fs.path.join(allocator, &.{ self.root, "packages", "owned", "main.nako3" }),
+                .canonical_id = try allocator.dupe(u8, "pkg:owned/main"),
+                .namespace = "owned",
+                .package_owner = try allocator.dupe(u8, "pkg:owned"),
+                .package_root = try std.fs.path.join(allocator, &.{ self.root, "packages", "owned" }),
+            };
+        }
+    };
+    var resolver = Resolver{ .root = app_root };
+    const main_path = try std.fs.path.join(gpa, &.{ app_root, "main.nako3" });
+    defer gpa.free(main_path);
+    var stderr: std.Io.Writer.Allocating = .init(gpa);
+    defer stderr.deinit();
+    var program = (try compile_pipeline.compileInput(gpa, io, main_path, .{
+        .compat_js = true,
+        .package_resolver = .{ .context = &resolver, .resolveFn = Resolver.resolve },
+    }, &stderr.writer)) orelse return error.UnexpectedCompileFailure;
+    defer program.deinit();
+
+    var runtime = lnako.runtime.value.Runtime.init(gpa);
+    defer runtime.deinit();
+    var host = lnako.runtime.interpreter.BufferHost{ .allocator = gpa };
+    defer host.deinit();
+    var interpreter = lnako.runtime.interpreter.Interpreter.init(gpa, &runtime, program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    // 連文は実引数を評価して基点と同じ`x`/`3`を返す（公式は`x`/`2`だが、
+    // これは今回の変更以前からのESM互換差）。第8回で問題になった
+    // `evaluationOrder`のSIGABRT経路は使わない。
+    try testing.expectEqualStrings("6\nx\n3\n", host.written());
+}
+
+test "直接取り込んだESM関数を戻り値の助詞付き候補として呼び出す" {
+    // Issue #297 第9回レビュー: プロジェクト直下から `!「./plugin.mjs」` を
+    // 直接取り込むと、取り込み位置以降は allows_dynamic_commands が有効に
+    // なる。戻る直前の助詞付き候補も既存の動的命令call経路へ接続し、
+    // Interpreter が公式と同じ 6 を返すことを固定する。package の exact
+    // alias や新しい助詞メタデータIRは使わない。
+    if (!lnako.compat.quickjs.available()) return error.SkipZigTest;
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var temporary = test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "plugin.mjs",
+        .data = "export default { 外部倍算: { type: \"func\", josi: [[\"を\"]], fn: (value) => Number(value) * 2 } };\n",
+    });
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "main.nako3",
+        .data =
+        \\!「./plugin.mjs」を取り込む。
+        \\●試験とは
+        \\3を外部倍算で戻る。
+        \\ここまで
+        \\試験()を表示。
+        \\
+        ,
+    });
+
+    const main_path = try temporary.dir.realPathFileAlloc(io, "main.nako3", gpa);
+    defer gpa.free(main_path);
+    var stderr: std.Io.Writer.Allocating = .init(gpa);
+    defer stderr.deinit();
+    var program = (try compile_pipeline.compileInput(gpa, io, main_path, .{
+        .compat_js = true,
+    }, &stderr.writer)) orelse return error.UnexpectedCompileFailure;
+    defer program.deinit();
+
+    var runtime = lnako.runtime.value.Runtime.init(gpa);
+    defer runtime.deinit();
+    var host = lnako.runtime.interpreter.BufferHost{ .allocator = gpa };
+    defer host.deinit();
+    var interpreter = lnako.runtime.interpreter.Interpreter.init(gpa, &runtime, program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try testing.expectEqualStrings("6\n", host.written());
+}

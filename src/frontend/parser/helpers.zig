@@ -291,3 +291,9 @@ pub fn collectUserFunctionNames(allocator: std.mem.Allocator, tokens: []const To
     }
     return names.toOwnedSlice(allocator);
 }
+
+/// 仮引数が組み込み『範囲』と同名なら、助詞スロットは呼出し先の束縛に従う。
+pub fn hasRangeParameter(arguments: []const ast.Argument) bool {
+    for (arguments) |argument| if (std.mem.eql(u8, argument.name, "範囲")) return true;
+    return false;
+}

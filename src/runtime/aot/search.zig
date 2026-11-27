@@ -302,7 +302,14 @@ pub fn requireStringReceiver(value: Value, starts: bool) !void {
 
 pub fn elementCountBuiltin(runtime: *Runtime, value: Value) !usize {
     return switch (@as(Tag, @fromBackingInt(@intCast(value.tag)))) {
-        .byte_buffer => value.object().?.payload.byte_buffer.bytes.len,
+        .byte_buffer => blk: {
+            const object = value.object().?;
+            const buffer = object.payload.byte_buffer;
+            // 公式の`配列要素数`はArrayBuffer自身の数値添字を`Object.keys`へ
+            // 含めず、全byte kindでownのカスタム列挙可能propertyだけを加える。
+            const indexed_elements = if (buffer.kind == .array_buffer) 0 else buffer.bytes.len;
+            break :blk indexed_elements + object.array_properties.len();
+        },
         .array => value.object().?.payload.array.items.len,
         .dictionary => value.object().?.payload.dictionary.entries.items.len,
         .static_utf8_string, .utf16_string => blk: {

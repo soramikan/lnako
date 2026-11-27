@@ -15,9 +15,26 @@ test "仮引数『引数』と同名宣言の重複診断を保つ" {
             };
             try std.testing.expect(found);
         }
+
+        /// 同名の仮引数は公式`preDefineFunc`が初出順の1スロットへ集約する。
+        /// そのため二重定義にはならず、呼出し時の引数個数不一致として診断する。
+        fn expectAggregatedArgumentCount(source: []const u8) !void {
+            var parsed = try parser.parse(std.testing.allocator, source, "main.nako3");
+            defer parsed.deinit();
+            var analyzed = try analyze(std.testing.allocator, parsed.root.?, "main.nako3");
+            defer analyzed.deinit();
+            var count_mismatch = false;
+            var duplicate = false;
+            for (analyzed.diagnostics) |item| {
+                if (item.code == .invalid_argument_count) count_mismatch = true;
+                if (item.code == .duplicate_symbol) duplicate = true;
+            }
+            try std.testing.expect(count_mismatch);
+            try std.testing.expect(!duplicate);
+        }
     };
-    // 仮引数`引数`の2個目は通常の仮引数と同じく二重定義として診断する。
-    try Case.expectDuplicate("●(引数と引数の)Fとは\n引数を表示\nここまで\nF(1,2)\n");
+    // 同名の仮引数は助詞候補として集約され、2個目のスロットにはならない。
+    try Case.expectAggregatedArgumentCount("●(引数と引数)Fとは\n引数を表示\nここまで\nF(1,2)\n");
     // 明示宣言の特例は最初の1回だけで、2個目の宣言は二重定義として診断する。
     try Case.expectDuplicate("●(Aの)Fとは\n変数 引数=1\n変数 引数=2\n引数を表示\nここまで\n5のF\n");
     // 暗黙の`引数`への代入は定義なので、後続の明示宣言は二重定義になる
@@ -74,6 +91,8 @@ test "『引数』の明示宣言は同名ローカルとして再利用し宣�
     try Case.expectDiagnostics("●(Aの)Fとは\n定数 引数=7\n変数[引数,B]=[1,2]\nここまで\n1のF\n", 0, 1);
     // 定数リストへの`引数`適用は定数化され後続の代入を拒否する。
     try Case.expectDiagnostics("●(Aの)Fとは\n定数[引数,B]=[1,2]\n引数=9\nここまで\n1のF\n", 0, 1);
+    // 分割定数宣言より前の代入はまだ定数ではないため拒否しない。
+    try Case.expectDiagnostics("●(Aの)Fとは\n引数=8\n定数[引数,B]=[1,2]\nJSONエンコード([引数,B])を表示。\nここまで\n1のF\n", 0, 0);
     // 入れ子関数の`引数`読み出しは外側の束縛に影響しない。
     try Case.expectDiagnostics("●(Aの)Fとは\n●(Bの)Gとは\n引数を表示\nここまで\n変数 引数=7\nここまで\n5のF\n", 0, 0);
 }
@@ -121,4 +140,32 @@ test "厳チェックでも関数内の『引数』は未定義にならない" 
     var program = try analyze(std.testing.allocator, parsed.root.?, "strict-arguments.nako3");
     defer program.deinit();
     try std.testing.expect(program.succeeded());
+}
+
+test "助詞候補を持つ仮引数へが・の・をの各呼出しを解決する" {
+    const parser = @import("../frontend/parser.zig");
+    var parsed = try parser.parse(std.testing.allocator, "●判定(Sが|Sの|Sを)\nSで戻る\nここまで\n「a」が判定して表示。\n「b」の判定して表示。\n「c」を判定して表示。\n", "josi-alternatives-call.nako3");
+    defer parsed.deinit();
+    var program = try analyze(std.testing.allocator, parsed.root.?, "josi-alternatives-call.nako3");
+    defer program.deinit();
+    try std.testing.expect(program.succeeded());
+    var calls: usize = 0;
+    for (program.bindings) |binding| {
+        if (binding.kind == .call and std.mem.eql(u8, binding.resolved_name, "josi-alternatives-call__判定")) calls += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 3), calls);
+}
+
+test "分割代入の再代入は同一スコープの二重定義にしない" {
+    const parser = @import("../frontend/parser.zig");
+    var parsed = try parser.parse(std.testing.allocator, "「2024/01/07」を「/」で区切る。\n年,月,日はそれ。\n年,月,日はそれを配列数値変換。\n", "varlist-reassign.nako3");
+    defer parsed.deinit();
+    var program = try analyze(std.testing.allocator, parsed.root.?, "varlist-reassign.nako3");
+    defer program.deinit();
+    try std.testing.expect(program.succeeded());
+    var duplicates: usize = 0;
+    for (program.diagnostics) |item| {
+        if (item.code == .duplicate_symbol) duplicates += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 0), duplicates);
 }

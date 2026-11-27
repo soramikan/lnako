@@ -144,6 +144,8 @@ pub const Symbol = struct {
     is_export: bool,
     is_mutable: bool,
     explicit_definition: bool = false,
+    /// 分割定数化でkindが変わった後も、ループによる暗黙宣言と判別できる。
+    implicit_loop_target: bool = false,
     argument_count: usize = 0,
     /// 仮引数の助詞（宣言順）。公式`yCallFunc`と同じ助詞補完で、
     /// どのスロットへ引数を割り当てるかの判定に使う。
@@ -152,6 +154,18 @@ pub const Symbol = struct {
     /// 作られなかった暗黙宣言。公式は単一パスで名前を確定するため
     /// 解決済みの参照からも見えない。
     shadowed: bool = false,
+    /// 分割定数宣言（`定数[A,B]=...`）が既存の可変束縛を定数化した
+    /// 宣言名の位置。公式convDefLocalVarlistは宣言以後の書き込みだけを
+    /// 拒否するため、解決時の代入検査はこの位置より前の書き込みを許す。
+    /// nullは宣言時から定数だったシンボル（分割宣言以外の定数化）を表す。
+    constant_decl_span: ?ast.Span = null,
+    /// 上記の分割定数宣言を解析したスコープ。関数内取り込みの宣言は
+    /// 取り込み元ファイルの位置を持つため、同じスコープ内の書き込みとは
+    /// ファイル内バイト位置ではなく展開済みの走査順で前後を判定する。
+    constant_decl_scope: ?ScopeId = null,
+    /// 上記の分割定数宣言の事前宣言走査順位。取り込み元ファイルの長さに
+    /// 依存せず、取り込み文の位置で展開された順序を表す。
+    constant_decl_order: ?usize = null,
     /// 関数内の`引数`束縛（公式`yCallFunc`の実引数配列）。公式は呼出しごとに
     /// 用意するため、ユーザーの同名宣言で二重定義にしない。
     implicit_arguments: bool = false,
@@ -260,6 +274,12 @@ pub const UninspectedAliasState = struct {
     warned: bool = false,
 };
 
+/// 組み込み名が実命令として呼出せるか。`改行`・`それ`・`母艦パス`のような
+/// システム定数・特殊変数は値であり、命令表（標準・低レイヤー）に無い。
+pub fn builtinIsCallable(name: []const u8) bool {
+    return builtin_catalog.findArity(name) != null or low_level_foundation.commandArity(name) != null;
+}
+
 pub const Analyzer = struct {
     allocator: std.mem.Allocator,
     inputs: []const ModuleInput,
@@ -290,6 +310,13 @@ pub const Analyzer = struct {
     /// プロパティ代入ノードの走査順位。暗黙の`引数`が使用文までに変数登録
     /// 済みか（公式convLetPropのfindVar相当）を位置比較で判定するために使う。
     property_assignment_order: std.AutoHashMapUnmanaged(*ast.Node, usize) = .{},
+    /// 代入・増減ノードの事前宣言走査順位。分割定数宣言との前後を同じ
+    /// スコープ内で比較するために使う（取り込み元のバイト位置に依存しない）。
+    write_order: std.AutoHashMapUnmanaged(*ast.Node, usize) = .{},
+    /// 関数定義・無名関数ノードの事前宣言走査順位。宣言を捕捉する
+    /// 無名関数では、書き込み位置ではなく関数定義位置を定数宣言の
+    /// 展開位置と比較するために使う。
+    function_definition_order: std.AutoHashMapUnmanaged(*ast.Node, usize) = .{},
     /// 繰り返し本体の内側にある深さ（公式のflagLoop相当）。『続ける』は
     /// この深さが正のときだけ有効で、条件分岐のcase節は繰り返しに数えない。
     loop_depth: usize = 0,
@@ -386,8 +413,17 @@ pub const Analyzer = struct {
     /// （resolveBlock側で mod__F シンボルへ束縛する）。
     fn predeclareBlockEx(self: *Analyzer, node: *ast.Node, module_index: u32, scope: ScopeId, recurse: bool, expansion: bool) anyerror!void {
         self.stream_order += 1;
+        if (node.kind == .function_definition or node.kind == .test_definition or
+            node.kind == .anonymous_function)
+        {
+            try self.function_definition_order.put(self.allocator, node, self.stream_order);
+        }
         if (node.kind == .property_assignment)
             try self.property_assignment_order.put(self.allocator, node, self.stream_order);
+        switch (node.kind) {
+            .assignment, .increment, .for_statement, .foreach_statement => try self.write_order.put(self.allocator, node, self.stream_order),
+            else => {},
+        }
         // 関数宣言の引数情報は事前走査で確定済み。
         if (node.kind == .function_definition or node.kind == .test_definition) return;
         if (node.kind == .anonymous_function) return;
@@ -412,28 +448,46 @@ pub const Analyzer = struct {
             // `{非公開}`属性はモジュール変数の公開を打ち消す（公式isExport相当）。
             _ = try self.declare(module_index, scope, node.name, if (node.is_const) .constant else .variable, node.span, exportable and node.is_export, !node.is_const, 0, true);
         } else if (node.kind == .variable_list_definition) {
+            // 公式convDefLocalVarlistは初期化式を先に変換する。式の無名関数の
+            // 定義位置を記録してから、分割対象を読み取り専用にする。
+            for (node.children) |child| try self.predeclareBlockEx(child, module_index, scope, recurse, expansion);
+            self.stream_order += 1;
             for (node.arguments) |name| {
                 _ = try self.rejectFunctionTarget(name.span, module_index, name.name);
                 // 公式convDefLocalVarlistは分割宣言の二重定義を検査しない
-                // （#1027）。暗黙の`引数`は再利用・重複判定ではなく使用済みの
-                // 記録だけ行い、定数リストでは読み取り専用にする。登録済みの
-                // 定数への適用はcheckVarWritable相当の代入診断になる。
-                if (self.lookupImplicitArguments(scope, name.name)) |symbol| {
-                    if (!symbol.is_mutable) {
-                        const message = try std.fmt.allocPrint(self.allocator, "定数『{s}』は既に定義済みなので、値を代入することはできません。", .{name.name});
-                        try self.addDiagnostic(.assign_to_constant, name.span, self.modules.items[module_index].path, message);
+                // （#1027）。既存の変数・仮引数は再利用し、定数への適用だけ
+                // checkVarWritable相当の代入診断にする。関数名など別種の
+                // シンボルは従来どおり二重定義として扱う。
+                if (self.lookupLexical(scope, name.name)) |existing| {
+                    const reusable = existing.kind == .variable or existing.kind == .constant or
+                        existing.kind == .parameter or existing.kind == .loop_variable or existing.implicit_arguments;
+                    if (reusable) {
+                        if (!existing.is_mutable) {
+                            const message = try std.fmt.allocPrint(self.allocator, "定数『{s}』は既に定義済みなので、値を代入することはできません。", .{name.name});
+                            try self.addDiagnostic(.assign_to_constant, name.span, self.modules.items[module_index].path, message);
+                        }
+                        self.symbols.items[existing.id].explicit_definition = true;
+                        if (self.symbols.items[existing.id].arguments_registered_at == null)
+                            self.symbols.items[existing.id].arguments_registered_at = self.stream_order;
+                        if (node.is_const) {
+                            const symbol = &self.symbols.items[existing.id];
+                            // 可変束縛を定数化した最初の分割宣言位置だけを記録する。
+                            // 定数への再宣言自体はこの行で診断済みであり、位置を
+                            // 後ろへ動かすと先行する書き込みの判定まで変わる。
+                            if (symbol.is_mutable) {
+                                symbol.constant_decl_span = name.span;
+                                symbol.constant_decl_scope = scope;
+                                symbol.constant_decl_order = self.stream_order;
+                            }
+                            symbol.kind = .constant;
+                            symbol.is_mutable = false;
+                        }
+                        continue;
                     }
-                    self.symbols.items[symbol.id].explicit_definition = true;
-                    if (self.symbols.items[symbol.id].arguments_registered_at == null)
-                        self.symbols.items[symbol.id].arguments_registered_at = self.stream_order;
-                    if (node.is_const) {
-                        self.symbols.items[symbol.id].kind = .constant;
-                        self.symbols.items[symbol.id].is_mutable = false;
-                    }
-                    continue;
                 }
                 _ = try self.declare(module_index, scope, name.name, if (node.is_const) .constant else .variable, name.span, exportable and node.is_export, !node.is_const, 0, true);
             }
+            return;
         } else if (node.kind == .assignment or node.kind == .increment or node.kind == .increment_indexed or
             node.kind == .array_assignment)
         {
@@ -553,7 +607,21 @@ pub const Analyzer = struct {
             .function_pointer => try self.resolveFunctionPointer(node, module_index, scope),
             .break_statement, .continue_statement => try self.checkLoopContext(node, module_index),
             .for_statement, .foreach_statement => if (node.name.len > 0 and !std.mem.eql(u8, node.name, "それ")) {
-                if (self.lookupLexical(scope, node.name)) |symbol| try self.bind(node, .declaration, node.name, symbol.qualified_name, symbol.id);
+                if (self.lookupLexical(scope, node.name)) |symbol| {
+                    // 公式は暗黙のループ変数を作る前に、可視な同名定数も検査する。
+                    const existing = if (symbol.implicit_loop_target and
+                        (!symbol.explicit_definition or self.writeBeforeConstantDeclaration(symbol, module_index, scope, node)))
+                        self.resolveSymbolExcluding(module_index, scope, node.name, node.span, symbol.id) orelse symbol
+                    else
+                        symbol;
+                    if (!existing.is_mutable and !self.writeBeforeConstantDeclaration(existing, module_index, scope, node)) {
+                        const shown = displayQualifiedName(existing.qualified_name);
+                        const loop_name = if (node.kind == .foreach_statement) "『反復』のループ" else "ループ";
+                        const message = try std.fmt.allocPrint(self.allocator, "定数『{s}』は{s}変数に指定できません。別の変数名を指定してください。", .{ shown, loop_name });
+                        try self.addDiagnostic(.assign_to_constant, node.span, self.modules.items[module_index].path, message);
+                    }
+                    try self.bind(node, .declaration, node.name, symbol.qualified_name, symbol.id);
+                }
             },
             // 実効取り込み文は取り込み先エントリへの呼び出しとして束縛する。
             // 公式のトークン展開と同じ位置でトップレベルが実行される。
@@ -710,7 +778,9 @@ pub const Analyzer = struct {
         // 公式と同様に定数にも許可する（JSのconst要素変更と同じ）。
         // 公式文言: 『定数「名」は既に定義済みなので、値を代入することは
         // できません』（main__ 接頭辞は #1223 で省略）。
-        if ((node.kind == .assignment or node.kind == .increment) and !symbol.is_mutable) {
+        if ((node.kind == .assignment or node.kind == .increment) and !symbol.is_mutable and
+            !self.writeBeforeConstantDeclaration(symbol, module_index, scope, node))
+        {
             const shown = displayQualifiedName(symbol.qualified_name);
             // ユーザー定義関数も公式は『関数『名』に代入できません』で拒否する。
             if (symbol.kind == .function or symbol.kind == .test_function) {
@@ -724,12 +794,34 @@ pub const Analyzer = struct {
         try self.bind(node, .declaration, node.name, symbol.qualified_name, symbol.id);
     }
 
+    /// 『戻る』直前の助詞付き候補が関数以外へ解決した場合、構文解析で
+    /// 保持した実引数を黙って捨てず、公式`yReturn`と同じ未解決引数の
+    /// 文法エラーにする。連文が挿入した暗黙の『それ』マーカーは実引数では
+    /// ないため診断しない（`「x」と表示してVで戻る`は従来どおり成功）。
+    fn rejectPendingReturnArguments(self: *Analyzer, node: *ast.Node, module_index: u32) !bool {
+        if (node.kind != .word or !node.pending_return_arguments) return false;
+        var has_real_argument = false;
+        for (node.children) |child| {
+            if (!child.is_implicit_it) {
+                has_real_argument = true;
+                break;
+            }
+        }
+        if (!has_real_argument) return false;
+        try self.addDiagnostic(.unresolved_word, node.span, self.modules.items[module_index].path, "『戻』文の直前に未解決の引数があります。『(式)を戻す』のように式をカッコで括ってください。");
+        return true;
+    }
+
     fn resolveReference(self: *Analyzer, node: *ast.Node, module_index: u32, scope: ScopeId, callable: bool) !void {
         const name = if (callable) node.name else node.value;
         if (name.len == 0) return;
         var pkg_ctx = try package_commands.DeclaredCommandContext.init(self, module_index, node, name, callable);
         if (self.resolveSymbol(module_index, scope, name, node.span)) |symbol| {
             if (try pkg_ctx.checkMatchedSymbol(self, module_index, scope, node, name, callable, symbol)) return;
+            // 候補が関数なら実引数付きの呼出しとして従来どおり解決する。
+            // 変数・定数など関数以外なら、保留した実引数を診断する。
+            if (symbol.kind != .function and symbol.kind != .test_function and
+                try self.rejectPendingReturnArguments(node, module_index)) return;
             const implicit_call = !callable and node.kind == .word and (symbol.kind == .function or symbol.kind == .test_function);
             // 公式はfunc tokenをカンマ直前では値として受理しないため、
             // 読み取り側の添字で関数に解決される裸の単語は『配列アクセスで指定ミス』
@@ -783,6 +875,11 @@ pub const Analyzer = struct {
         if (self.builtins.get(name) != null) {
             // システム定数を関数として呼ぶ公式エラーを再現する。
             if (try unresolved_words.rejectNonCallableBuiltin(self, module_index, node, name)) return;
+            // 値として解決する組み込み（`改行`・`それ`等）でも、戻る直前に
+            // 保留した実引数があれば捨てずに非関数候補と同じ未解決引数へする。
+            // 実命令は後段の従来の引数照合へ通し、引数なしの戻りは通す。
+            if (!builtinIsCallable(name) and
+                try self.rejectPendingReturnArguments(node, module_index)) return;
             // 組み込み命令も公式のfunc token相当のため同じ規則を適用する
             // （『改行』など命令表に無い名前は変数なので対象外）
             if (node.bare_index_word and !callable and builtin_catalog.findArity(name) != null) {
@@ -832,8 +929,16 @@ pub const Analyzer = struct {
             try self.bind(node, .builtin, name, name, null);
             return;
         }
-        if (callable) {
+        // 静的に読み取れる動的命令（package/ESM pluginのalias）は、`.word`
+        // の戻り値候補でも実引数付き呼出しとして従来どおり束縛する。任意名を
+        // 受理するcatch-allは読み取れた命令ではないため候補にしない。
+        const pending_word_candidate = node.kind == .word and node.pending_return_arguments;
+        if (callable or pending_word_candidate) {
             const module_input = self.inputs[module_index];
+            // 直接取り込んだ ESM/native plugin は、取り込み位置以降の未知命令を
+            // 実行時登録へ委ねる。戻る直前の候補も同じ可視範囲で動的命令へ
+            // 束縛し、実引数を既存の call lowering で渡す。取り込み位置より
+            // 前・取り込みなしは `binds` が null を返すため従来どおり診断する。
             if (try dynamic_commands.bindsWithFallbacks(self.allocator, module_input.allows_dynamic_commands, module_input.allows_dynamic_commands_from, module_input.dynamic_command_aliases, name, node.span.start)) |resolution| {
                 try self.bind(node, .builtin, name, resolution.resolved_name, null);
                 const binding = &self.bindings.items[self.bindings.items.len - 1];
@@ -847,6 +952,9 @@ pub const Analyzer = struct {
             try unresolved_words.rejectUndefinedCommand(self, module_index, node, name);
             return;
         }
+        // 未定義名の候補でも、保留した実引数があれば未定義変数ではなく
+        // 『戻』文の未解決引数として診断する（両方を混同しない）。
+        if (try self.rejectPendingReturnArguments(node, module_index)) return;
         if (self.modules.items[module_index].strict) {
             const message = try std.fmt.allocPrint(self.allocator, "未定義の{s}『{s}』です", .{ if (callable) "命令" else "変数", name });
             // 公式`!厳しくチェック`は未定義の変数を`logger.warn`で警告するだけで
@@ -913,9 +1021,14 @@ pub const Analyzer = struct {
     }
 
     pub fn resolveSymbol(self: *Analyzer, module_index: u32, scope: ScopeId, name: []const u8, use_span: ast.Span) ?Symbol {
+        return self.resolveSymbolExcluding(module_index, scope, name, use_span, null);
+    }
+
+    fn resolveSymbolExcluding(self: *Analyzer, module_index: u32, scope: ScopeId, name: []const u8, use_span: ast.Span, excluded: ?SymbolId) ?Symbol {
         var current: ?ScopeId = scope;
         while (current) |id| : (current = self.scopes.items[id].parent) {
             if (self.lookupLexical(id, name)) |symbol| {
+                if (symbol.id == excluded) continue;
                 if (module_index < self.modules.items.len and self.scopes.items[id].kind == .module and id == self.modules.items[module_index].scope and
                     std.mem.indexOf(u8, name, "__") != null)
                 {
@@ -1076,6 +1189,7 @@ pub const Analyzer = struct {
             .is_export = is_export,
             .is_mutable = is_mutable,
             .explicit_definition = explicit_def,
+            .implicit_loop_target = kind == .loop_variable,
             .argument_count = argument_count,
         });
         return id;
@@ -1180,6 +1294,58 @@ pub const Analyzer = struct {
         const registered = symbol.arguments_registered_at orelse return false;
         const use_order = self.property_assignment_order.get(node) orelse return false;
         return registered < use_order;
+    }
+
+    /// 分割定数宣言がこの書き込みより後にあるか。公式convDefLocalVarlistは
+    /// 既存束縛を宣言位置から読み取り専用にするため、宣言前の代入・増減は
+    /// 定数への再代入として診断しない（`A=0; 定数[A,B]=[4,5]`）。
+    fn writeBeforeConstantDeclaration(self: *Analyzer, symbol: Symbol, module_index: u32, scope: ScopeId, node: *ast.Node) bool {
+        // 同じスコープの書き込みは、宣言名のファイル内バイト位置ではなく
+        // 展開済みの事前宣言走査順で比較する。関数内取り込みで共有する
+        // 関数スコープでは、書き込みと宣言・既存束縛が別ファイルに由来して
+        // いても展開後は同じ束縛なので、由来モジュールで先に拒否しない。
+        // この順序比較は、取り込み元ファイルの長さで前後が逆転しない。
+        if (symbol.constant_decl_scope) |decl_scope| {
+            if (symbol.constant_decl_order) |declared_order| {
+                if (decl_scope == scope) {
+                    if (self.write_order.get(node)) |write_order|
+                        return write_order < declared_order;
+                } else if (self.capturedFunctionOrder(decl_scope, scope)) |function_order| {
+                    // 宣言を捕捉する無名関数では、公式は関数定義を変換した
+                    // 時点の束縛で書き込みを判定する。書き込み文の実行順や
+                    // 宣言名のファイル内バイト位置ではなく、宣言を展開した
+                    // 位置と関数定義の位置を同じ事前宣言走査順で比較する。
+                    return function_order < declared_order;
+                }
+            }
+        }
+        // 別スコープの定数への書き込みは、モジュールをまたぐ位置比較をせず
+        // 従来どおり定数として拒否する。別モジュールのモジュール変数を
+        // 関数ローカルから書き換える場合もここで拒否される。
+        if (symbol.module_index != module_index) return false;
+        const declared = symbol.constant_decl_span orelse return false;
+        return self.positionAfter(symbol.module_index, declared, module_index, node.span);
+    }
+
+    /// `decl_scope`の子孫スコープから書き込むとき、`decl_scope`直下の
+    /// 関数定義（無名関数の捕捉を含む）の事前宣言走査順位を返す。
+    /// `scope`が`decl_scope`の子孫でなければnullを返し、呼び出し側は
+    /// 従来のスコープ・モジュール判定へフォールバックする。
+    fn capturedFunctionOrder(self: *Analyzer, decl_scope: ScopeId, scope: ScopeId) ?usize {
+        var current = scope;
+        var child = scope;
+        while (current != decl_scope) {
+            const parent = self.scopes.items[current].parent orelse return null;
+            child = current;
+            current = parent;
+        }
+        const kind = self.scopes.items[child].kind;
+        if (kind != .function and kind != .anonymous_function) return null;
+        for (self.function_scopes.items) |entry| {
+            if (entry.scope != child) continue;
+            return self.function_definition_order.get(entry.node);
+        }
+        return null;
     }
 
     /// 式内の`引数`参照を使用済みにする。公式convDefLocalVarは名前の登録
