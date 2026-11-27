@@ -13,6 +13,7 @@ const compat_embedded = lnako.compat.embedded;
 const npm_mod = lnako.package.npm;
 const project_mod = lnako.package.project;
 const sync_mod = lnako.package.sync;
+const import_resolver = lnako.package.import_resolver;
 const diag = lnako.package.diagnostics;
 const npm_env = lnako.package.npm_env;
 const npm_resolver = lnako.package.npm_resolver;
@@ -153,9 +154,16 @@ fn prepareLockAndCacheFor(
 fn compileMain(gpa: std.mem.Allocator, io: std.Io, app_root: []const u8, cache_root: []const u8, stderr: *std.Io.Writer.Allocating) !?lnako.ir.nako_ir.Program {
     const main_path = try std.fs.path.join(gpa, &.{ app_root, "main.nako3" });
     defer gpa.free(main_path);
+    // 公開 compile 経路は旧 `.nako/environment.json` を自動で読まない。
+    // 旧環境の解決を検証するこのテスト群だけが、既存の明示 resolver API へ
+    // 旧環境を読み込んで渡す。
+    var resolver = try import_resolver.Resolver.loadWithOptions(gpa, io, app_root, .{ .cache_root = cache_root });
+    defer resolver.deinit();
     return compile_pipeline.compileInput(gpa, io, main_path, .{
         .compat_js = true,
         .package_cache_root = cache_root,
+        .package_resolver = resolver.packageResolver(),
+        .npm_module_resolver = resolver.npm.moduleResolver(),
     }, &stderr.writer);
 }
 
@@ -1317,4 +1325,58 @@ test "直接取り込んだESM関数を戻り値の助詞付き候補として�
     defer interpreter.deinit();
     _ = try interpreter.run();
     try testing.expectEqualStrings("6\n", host.written());
+}
+
+test "public compile は旧 .nako 環境へフォールバックせず、パッケージ非使用入力は受理する" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var temporary = test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "cache");
+    const cache_root = try temporary.dir.realPathFileAlloc(io, "cache", gpa);
+    defer gpa.free(cache_root);
+
+    try writeProject(&temporary, io);
+    const app_root = try temporary.dir.realPathFileAlloc(io, "app", gpa);
+    defer gpa.free(app_root);
+    // 旧 manifest + 旧 nako.lock + `.nako/environment.json` を実 materialize
+    // まで含めて作り、公開 compile がこれを自動で読まないことを確認する。
+    try prepareLockAndCache(gpa, io, app_root, cache_root);
+
+    const main_path = try std.fs.path.join(gpa, &.{ app_root, "main.nako3" });
+    defer gpa.free(main_path);
+    var package_stderr: std.Io.Writer.Allocating = .init(gpa);
+    defer package_stderr.deinit();
+    try testing.expect((try compile_pipeline.compileInput(gpa, io, main_path, .{
+        .compat_js = true,
+        .package_cache_root = cache_root,
+    }, &package_stderr.writer)) == null);
+    try testing.expect(std.mem.indexOf(u8, package_stderr.written(), "パッケージ参照を解決できません") != null);
+
+    // package specifier を使わない通常入力は、旧環境が隣接していても従来どおり
+    // コンパイルできる（ファイル指定 check の通常言語機能を維持）。
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/plain.nako3", .data = "「ok」と表示\n" });
+    const plain_path = try std.fs.path.join(gpa, &.{ app_root, "plain.nako3" });
+    defer gpa.free(plain_path);
+    var plain_stderr: std.Io.Writer.Allocating = .init(gpa);
+    defer plain_stderr.deinit();
+    var program = (try compile_pipeline.compileInput(gpa, io, plain_path, .{
+        .compat_js = true,
+        .package_cache_root = cache_root,
+    }, &plain_stderr.writer)) orelse return error.UnexpectedCompileFailure;
+    defer program.deinit();
+}
+
+test "public compile は package resolver 未指定でもプロジェクト外の通常入力を受理する" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var temporary = test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.writeFile(io, .{ .sub_path = "main.nako3", .data = "「ok」と表示\n" });
+    const main_path = try temporary.dir.realPathFileAlloc(io, "main.nako3", gpa);
+    defer gpa.free(main_path);
+    var stderr: std.Io.Writer.Allocating = .init(gpa);
+    defer stderr.deinit();
+    var program = (try compile_pipeline.compileInput(gpa, io, main_path, .{}, &stderr.writer)) orelse return error.UnexpectedCompileFailure;
+    defer program.deinit();
 }

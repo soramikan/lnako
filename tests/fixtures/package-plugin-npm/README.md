@@ -1,4 +1,11 @@
-# 参照 plugin+npm E2E fixture
+# 参照 plugin+npm E2E fixture（旧形式）
+
+> **v1 での位置付け:** この fixture は旧形式の参照資料です。CI の
+> `tools/check_package_plugin_npm_e2e.mjs` は `app/` を旧 manifest の負例として
+> 使い、読み替えずに拒否されることだけを検証します。旧 npm registry・npm 依存
+> 解決・旧 lock の成功経路は v1 の対象外（P10/P11）であり、CI では実行しません。
+> 新 v1 のローカル実行と `--compat-js` の言語検証は同スクリプトが一時 project で
+> 行います。
 
 `app/` は lnako のプロジェクトで、次の 2 つを同時に持ちます。
 
@@ -12,7 +19,7 @@
 するために `compat-js = true` を宣言しています。依存 artifact は無条件の
 JavaScript なので profile の os/cpu/abi は解決結果に影響しません。
 
-想定フロー:
+旧形式での歴史的なフロー（現在の CI では実行しません）:
 
 ```sh
 LNAKO_NPM_REGISTRY=http://127.0.0.1:<port> lnako lock --package-cache-dir <cache>
@@ -35,7 +42,10 @@ AOT は `--sbom <path>` で同梱 npm/ESM package の license 一覧（SPDX 2.3 
 
 ## 検証範囲
 
-`tools/check_package_plugin_npm_e2e.mjs` は Linux/macOS の compat CI job で実バイナリの
-`lock → sync --offline → run --compat-js --offline` を実行します。Windows は AOT が
-対象外のため、同じ fixture を in-process の Zig テスト（`-Dcompat-js=true` の
-compat-aot test step）で検証します（lock/sync/run と通常モード拒否、AOT は含まない）。
+`tools/check_package_plugin_npm_e2e.mjs` は Linux/macOS の compat CI job で、
+`app/` の旧 manifest が `sync`・`run`・`package build` から移行診断で拒否され、
+manifest を書き換えず旧 lock/環境も作らないことを確認します。続けて一時的な
+v1 project で `run`（通常モード）と `run --compat-js` を実行し、v1 のローカル
+実行と QuickJS の分離を確認します。旧 npm registry と npm tarball の E2E、AOT の
+npm/ESM manifest 収録は v1 の対象外です。AOT と QuickJS の分離は
+`tools/check_aot_quickjs_separation.mjs` が担当します。

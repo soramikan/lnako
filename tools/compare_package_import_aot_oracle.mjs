@@ -1,20 +1,46 @@
 #!/usr/bin/env node
-// `パッケージ:` / `pkg:` import のAOT実行検証。Interpreter と AOT O0〜O3 の
-// 生成物を実際に走らせ、観測stdoutが期待値と一致することを確認する。
-// 拒否系（未公開export・version指定・path traversal）は Interpreter と AOT
-// build が同じ診断行で失敗し、生成物を残さないことを確認する。
+// `パッケージ:` / `pkg:` import のAOT実行検証（v1）。
+//
+// lnako 側は仕様 v1 の manifest と `.npkg` だけを使う。script が
+// `lnako package build` で fixture のパッケージを pack し、実 SHA-256/サイズ
+// から静的ローカル index（`--v1-fixture`）を作って `lnako sync` する。
+// 旧 `[dependencies.path]`・旧 manifest・旧 lock は使わない。
+//
+// Interpreter と AOT O0〜O3 の生成物を実際に走らせ、観測stdoutが期待値と
+// 一致することを確認する。拒否系（未公開export・version指定・path
+// traversal）は Interpreter と AOT build が同じ診断行で失敗し、生成物を
+// 残さないことを確認する。v1 では export path の脱出を pack 時に拒否する
+// ため、その1件だけは `lnako package build` の拒否として検査する。
 // fixtureは作業treeの汚染を避けるため一時ディレクトリへ複製してから実行する。
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  buildArtifact,
+  syncProject,
+  writeStaticIndex,
+} from "./lib/package/v1_static_fixture.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const fixtureRoot = path.join(root, "tests", "fixtures", "package-aot");
 const allOptimizations = ["O0", "O1", "O2", "O3"];
 const executableSuffix = process.platform === "win32" ? ".exe" : "";
 const executable = path.join(root, "zig-out", "bin", `lnako${executableSuffix}`);
+
+// fixture の package source と index の対応。id/version/license は
+// 各 nako.toml と一致させる。
+const packageSources = [
+  { id: "@example/demo", version: "1.0.0", license: "MIT", source: "packages/demo", artifactName: "demo.npkg" },
+  {
+    id: "@example/greeting",
+    version: "1.0.0",
+    license: "MIT",
+    source: "packages/greeting",
+    artifactName: "greeting.npkg",
+  },
+];
 
 function fail(message) {
   throw new Error(`package import AOT検査: ${message}`);
@@ -89,7 +115,7 @@ function createWorkDir() {
 // 失敗時だけ配置場所ごとに Interpreter を走らせ、信頼検証の拒否が配置に
 // 依存するか（ACL か）を 1 回の CI で判定できるようにする。
 // 固定名 dir を rm すると既存ファイルを巻き込むため、各配置は mkdtemp で一意にする。
-function probeLocations(expected) {
+function probeLocations(expected, v1Fixture) {
   const candidates = [
     ["repo", path.join(root, ".tmp-lnako-package-aot-probe-")],
     ["home", path.join(os.homedir(), ".lnako-package-aot-probe-")],
@@ -107,7 +133,9 @@ function probeLocations(expected) {
     try {
       const fixture = path.join(base, "package-aot");
       copyFixture(fixture);
-      const result = run(executable, ["run", "main.nako3"], { cwd: path.join(fixture, "app") });
+      const app = path.join(fixture, "app");
+      syncProject(executable, app, v1Fixture);
+      const result = run(executable, ["run", "--no-sync", "main.nako3"], { cwd: app });
       const matched = result.status === 0 && result.stdout === expected;
       console.log(`package import AOT検査: 配置 ${label} (${base}) → ${matched ? "成功" : "失敗"}`);
       if (!matched) {
@@ -125,7 +153,7 @@ function probeLocations(expected) {
 // CI ログだけで切り分けられるようにする（内容は fixture の path と hash のみ）。
 function dumpFailureDiagnostics(cwd) {
   const files = [
-    ["environment.json", path.join(cwd, ".nako", "environment.json")],
+    ["environment.json", path.join(cwd, ".nako", "v1", "environment.json")],
     ["nako.lock", path.join(cwd, "nako.lock")],
   ];
   console.error(`package import AOT検査: 診断 (${cwd})`);
@@ -140,7 +168,23 @@ function dumpFailureDiagnostics(cwd) {
   console.error(`check: exit=${check.status}\n${check.stdout}${check.stderr}`);
 }
 
-function checkRejections(fixture, work, reported) {
+function prepareStaticFixture(fixtureCopy, work) {
+  const fixture = path.join(work, "registry");
+  const artifactBuildDir = path.join(work, "artifacts");
+  fs.mkdirSync(artifactBuildDir, { recursive: true });
+  const packages = [];
+  for (const packageSource of packageSources) {
+    const sourceDir = path.join(fixtureCopy, packageSource.source);
+    if (!fs.existsSync(sourceDir)) fail(`package sourceがありません: ${sourceDir}`);
+    const output = path.join(artifactBuildDir, packageSource.artifactName);
+    const built = buildArtifact(executable, sourceDir, output, work);
+    packages.push({ ...packageSource, ...built });
+  }
+  writeStaticIndex(fixture, packages);
+  return fixture;
+}
+
+function checkRejections(fixture, work, v1Fixture, reported) {
   const names = fs.readdirSync(fixture, { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && entry.name.startsWith("reject-"))
     .map((entry) => entry.name)
@@ -152,13 +196,26 @@ function checkRejections(fixture, work, reported) {
     const token = expectation.diagnostic;
     if (typeof token !== "string" || token.length === 0) fail(`diagnosticを文字列で指定してください: ${name}`);
 
-    const interpreter = run(executable, ["run", "main.nako3"], { cwd: directory });
+    if (expectation.mode === "pack") {
+      const packageDir = path.join(directory, expectation.package ?? ".");
+      const output = path.join(work, `${name}-pack${executableSuffix}`);
+      const aot = run(executable, ["package", "build", packageDir, "-o", output], { cwd: work });
+      if (aot.status === 0) fail(`拒否されるべきpackageがpackで成功しました: ${name}`);
+      const aotLine = diagnosticLine(aot.stderr, token);
+      if (aotLine === null) fail(`packの診断に${token}が含まれません: ${name}\n${aot.stderr}`);
+      if (fs.existsSync(output)) fail(`拒否されたpackが生成物を残しました: ${name}`);
+      reported.push(`${name}(pack:${token})`);
+      continue;
+    }
+
+    syncProject(executable, directory, v1Fixture);
+    const interpreter = run(executable, ["run", "--no-sync", "main.nako3"], { cwd: directory });
     if (interpreter.status === 0) fail(`拒否されるべきfixtureがInterpreterで成功しました: ${name}`);
     const interpreterLine = diagnosticLine(interpreter.stderr, token);
     if (interpreterLine === null) fail(`Interpreterの診断に${token}が含まれません: ${name}\n${interpreter.stderr}`);
 
     const output = path.join(work, `${name}-aot${executableSuffix}`);
-    const aot = run(executable, ["build", "main.nako3", "-o", output, "-O0"], { cwd: directory });
+    const aot = run(executable, ["build", "main.nako3", "--no-sync", "-o", output, "-O0"], { cwd: directory });
     if (aot.status === 0) fail(`拒否されるべきfixtureがAOT buildで成功しました: ${name}`);
     const aotLine = diagnosticLine(aot.stderr, token);
     if (aotLine === null) fail(`AOTの診断に${token}が含まれません: ${name}\n${aot.stderr}`);
@@ -184,14 +241,17 @@ async function main() {
   try {
     const fixture = path.join(work, "package-aot");
     copyFixture(fixture);
+    const v1Fixture = prepareStaticFixture(fixture, work);
+    console.log(`package import AOT検査: v1 index ${v1Fixture}（pack ${packageSources.length}件）`);
     const app = path.join(fixture, "app");
+    syncProject(executable, app, v1Fixture);
 
     const routes = [];
     const startedAt = Date.now();
-    const interpreter = run(executable, ["run", "main.nako3"], { cwd: app });
+    const interpreter = run(executable, ["run", "--no-sync", "main.nako3"], { cwd: app });
     if (interpreter.status !== 0) {
       dumpFailureDiagnostics(app);
-      probeLocations(expected);
+      probeLocations(expected, v1Fixture);
       fail(`Interpreter実行が失敗しました\n${interpreter.stderr}`);
     }
     if (interpreter.stdout !== expected) fail(`Interpreterの観測結果が期待値と一致しません\n期待:\n${expected}\n実際:\n${interpreter.stdout}`);
@@ -200,7 +260,7 @@ async function main() {
     for (const optimization of optimizations) {
       const routeStartedAt = Date.now();
       const output = path.join(work, `app-${optimization}${executableSuffix}`);
-      const built = run(executable, ["build", "main.nako3", "-o", output, `-${optimization}`], { cwd: app });
+      const built = run(executable, ["build", "main.nako3", "--no-sync", "-o", output, `-${optimization}`], { cwd: app });
       if (built.status !== 0) {
         dumpFailureDiagnostics(app);
         fail(`${optimization}のAOT buildが失敗しました\n${built.stderr}`);
@@ -215,8 +275,8 @@ async function main() {
     console.log(`package import AOT検査: ${routes.length}経路が一致 (${routes.join(" / ")})`);
 
     const rejections = [];
-    checkRejections(fixture, work, rejections);
-    console.log(`package import AOT検査: 拒否${rejections.length}件がInterpreterと同じ診断でAOT buildを失敗 (${rejections.join(" / ")})`);
+    checkRejections(fixture, work, v1Fixture, rejections);
+    console.log(`package import AOT検査: 拒否${rejections.length}件 (${rejections.join(" / ")})`);
     console.log("package import AOT検査: 成功");
   } finally {
     fs.rmSync(work, { recursive: true, force: true });

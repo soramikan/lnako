@@ -1,3 +1,5 @@
 {
-  "diagnostic": "E029_INVALID_VALUE"
+  "mode": "pack",
+  "package": "bad",
+  "diagnostic": "invalid relative path"
 }

@@ -1,178 +1,350 @@
-//! `lnako package build|verify|cache|publish` — `.npkg` の生成・インストール
-//! 前検証と、公開前検証（dry-run）・static registry への公開。
+//! `lnako package build|pack|verify|cache|publish` — `.npkg` の生成・
+//! 展開前検証と、v1 で対象外になった旧公開経路の案内。
 //!
-//! build は `nako.toml` を持つ package directory から決定的な `.npkg` を
-//! 出力し、verify は `.npkg` の構造・索引・対象環境適合を静的に検査する。
-//! publish は manifest/lock/.npkg/registry 設定を検証したうえで、明示された
-//! registry にだけ `.npkg` と version record を PUT する（既定は dry-run）。
+//! build（pack は別名）は `nako.toml` を持つ v1 プロジェクトから、`--kind`
+//! で選んだ単一アーティファクトの Canonical ZIP を決定的に生成する。
+//! verify は `.npkg` を §3.2〜§3.5 に従って検証し、複数指定時は §3.3・
+//! §3.5・§5.3 のクロスアーティファクト検査（P04）をローカルで行う。
+//! publish は v1 では旧 static PUT を使わないため、対象外と代替手順を示す。
 //! いずれもパッケージの初期化コードは実行しない。
 
 const std = @import("std");
 const lnako = @import("lnako");
 
-const diag = lnako.package.diagnostics;
-const npkg_build = lnako.package.npkg_build;
-const npkg_verify = lnako.package.npkg_verify;
-const publish_mod = lnako.package.publish;
-const semver = lnako.package.semver;
 const cache = lnako.package.cache;
+const v1_archive = lnako.package.v1_archive;
+const v1_zip = lnako.package.v1_zip;
+const v1_manifest = lnako.package.v1_manifest;
+const v1_types = lnako.package.v1_types;
+const v1_cross = lnako.package.v1_cross;
+const package_v1_cli = @import("package_v1_cli.zig");
 
-fn renderAndFail(list: *const diag.List, stderr: *std.Io.Writer, source_name: []const u8) !noreturn {
-    try list.render(stderr, source_name);
-    try stderr.flush();
-    std.process.exit(1);
+/// `nako.toml` の読み取り上限。`v1_manifest` の検証上限と揃える。
+const max_manifest_bytes: usize = 16 * 1024 * 1024;
+/// 明示入力する COMMANDS.json の読み取り上限。COMMANDS 固有の上限は
+/// 設けず、pack が最終的に適用する ZIP の既定展開合計上限で有界にする。
+const max_commands_bytes: usize = @intCast(v1_zip.default_max_uncompressed_bytes);
+/// `.npkg` の読み取り上限。v1 の圧縮後上限 25 MiB を超えた入力を
+/// 展開前に確実に拒否できるよう、少し余裕を持たせる。
+const max_npkg_bytes: usize = 32 * 1024 * 1024;
+
+fn toKind(kind: package_v1_cli.ArtifactKind) v1_types.Kind {
+    return switch (kind) {
+        .universal => .universal,
+        .esm => .esm,
+        .native_source => .@"native-source",
+        .native_prebuilt => .@"native-prebuilt",
+    };
+}
+
+fn kindLabel(kind: v1_types.Kind) []const u8 {
+    return v1_types.kindName(kind);
+}
+
+/// `--kind` と manifest から、出力ファイル名に使う runtimes を決める。
+/// `--runtime` の明示が無い ESM は `[artifacts.esm].runtimes` を使う。
+fn effectiveRuntimeNames(
+    allocator: std.mem.Allocator,
+    parsed: *const package_v1_cli.BuildArgs,
+    manifest: *const v1_manifest.Manifest,
+) ![]const []const u8 {
+    switch (parsed.kind) {
+        .universal => return &.{ "lnako", "cnako", "wnako" },
+        .native_source, .native_prebuilt => return &.{"lnako"},
+        .esm => {
+            if (parsed.runtimes.len != 0) return parsed.runtimes;
+            const esm = manifest.artifacts.esm orelse return &.{};
+            const names = try allocator.alloc([]const u8, esm.runtimes.len);
+            for (esm.runtimes, 0..) |runtime, index| names[index] = v1_types.runtimeName(runtime);
+            return names;
+        },
+    }
+}
+
+fn parseEsmsRuntimes(
+    allocator: std.mem.Allocator,
+    parsed: *const package_v1_cli.BuildArgs,
+) !?[]const v1_types.Runtime {
+    if (parsed.kind != .esm or parsed.runtimes.len == 0) return null;
+    const runtimes = try allocator.alloc(v1_types.Runtime, parsed.runtimes.len);
+    for (parsed.runtimes, 0..) |name, index| {
+        runtimes[index] = v1_types.parseRuntime(name) orelse return error.InvalidRuntime;
+    }
+    return runtimes;
+}
+
+/// native 系の ABI は v1 では `[artifacts.native].abi_version` が正本。
+/// CLI から上書きせず、manifest の値だけを出力名に使う（Z-14）。
+fn manifestNativeAbi(manifest: *const v1_manifest.Manifest) ?u32 {
+    const native = manifest.artifacts.native orelse return null;
+    return native.abi_version;
+}
+
+fn printBuildUsage(stdout: *std.Io.Writer) !void {
+    try stdout.writeAll(
+        \\使い方: lnako package build [ROOT] [オプション]
+        \\  -o, --output PATH        出力先（既定は §3.1 の推奨名）
+        \\      --kind KIND          universal|esm|native-source|native-prebuilt（既定 universal）
+        \\      --runtime NAME      cnako,wnako など。ESM の対象を固定する（複数回可）
+        \\      --target-triple T   native-prebuilt の {arch}-{os}-{abi}
+        \\      --glibc-min V       GNU Linux の native-prebuilt で必須（MAJOR.MINOR）
+        \\      --library-path P    native-prebuilt のライブラリ相対パス（省略時は prebuilt_lib_name から導出）
+        \\      --commands PATH     明示入力する v1 COMMANDS.json（JS/native 等）
+        \\
+    );
 }
 
 fn runBuild(allocator: std.mem.Allocator, io: std.Io, args: []const []const u8, stdout: *std.Io.Writer, stderr: *std.Io.Writer) !void {
-    var root: []const u8 = ".";
-    var root_set = false;
-    var output: ?[]const u8 = null;
-    var index: usize = 0;
-    while (index < args.len) : (index += 1) {
-        const argument = args[index];
-        if (std.mem.eql(u8, argument, "-o") or std.mem.eql(u8, argument, "--output")) {
-            index += 1;
-            if (index >= args.len) {
-                try stderr.writeAll("package build: -o/--output には出力パスが必要です\n");
-                std.process.exit(2);
-            }
-            output = args[index];
-        } else if (std.mem.startsWith(u8, argument, "-")) {
-            try stderr.print("package build: 不明なオプションです: {s}\n", .{argument});
+    var parsed = package_v1_cli.parseBuildArgs(allocator, args, stderr) catch |err| switch (err) {
+        error.Usage => {
+            try stderr.flush();
             std.process.exit(2);
-        } else if (!root_set) {
-            root = argument;
-            root_set = true;
-        } else {
-            try stderr.print("package build: 不明な引数です: {s}\n", .{argument});
-            std.process.exit(2);
-        }
+        },
+        else => return err,
+    };
+    if (parsed.help) {
+        try printBuildUsage(stdout);
+        return;
     }
 
-    var list = diag.List.init(allocator);
-    defer list.deinit();
-    var built = npkg_build.build(allocator, io, root, &list, .{ .output = output }) catch |err| switch (err) {
-        error.InvalidPackage => try renderAndFail(&list, stderr, root),
+    const manifest_path = try std.fs.path.join(allocator, &.{ parsed.root, "nako.toml" });
+    const source = std.Io.Dir.cwd().readFileAlloc(io, manifest_path, allocator, .limited(max_manifest_bytes)) catch |err| switch (err) {
         error.FileNotFound => {
-            try stderr.print("package build: {s}/nako.toml が見つかりません\n", .{root});
+            try stderr.print("package build: {s}/nako.toml が見つかりません\n", .{parsed.root});
             try stderr.flush();
             std.process.exit(1);
         },
         else => return err,
     };
-    defer built.deinit();
 
-    const output_path = output orelse try npkg_build.defaultOutputName(allocator, &built.manifest);
-    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = output_path, .data = built.archive });
-    try stdout.print("{s}: {d} ファイルを収録しました\n", .{ output_path, built.files.len });
+    var manifest = v1_manifest.parse(allocator, source, .pack) catch |err| {
+        if (err == error.LegacyManifest) {
+            try stderr.writeAll(package_v1_cli.legacy_manifest_message);
+        } else {
+            const detail = v1_manifest.diagnostic(err) orelse @errorName(err);
+            try stderr.print("package build: nako.toml が v1 形式として不正です: {s}\n", .{detail});
+            try stderr.print("  v1 の必須欄は先頭の schema_version = 1 と [package] の id/version/license です\n", .{});
+        }
+        try stderr.flush();
+        std.process.exit(1);
+    };
+    defer manifest.deinit();
+
+    var commands_source: ?[]const u8 = null;
+    if (parsed.commands_path) |commands_path| {
+        commands_source = std.Io.Dir.cwd().readFileAlloc(io, commands_path, allocator, .limited(max_commands_bytes)) catch |err| switch (err) {
+            error.FileNotFound => {
+                try stderr.print("package build: COMMANDS.json が見つかりません: {s}\n", .{commands_path});
+                try stderr.flush();
+                std.process.exit(1);
+            },
+            error.StreamTooLong => {
+                try stderr.print("package build: {s} は上限 {d} バイトを超えています\n", .{ commands_path, max_commands_bytes });
+                try stderr.flush();
+                std.process.exit(1);
+            },
+            else => return err,
+        };
+    }
+
+    const esm_runtimes = try parseEsmsRuntimes(allocator, &parsed);
+    const bytes = v1_archive.packManifest(allocator, io, parsed.root, &manifest, .{
+        .kind = toKind(parsed.kind),
+        .native = .{
+            .target_triple = parsed.target_triple,
+            .glibc_min = parsed.glibc_min,
+            .library_path = parsed.library_path,
+        },
+        .esm_runtimes = esm_runtimes,
+        .commands_json = commands_source,
+    }) catch |err| {
+        const name = @errorName(err);
+        var hint: []const u8 = "nako.toml の [artifacts.*]/[exports] と --kind の指定を確認してください";
+        if (std.mem.eql(u8, name, "InvalidInclude")) {
+            hint = "この kind の [artifacts.*].include が空、または対象ファイルがありません";
+        } else if (std.mem.eql(u8, name, "MissingExportEntry")) {
+            hint = "exports の entry が収録対象（include）に含まれていません";
+        } else if (std.mem.eql(u8, name, "MissingLibraryName")) {
+            hint = "native-prebuilt には nako.toml の [artifacts.native].prebuilt_lib_name か --library-path が必要です";
+        } else if (std.mem.eql(u8, name, "MissingLibrary")) {
+            hint = "prebuilt_lib_name から導出したライブラリ（native/<name>）が見つかりません。--library-path で指定してください";
+        } else if (std.mem.eql(u8, name, "AmbiguousLibrary")) {
+            hint = "prebuilt_lib_name から収録パスを決められません。--library-path で package root 相対のライブラリを指定してください";
+        } else if (std.mem.eql(u8, name, "AmbiguousBuildInput")) {
+            hint = "native-source の build.zig が [artifacts.native].source_include 内に複数あります。build.zig が一意になるよう収録対象を絞ってください";
+        } else if (std.mem.eql(u8, name, "InvalidTargetTriple")) {
+            hint = "--target-triple は {arch}-{os}-{abi} の既知の組合せで指定してください";
+        } else if (std.mem.eql(u8, name, "MissingEntry")) {
+            hint = "収録対象のファイルが package root にありません";
+        } else if (std.mem.eql(u8, name, "InvalidLibraryPath")) {
+            hint = "--library-path は package root 相対の正規パスで指定してください";
+        } else if (std.mem.eql(u8, name, "InvalidCommands")) {
+            hint = "--commands の COMMANDS.json が v1 の構造として不正です";
+        } else if (std.mem.eql(u8, name, "ExportMismatch")) {
+            hint = "--commands の exports キー集合が METADATA.toml の [exports] と一致しません";
+        } else if (std.mem.eql(u8, name, "BindingMismatch") or
+            std.mem.eql(u8, name, "GlobalCommandsMismatch"))
+        {
+            hint = "--commands の binding と exports_global_commands を METADATA.toml の [exports] に合わせてください";
+        } else if (std.mem.eql(u8, name, "MissingField")) {
+            hint = "nako.toml の [artifacts.*] に必要な欄（include/entry/abi_version）がありません";
+        }
+        try stderr.print("package build: .npkg を生成できません（{s}）: {s}\n", .{ name, hint });
+        try stderr.flush();
+        std.process.exit(1);
+    };
+    defer allocator.free(bytes);
+
+    const id = manifest.package.id orelse {
+        try stderr.writeAll("package build: nako.toml の [package].id がありません\n");
+        try stderr.flush();
+        std.process.exit(1);
+    };
+    const version = manifest.package.version orelse {
+        try stderr.writeAll("package build: nako.toml の [package].version がありません\n");
+        try stderr.flush();
+        std.process.exit(1);
+    };
+    const output_path = parsed.output orelse try package_v1_cli.defaultOutputName(
+        allocator,
+        id,
+        version,
+        parsed.kind,
+        try effectiveRuntimeNames(allocator, &parsed, &manifest),
+        parsed.target_triple,
+        manifestNativeAbi(&manifest),
+    );
+
+    std.Io.Dir.cwd().writeFile(io, .{ .sub_path = output_path, .data = bytes }) catch |err| {
+        try stderr.print("package build: {s} へ書き込めません: {s}\n", .{ output_path, @errorName(err) });
+        try stderr.flush();
+        std.process.exit(1);
+    };
+
+    var digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(bytes, &digest, .{});
+    try stdout.print("{s}: {s} {s} の {s} アーティファクトを生成しました（{d} バイト、sha256:{s}）\n", .{
+        output_path,
+        id,
+        version,
+        kindLabel(toKind(parsed.kind)),
+        bytes.len,
+        std.fmt.bytesToHex(digest, .lower),
+    });
+}
+
+/// 旧 `.npkg` は Canonical ZIP 以前の検査で落ちることがある（旧生成器は
+/// DOS 日時を 0 にしていた）。制御ファイル名が実バイト列に現れる場合だけ、
+/// 構造エラーより先に「v1 で再作成が必要」という移行診断を出す。
+pub fn containsLegacyControlHint(bytes: []const u8) bool {
+    return std.mem.indexOf(u8, bytes, "NAKO-PKG/FILES.toml") != null or
+        std.mem.indexOf(u8, bytes, "NAKO-PKG/commands.json") != null;
+}
+
+fn printVerifyUsage(stdout: *std.Io.Writer) !void {
+    try stdout.writeAll(
+        \\使い方: lnako package verify <FILE.npkg>...
+        \\  v1 の verify は §3.2〜§3.5 の構造検証だけを行う。
+        \\  二つ以上指定すると §3.3・§3.5・§5.3 のクロス検証も行う。
+        \\
+    );
+}
+
+fn crossCodeLabel(code: v1_cross.Code) []const u8 {
+    return switch (code) {
+        .empty_artifact_set => "アーティファクトがありません",
+        .invalid_metadata => "METADATA.toml の構造が不正です",
+        .invalid_commands => "COMMANDS.json の構造が不正です",
+        .common_field_mismatch => "リリース共通項目が一致しません",
+        .global_commands_mismatch => "global 命令の集合が一致しません",
+        .duplicate_artifact => "同じ kind/runtimes/triple/ABI のアーティファクトが重複しています",
+    };
 }
 
 fn runVerify(allocator: std.mem.Allocator, io: std.Io, args: []const []const u8, stdout: *std.Io.Writer, stderr: *std.Io.Writer) !void {
-    var archive_path: ?[]const u8 = null;
-    var target = npkg_verify.Target{};
-    var features: std.ArrayList([]const u8) = .empty;
-    var nako_version_text: ?[]const u8 = null;
-    var cnako_version_text: ?[]const u8 = null;
-    var lnako_version_text: ?[]const u8 = null;
-
-    var index: usize = 0;
-    while (index < args.len) : (index += 1) {
-        const argument = args[index];
-        const value_options = [_][]const u8{ "--runtime", "--os", "--cpu", "--abi", "--os-version", "--libc", "--optimize", "--feature", "--nako-version", "--cnako-version", "--lnako-version" };
-        var matched = false;
-        inline for (value_options) |option| {
-            if (std.mem.eql(u8, argument, option)) {
-                index += 1;
-                if (index >= args.len) {
-                    try stderr.print("package verify: {s} には値が必要です\n", .{option});
-                    std.process.exit(2);
-                }
-                const value = args[index];
-                if (comptime std.mem.eql(u8, option, "--runtime")) {
-                    target.runtime = value;
-                } else if (comptime std.mem.eql(u8, option, "--os")) {
-                    target.os = value;
-                } else if (comptime std.mem.eql(u8, option, "--cpu")) {
-                    target.cpu = value;
-                } else if (comptime std.mem.eql(u8, option, "--abi")) {
-                    target.abi = value;
-                } else if (comptime std.mem.eql(u8, option, "--os-version")) {
-                    target.os_version = value;
-                } else if (comptime std.mem.eql(u8, option, "--libc")) {
-                    target.libc = value;
-                } else if (comptime std.mem.eql(u8, option, "--optimize")) {
-                    target.optimize = value;
-                } else if (comptime std.mem.eql(u8, option, "--feature")) {
-                    try features.append(allocator, value);
-                } else if (comptime std.mem.eql(u8, option, "--nako-version")) {
-                    nako_version_text = value;
-                } else if (comptime std.mem.eql(u8, option, "--cnako-version")) {
-                    cnako_version_text = value;
-                } else if (comptime std.mem.eql(u8, option, "--lnako-version")) {
-                    lnako_version_text = value;
-                }
-                matched = true;
-            }
-        }
-        if (matched) continue;
-        if (std.mem.eql(u8, argument, "--compat-js")) {
-            target.compat_js = true;
-        } else if (std.mem.eql(u8, argument, "--no-default-features")) {
-            target.default_features = false;
-        } else if (std.mem.startsWith(u8, argument, "-")) {
-            try stderr.print("package verify: 不明なオプションです: {s}\n", .{argument});
-            std.process.exit(2);
-        } else if (archive_path == null) {
-            archive_path = argument;
-        } else {
-            try stderr.print("package verify: 不明な引数です: {s}\n", .{argument});
-            std.process.exit(2);
-        }
-    }
-    const path = archive_path orelse {
-        try stderr.writeAll("package verify: .npkg ファイルを指定してください\n");
-        std.process.exit(2);
-    };
-    // 言語版（--nako-version）と処理系版（--cnako-version/--lnako-version）は
-    // 独立に指定する。同じ値を両制約へ流用すると、lnako のリリース番号と
-    // 対応する言語版が異なるパッケージを誤って拒否する。
-    if (nako_version_text) |text| {
-        target.nako_version = semver.Version.parse(text) catch {
-            try stderr.print("package verify: --nako-version が不正です: {s}\n", .{text});
-            std.process.exit(2);
-        };
-    }
-    if (cnako_version_text) |text| {
-        target.cnako_version = semver.Version.parse(text) catch {
-            try stderr.print("package verify: --cnako-version が不正です: {s}\n", .{text});
-            std.process.exit(2);
-        };
-    }
-    if (lnako_version_text) |text| {
-        target.lnako_version = semver.Version.parse(text) catch {
-            try stderr.print("package verify: --lnako-version が不正です: {s}\n", .{text});
-            std.process.exit(2);
-        };
-    }
-    target.features = features.items;
-
-    var list = diag.List.init(allocator);
-    defer list.deinit();
-    var verified = npkg_verify.verifyFile(allocator, io, path, target, &list) catch |err| switch (err) {
-        error.InvalidPackage => try renderAndFail(&list, stderr, path),
-        error.FileNotFound => {
-            try stderr.print("package verify: {s} が見つかりません\n", .{path});
+    const parsed = package_v1_cli.parseVerifyArgs(allocator, args, stderr) catch |err| switch (err) {
+        error.Usage => {
             try stderr.flush();
-            std.process.exit(1);
+            std.process.exit(2);
         },
         else => return err,
     };
-    defer verified.deinit();
+    if (parsed.help) {
+        try printVerifyUsage(stdout);
+        return;
+    }
 
-    const package = verified.manifest.package;
-    try stdout.print("{s}: {s} ", .{ path, package.name });
-    try package.version.format(stdout);
-    try stdout.print("（{d} ファイル、{d} 命令）— 検証 OK\n", .{ verified.files.len, verified.commands.len });
+    var verified: std.ArrayList(v1_archive.Verified) = .empty;
+    defer {
+        for (verified.items) |*item| item.deinit();
+        verified.deinit(allocator);
+    }
+
+    for (parsed.files) |path| {
+        const bytes = std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(max_npkg_bytes)) catch |err| switch (err) {
+            error.FileNotFound => {
+                try stderr.print("package verify: {s} が見つかりません\n", .{path});
+                try stderr.flush();
+                std.process.exit(1);
+            },
+            error.StreamTooLong => {
+                try stderr.print("package verify: {s} は上限 {d} バイトを超えています\n", .{ path, max_npkg_bytes });
+                try stderr.flush();
+                std.process.exit(1);
+            },
+            else => return err,
+        };
+        var item = v1_archive.verify(allocator, bytes) catch |err| {
+            if (err == error.LegacyArchive or containsLegacyControlHint(bytes)) {
+                try stderr.writeAll(package_v1_cli.legacy_archive_message);
+            } else {
+                try stderr.print("package verify: {s}: 不正な .npkg です（{s}）\n", .{ path, @errorName(err) });
+                try stderr.writeAll("  §3.2 の Canonical ZIP と §3.3〜§3.5 の制御ファイルを確認してください\n");
+            }
+            try stderr.flush();
+            std.process.exit(1);
+        };
+        try verified.append(allocator, item);
+        try stdout.print("{s}: {s} {s}（{s}、{d} ファイル）— 検証 OK\n", .{
+            path,
+            item.packageId(),
+            item.packageVersion(),
+            kindLabel(item.artifactKind()),
+            item.entryCount(),
+        });
+    }
+
+    if (verified.items.len >= 2) {
+        var report = v1_cross.check(allocator, verified.items) catch |err| switch (err) {
+            error.OutOfMemory => return err,
+            else => {
+                try stderr.print("package verify: クロス検証を実行できません（{s}）\n", .{@errorName(err)});
+                try stderr.flush();
+                std.process.exit(1);
+            },
+        };
+        defer report.deinit();
+        if (!report.ok()) {
+            try stderr.print("package verify: クロス検証に失敗しました（{d} 件）\n", .{report.diagnostics.len});
+            for (report.diagnostics) |diagnostic| {
+                if (diagnostic.artifact) |artifact| {
+                    try stderr.print("  [{s}] artifacts[{d}] {s}\n", .{
+                        crossCodeLabel(diagnostic.code),
+                        artifact,
+                        diagnostic.field,
+                    });
+                } else {
+                    try stderr.print("  [{s}] {s}\n", .{ crossCodeLabel(diagnostic.code), diagnostic.field });
+                }
+            }
+            try stderr.flush();
+            std.process.exit(1);
+        }
+        try stdout.print("クロス検証 OK（{d} アーティファクト、global 命令 {d} 件）\n", .{
+            verified.items.len,
+            report.global_commands.len,
+        });
+    }
 }
 
 /// `lnako package cache dir|clean` — 共有 cache の場所表示と初期化。
@@ -230,107 +402,21 @@ fn runCache(allocator: std.mem.Allocator, io: std.Io, args: []const []const u8, 
     try stdout.print("package cache clean: {d} 個の項目を削除しました（{s}）\n", .{ removed, root });
 }
 
-/// `lnako package publish` — 既定は dry-run。`--no-dry-run` のときだけ
-/// registry へ PUT する。registry/owner/token はフラグを優先し、無ければ
-/// `LNAKO_REGISTRY` / `LNAKO_REGISTRY_OWNER` / `LNAKO_REGISTRY_TOKEN` を読む。
+/// `lnako package publish` — v1 仕様では旧 static registry への PUT を
+/// 公開経路に使わない（`docs/specification.md` §5、O02）。公開は P07 の
+/// `POST /v1/packages/{scope}/{name}/releases`（OIDC 認証）で行うため、
+/// この CLI は旧経路へ接続せず、対象外であることと代替手順だけを示す。
 fn runPublish(
-    allocator: std.mem.Allocator,
-    io: std.Io,
-    args: []const []const u8,
-    environ_map: ?*const std.process.Environ.Map,
-    stdout: *std.Io.Writer,
+    _: std.mem.Allocator,
+    _: std.Io,
+    _: []const []const u8,
+    _: ?*const std.process.Environ.Map,
+    _: *std.Io.Writer,
     stderr: *std.Io.Writer,
 ) !void {
-    var root: []const u8 = ".";
-    var root_set = false;
-    var dry_run = true;
-    var registry: ?[]const u8 = null;
-    var owner: ?[]const u8 = null;
-    var allow_plaintext_http = false;
-    var index: usize = 0;
-    while (index < args.len) : (index += 1) {
-        const argument = args[index];
-        if (std.mem.eql(u8, argument, "--dry-run")) {
-            dry_run = true;
-        } else if (std.mem.eql(u8, argument, "--no-dry-run")) {
-            dry_run = false;
-        } else if (std.mem.eql(u8, argument, "--allow-plaintext-http")) {
-            allow_plaintext_http = true;
-        } else if (std.mem.eql(u8, argument, "--registry")) {
-            index += 1;
-            if (index >= args.len or std.mem.startsWith(u8, args[index], "-")) {
-                try stderr.writeAll("package publish: --registry には URL が必要です\n");
-                std.process.exit(2);
-            }
-            registry = args[index];
-        } else if (std.mem.eql(u8, argument, "--owner")) {
-            index += 1;
-            if (index >= args.len or std.mem.startsWith(u8, args[index], "-")) {
-                try stderr.writeAll("package publish: --owner には値が必要です\n");
-                std.process.exit(2);
-            }
-            owner = args[index];
-        } else if (std.mem.startsWith(u8, argument, "-")) {
-            try stderr.print("package publish: 不明なオプションです: {s}\n", .{argument});
-            std.process.exit(2);
-        } else if (!root_set) {
-            root = argument;
-            root_set = true;
-        } else {
-            try stderr.print("package publish: 不明な引数です: {s}\n", .{argument});
-            std.process.exit(2);
-        }
-    }
-
-    const registry_url = registry orelse envValue(environ_map, "LNAKO_REGISTRY");
-    const owner_value = owner orelse envValue(environ_map, "LNAKO_REGISTRY_OWNER");
-    const token = envValue(environ_map, "LNAKO_REGISTRY_TOKEN");
-
-    var list = diag.List.init(allocator);
-    defer list.deinit();
-    var report = publish_mod.run(allocator, io, .{
-        .root = root,
-        .dry_run = dry_run,
-        .registry_url = registry_url,
-        .owner = owner_value,
-        .token = token,
-        .allow_plaintext_http = allow_plaintext_http,
-    }, &list) catch |err| {
-        switch (err) {
-            error.RegistryRequired => try stderr.writeAll("package publish: 公開先 registry が未設定です（--registry または LNAKO_REGISTRY）\n"),
-            error.AuthRequired => try stderr.writeAll("package publish: 認証情報がありません（環境変数 LNAKO_REGISTRY_TOKEN）\n"),
-            error.InvalidAuth => try stderr.writeAll("package publish: 認証情報に空白・制御文字・非 ASCII が含まれています（LNAKO_REGISTRY_TOKEN）\n"),
-            error.OwnerRequired => try stderr.writeAll("package publish: 公開先 owner を特定できません（--owner または LNAKO_REGISTRY_OWNER。index 未収録の初回公開では必須）\n"),
-            error.InvalidRegistry => try stderr.writeAll("package publish: registry URL または owner の形式が不正です\n"),
-            error.ProjectNotFound => try stderr.print("package publish: {s}/nako.toml が見つかりません\n", .{root}),
-            error.LockMissing => try stderr.writeAll("package publish: nako.lock がありません。lnako lock を実行してください\n"),
-            error.LockMismatch => try stderr.writeAll("package publish: nako.lock が現在の nako.toml と一致しません。lnako lock で更新してください\n"),
-            error.InvalidManifest, error.InvalidLock, error.InvalidPackage, error.RegistryUnavailable, error.FileSystem => {
-                if (list.errorCount() > 0) {
-                    try list.render(stderr, root);
-                } else {
-                    try stderr.print("package publish: {s}\n", .{@errorName(err)});
-                }
-            },
-            error.VersionConflict => try stderr.writeAll("package publish: 同一版が異なる内容（artifact hash）で公開済みです。上書きは拒否しました\n"),
-            error.VersionYanked => try stderr.writeAll("package publish: 同一版は yanked 済みです。再公開には registry 側の手続きが必要です\n"),
-            error.OutOfMemory, error.Canceled => return err,
-        }
-        try stderr.flush();
-        std.process.exit(1);
-    };
-    defer report.deinit();
-    try publish_mod.renderSummary(&report, stdout);
-    try stdout.flush();
-    if (report.status == .failed) {
-        try stderr.flush();
-        std.process.exit(1);
-    }
-}
-
-fn envValue(environ_map: ?*const std.process.Environ.Map, name: []const u8) ?[]const u8 {
-    const map = environ_map orelse return null;
-    return map.get(name);
+    try stderr.writeAll(package_v1_cli.publish_out_of_scope_message);
+    try stderr.flush();
+    std.process.exit(2);
 }
 
 pub fn run(
@@ -342,10 +428,10 @@ pub fn run(
     stderr: *std.Io.Writer,
 ) !void {
     if (args.len == 0) {
-        try stderr.writeAll("package: 操作を指定してください（build|verify|cache|publish）\n");
+        try stderr.writeAll("package: 操作を指定してください（build|pack|verify|cache|publish）\n");
         std.process.exit(2);
     }
-    if (std.mem.eql(u8, args[0], "build")) {
+    if (std.mem.eql(u8, args[0], "build") or std.mem.eql(u8, args[0], "pack")) {
         return runBuild(allocator, io, args[1..], stdout, stderr);
     }
     if (std.mem.eql(u8, args[0], "verify")) {
@@ -357,10 +443,11 @@ pub fn run(
     if (std.mem.eql(u8, args[0], "publish")) {
         return runPublish(allocator, io, args[1..], environ_map, stdout, stderr);
     }
-    try stderr.print("package: 不明な操作です: {s}（build|verify|cache|publish）\n", .{args[0]});
+    try stderr.print("package: 不明な操作です: {s}（build|pack|verify|cache|publish）\n", .{args[0]});
     std.process.exit(2);
 }
 
 test {
     _ = @import("package_test.zig");
+    _ = @import("package_v1_cli.zig");
 }

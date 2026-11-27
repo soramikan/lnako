@@ -103,6 +103,21 @@ pub const archive = struct {
 /// ランタイムの `plugins.toml` とは独立した manifest 向け TOML/SemVer/
 /// marker/feature 解析を提供する。
 pub const package = struct {
+    pub const v1_zip = @import("package/v1_zip.zig");
+    pub const v1_runtime = @import("package/v1_runtime.zig");
+    pub const v1_client = @import("package/v1_client.zig");
+    pub const v1_manifest = @import("package/v1_manifest.zig");
+    pub const v1_types = @import("package/v1_types.zig");
+    pub const v1_archive = @import("package/v1_archive.zig");
+    pub const v1_cross = @import("package/v1_cross.zig");
+    pub const v1_selection = @import("package/v1_selection.zig");
+    pub const v1_native_source = @import("package/v1_native_source.zig");
+    pub const v1_imports = @import("package/v1_imports.zig");
+    pub const v1_index = @import("package/v1_index.zig");
+    pub const v1_download = @import("package/v1_download.zig");
+    pub const v1_resolver = @import("package/v1_resolver.zig");
+    pub const v1_lock = @import("package/v1_lock.zig");
+    pub const v1_registration = @import("package/v1_registration.zig");
     pub const diagnostics = @import("package/diagnostics.zig");
     pub const toml = @import("package/toml.zig");
     pub const semver = @import("package/semver.zig");
@@ -255,6 +270,23 @@ pub fn usage(writer: *std.Io.Writer) !void {
 }
 
 test {
+    _ = @import("package/v1_cross_archive_test.zig");
+    _ = @import("package/v1_runtime_test.zig");
+    _ = @import("package/v1_client_e2e_test.zig");
+    _ = @import("package/v1_archive_test.zig");
+    _ = @import("package/v1_cross_test.zig");
+    _ = @import("package/v1_download_test.zig");
+    _ = @import("package/v1_imports_test.zig");
+    _ = @import("package/v1_index_test.zig");
+    _ = @import("package/v1_lock_test.zig");
+    _ = @import("package/v1_manifest_test.zig");
+    _ = @import("package/v1_metadata_test.zig");
+    _ = @import("package/v1_registration_test.zig");
+    _ = @import("package/v1_resolver_test.zig");
+    _ = @import("package/v1_selection_test.zig");
+    _ = @import("package/v1_native_source_test.zig");
+    _ = @import("package/v1_types_test.zig");
+    _ = @import("package/v1_zip_test.zig");
     std.testing.refAllDecls(frontend.source);
     std.testing.refAllDecls(frontend.josi);
     std.testing.refAllDecls(frontend.token);

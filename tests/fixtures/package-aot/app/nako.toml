@@ -1,8 +1,7 @@
-[package]
-name = "app"
-version = "0.1.0"
-license = "MIT"
+schema_version = 1
 
-[dependencies.path]
-demo = { path = "demo" }
-greeting = { path = "greeting" }
+[package]
+
+[dependencies]
+"@example/demo" = "^1.0.0"
+"@example/greeting" = "^1.0.0"

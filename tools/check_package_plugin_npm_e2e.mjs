@@ -1,29 +1,27 @@
 #!/usr/bin/env node
-// 参照 plugin+npm E2E（Issue #54）。
+// 旧 npm/ESM plugin E2E の後継（v1 境界）。
 //
-// `tests/fixtures/package-plugin-npm` の参照パッケージを一時ディレクトリへ
-// 複製し、127.0.0.1 の fixture registry（packument + tarball）から
+// 旧形式の `nako.toml`（schema_version なし、[dependencies.npm] /
+// [dependencies.path]、[[exports]]）は v1 の読み替え対象ではない。製品は
+// 旧 manifest を旧 loader へ流さず、移行診断を出して拒否する（P10、Q12）。
+// この検査は、その拒否がプロジェクトを書き換えないことと、v1 のローカル
+// 実行および `--compat-js` の言語実行が維持されていることを実バイナリで
+// 固定する。
 //
-//   lnako lock → sync --offline → run --compat-js
-//
-// を実際のバイナリで実行する。ESM plugin 命令と npm bare import が同時に
-// 動くことを stdout 全体で確認する。加えて `--backend aot` で同じ project を
-// ビルドし、AOT runtime の ESM manifest 経由で npm bare import が解決できる
-// ことを確認する（AOT は plugin 命令を実行し、npm bare import も解決する）。
-//
-// 外部ネットワーク・npm CLI・Node lifecycle script は起動しない。registry は
-// このプロセス内の HTTP server を 127.0.0.1 で listen する（#226 と同じ方針）。
+// 旧 npm registry・npm 依存解決・旧 lock の移行は検査しない。これらは
+// P10/P11 の対象外であり、旧 fixture の成功を期待する E2E をここへ
+// 再実装しない。旧 package import の公式差分（tools/compare_package_import_*）
+// は別担当で、ここでは変更しない。旧 package の非書換え拒否と publish の
+// 送信なし終了は tools/check_package_publish_e2e.mjs が担当する。
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
-import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import zlib from "node:zlib";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const fixtureRoot = path.join(root, "tests", "fixtures", "package-plugin-npm");
+const legacyFixtureRoot = path.join(root, "tests", "fixtures", "package-plugin-npm", "app");
 const executableSuffix = process.platform === "win32" ? ".exe" : "";
 
 function fail(message) {
@@ -54,14 +52,21 @@ function parseArguments() {
   return options;
 }
 
-// spawnSync は Node の event loop を止め、同一プロセスの fixture registry が
-// accept できなくなる。子プロセスは必ず非同期 spawn で待つ。
+// 取得先の環境変数を継承しない。この検査はネットワークを使わない。
+function cleanEnv(extra = {}) {
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) {
+    if (key.startsWith("LNAKO_")) delete env[key];
+  }
+  return { ...env, ...extra };
+}
+
 function run(command, args, options = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd: options.cwd ?? root,
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, ...options.env },
+      env: options.env ?? cleanEnv(),
     });
     let stdout = "";
     let stderr = "";
@@ -89,83 +94,15 @@ async function runChecked(command, args, options, label) {
   return result;
 }
 
-function tarHeader(name, size) {
-  const header = Buffer.alloc(512, 0);
-  header.write(name, 0, 100, "utf8");
-  header.write("0000644\0", 100, 8, "ascii");
-  header.write("0000000\0", 108, 8, "ascii");
-  header.write("0000000\0", 116, 8, "ascii");
-  header.write(`${size.toString(8).padStart(11, "0")}\0`, 124, 12, "ascii");
-  header.write("00000000000\0", 136, 12, "ascii");
-  header.write("        ", 148, 8, "ascii"); // checksum placeholder
-  header.write("0", 156, 1, "ascii");
-  header.write("ustar\0", 257, 6, "ascii");
-  header.write("00", 263, 2, "ascii");
-  let checksum = 0;
-  for (const byte of header) checksum += byte;
-  header.write(`${checksum.toString(8).padStart(6, "0")}\0 `, 148, 8, "ascii");
-  return header;
-}
-
-/// `package/<path>` を持つ最小 ustar tar.gz を作る。lnako の npm cache は
-/// tarball の `package/` 前置を strip して tree にする。
-function tarball(files) {
-  const parts = [];
-  for (const [name, content] of files) {
-    const data = Buffer.from(content, "utf8");
-    parts.push(tarHeader(name, data.length), data);
-    const padding = (512 - (data.length % 512)) % 512;
-    if (padding > 0) parts.push(Buffer.alloc(padding, 0));
+async function runFailure(command, args, options, label, expectedTexts) {
+  const expectedList = Array.isArray(expectedTexts) ? expectedTexts : [expectedTexts];
+  const result = await run(command, args, options);
+  const combined = `${result.stdout}${result.stderr}`;
+  if (result.status === 0) fail(`${label}は失敗するべきでした\n${combined}`);
+  for (const expected of expectedList) {
+    if (!combined.includes(expected)) fail(`${label}の診断に ${expected} が含まれません\n${combined}`);
   }
-  parts.push(Buffer.alloc(1024, 0)); // end-of-archive blocks
-  return zlib.gzipSync(Buffer.concat(parts), { level: 9 });
-}
-
-function createRegistry(packageName, version, entry) {
-  // license は SBOM（--sbom）の licenseDeclared 検証対象。
-  const packageJson = JSON.stringify({ name: packageName, version, main: "index.js", license: "MIT" });
-  const archive = tarball([
-    ["package/package.json", packageJson],
-    ["package/index.js", entry],
-  ]);
-  const integrity = `sha512-${createHash("sha512").update(archive).digest("base64")}`;
-  const requests = [];
-  let origin = null;
-  const server = http.createServer((request, response) => {
-    requests.push(request.url);
-    if (request.url === `/${packageName}`) {
-      const body = JSON.stringify({
-        name: packageName,
-        "dist-tags": { latest: version },
-        versions: {
-          [version]: {
-            name: packageName,
-            version,
-            dist: { tarball: `${origin}/${packageName}/-/${packageName}-${version}.tgz`, integrity },
-          },
-        },
-      });
-      response.writeHead(200, { "content-type": "application/json", "content-length": Buffer.byteLength(body) });
-      response.end(body);
-      return;
-    }
-    if (request.url === `/${packageName}/-/${packageName}-${version}.tgz`) {
-      response.writeHead(200, { "content-type": "application/octet-stream", "content-length": archive.length });
-      response.end(archive);
-      return;
-    }
-    response.writeHead(404);
-    response.end();
-  });
-  return {
-    server,
-    requests,
-    listen: () => new Promise((resolve) => server.listen(0, "127.0.0.1", () => {
-      origin = `http://127.0.0.1:${server.address().port}`;
-      resolve(origin);
-    })),
-    close: () => new Promise((resolve) => server.close(resolve)),
-  };
+  return result;
 }
 
 // project 信頼検証は配置 dir の ACL を見るため、CI の workspace 継承 ACL で
@@ -182,216 +119,99 @@ function createWorkDir() {
   fail("作業ディレクトリを作成できません");
 }
 
-/// SBOM（SPDX 2.3 風）を読み、同梱 package の license と purl を検査する。
-function validateSbom(sbomPath, expectedPackages) {
-  if (!fs.existsSync(sbomPath)) fail(`SBOM が生成されていません: ${sbomPath}`);
-  let sbom;
-  try {
-    sbom = JSON.parse(fs.readFileSync(sbomPath, "utf8"));
-  } catch (error) {
-    fail(`SBOM が JSON として読めません: ${error.message}`);
-  }
-  if (sbom.spdxVersion !== "SPDX-2.3" || sbom.SPDXID !== "SPDXRef-DOCUMENT") {
-    fail("SBOM の SPDX 2.3 ヘッダが不正です");
-  }
-  if (!Array.isArray(sbom.packages) || !Array.isArray(sbom.files) || !Array.isArray(sbom.relationships)) {
-    fail("SBOM の packages/files/relationships が配列ではありません");
-  }
-  for (const expected of expectedPackages) {
-    const record = sbom.packages.find((item) => item.name === expected.name && item.versionInfo === expected.version);
-    if (!record) fail(`SBOM に同梱 package ${expected.name}@${expected.version} がありません`);
-    if (record.licenseDeclared !== expected.license) {
-      fail(`SBOM の ${expected.name} の licenseDeclared が ${expected.license} ではありません: ${record.licenseDeclared}`);
-    }
-    // 同梱 source の解析は行わないため、宣言値を結論にしない。
-    if (record.licenseConcluded !== "NOASSERTION") {
-      fail(`SBOM の ${expected.name} の licenseConcluded が NOASSERTION ではありません: ${record.licenseConcluded}`);
-    }
-    if (!record.externalRefs?.some((ref) => ref.referenceLocator === expected.purl)) {
-      fail(`SBOM の ${expected.name} に purl ${expected.purl} がありません`);
-    }
-  }
-  return sbom;
+function sha256(file) {
+  return createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 }
 
-function readFixture(relativePath) {
-  return fs.readFileSync(path.join(fixtureRoot, relativePath), "utf8");
+function assertNotRewritten(file, before, label) {
+  if (sha256(file) !== before) fail(`${label}が入力ファイルを書き換えました: ${file}`);
 }
 
-/// materialize された npm instance の entry を返す。instance を 1 件に固定し、
-/// 「どれか 1 つが一致」ではなく「唯一の instance の内容が一致」を要求する。
-function findMaterialized(envRoot) {
-  if (!fs.existsSync(envRoot)) fail(`sync が .nako/env を生成していません: ${envRoot}`);
-  const candidates = [];
-  const generations = fs.readdirSync(envRoot, { withFileTypes: true }).filter((entry) => entry.isDirectory());
-  for (const generation of generations) {
-    const deps = path.join(envRoot, generation.name, "deps");
-    if (!fs.existsSync(deps)) continue;
-    for (const entry of fs.readdirSync(deps, { withFileTypes: true })) {
-      if (!entry.isDirectory() || !entry.name.startsWith("npm_")) continue;
-      const candidate = path.join(deps, entry.name, "index.js");
-      if (fs.existsSync(candidate)) candidates.push(fs.readFileSync(candidate, "utf8"));
+// 旧 manifest の実 fixture を負例として使う。旧 npm/ESM 経路の成功を
+// 再現するのではなく、v1 の通常入口が読み替えず拒否することを見る。
+function copyLegacyProject(destination) {
+  fs.cpSync(legacyFixtureRoot, destination, { recursive: true });
+}
+
+function assertNoEnvironmentWrites(projectDir) {
+  const forbidden = ["nako.lock", path.join(".nako", "v1"), path.join(".nako", "environment.json")];
+  for (const relative of forbidden) {
+    if (fs.existsSync(path.join(projectDir, relative))) {
+      fail(`旧 manifest の拒否時に ${relative} が生成されました: ${projectDir}`);
     }
   }
-  return { count: candidates.length, content: candidates[0] ?? null };
+}
+
+function writeV1Project(projectDir) {
+  fs.mkdirSync(projectDir, { recursive: true });
+  fs.writeFileSync(path.join(projectDir, "nako.toml"), [
+    "schema_version = 1",
+    "",
+    "[package]",
+    'id = "@example/local"',
+    'version = "1.0.0"',
+    'license = "MIT"',
+    'capabilities = ["pure-nako"]',
+    "",
+  ].join("\n"));
+  fs.writeFileSync(path.join(projectDir, "main.nako3"), "「v1-local」を表示\n");
+  fs.writeFileSync(path.join(projectDir, "compat.nako3"), "JS実行(\"1+2\")を表示\n");
 }
 
 async function main() {
   const options = parseArguments();
-  const expectedStdout = readFixture("expected-stdout.txt");
-  const expectedAotStdout = readFixture("expected-aot-stdout.txt");
-  const registryEntry = readFixture("registry/left-pad/index.js");
   const work = createWorkDir();
-  const app = path.join(work, "app");
-  const cache = path.join(work, "cache");
-  const registry = createRegistry("left-pad", "1.0.0", registryEntry);
+  const legacy = path.join(work, "legacy");
+  const v1 = path.join(work, "v1");
   try {
-    fs.cpSync(path.join(fixtureRoot, "app"), app, { recursive: true });
-    fs.mkdirSync(cache);
-    const origin = await registry.listen();
-    const env = { LNAKO_NPM_REGISTRY: origin };
-    console.log(`参照 plugin+npm E2E: registry ${origin}`);
+    copyLegacyProject(legacy);
+    const manifestPath = path.join(legacy, "nako.toml");
+    const manifestBefore = sha256(manifestPath);
 
-    // --- lock: packument/tarball 取得 → integrity 検証 → cache 格納 ---
-    await runChecked(options.compiler, ["lock", "--package-cache-dir", cache], { cwd: app, env }, "lock");
-    if (registry.requests.length !== 2) {
-      fail(`lock の registry 要求数が 2 ではありません: ${registry.requests.length} (${registry.requests.join(", ")})`);
-    }
-    const lock = fs.readFileSync(path.join(app, "nako.lock"), "utf8");
-    if (!lock.includes('"left-pad@1.0.0"')) fail("nako.lock に npm instance left-pad@1.0.0 がありません");
-    if (!lock.includes('"implementation": "ESM"')) fail("nako.lock に ESM 実装の plugin package がありません");
-    console.log("参照 plugin+npm E2E: lock OK（npm instance と ESM plugin を記録）");
+    // 旧 manifest は sync でも run でも、旧 loader・旧 lock へ分岐せず
+    // 再作成を案内して終了する。manifest はバイト単位で不変。
+    await runFailure(options.compiler, ["sync"], { cwd: legacy }, "旧 manifest の sync", ["旧形式", "再作成"]);
+    await runFailure(options.compiler, ["run", "main.nako3"], { cwd: legacy }, "旧 manifest の run", ["旧形式", "再作成"]);
+    // `package build` も旧形式を読み替えない。出力ファイルは作られない。
+    const legacyArchive = path.join(legacy, "legacy.npkg");
+    await runFailure(
+      options.compiler,
+      ["package", "build", ".", "--kind", "universal", "-o", legacyArchive],
+      { cwd: legacy },
+      "旧 manifest の package build",
+      ["旧形式", "再作成"],
+    );
+    if (fs.existsSync(legacyArchive)) fail("旧 manifest から .npkg が生成されました");
+    assertNotRewritten(manifestPath, manifestBefore, "旧 manifest の sync/build");
+    assertNoEnvironmentWrites(legacy);
+    console.log("参照 plugin+npm E2E: 旧 manifest は移行診断で拒否し、書換え・環境生成なし");
 
-    // --- sync --offline: lock と cache だけで materialize する ---
-    const before = registry.requests.length;
-    await runChecked(options.compiler, ["sync", "--offline", "--package-cache-dir", cache], { cwd: app }, "sync --offline");
-    if (registry.requests.length !== before) {
-      fail(`sync --offline が registry へ要求しました: ${registry.requests.slice(before).join(", ")}`);
+    // 新 v1 の依存なしローカルプロジェクトは、旧 lock/環境なしで実行できる。
+    // 通常モードでは QuickJS を要求し、--compat-js のときだけ JS を実行する。
+    writeV1Project(v1);
+    const normal = await runChecked(options.compiler, ["run", "main.nako3"], { cwd: v1 }, "v1 ローカル実行");
+    if (normal.stdout !== "v1-local\n") {
+      fail(`v1 ローカル実行の stdout が期待値と異なります: ${JSON.stringify(normal.stdout)}`);
     }
-    const materialized = findMaterialized(path.join(app, ".nako", "env"));
-    if (materialized.count !== 1) {
-      fail(`materialize された npm instance が 1 件ではありません: ${materialized.count}`);
+    const compat = await runChecked(options.compiler, ["run", "compat.nako3", "--compat-js"], { cwd: v1 }, "v1 compat-js 実行");
+    if (compat.stdout !== "3\n") {
+      fail(`v1 compat-js 実行の stdout が期待値と異なります: ${JSON.stringify(compat.stdout)}`);
     }
-    if (materialized.content !== registryEntry) fail("sync が npm tree を materialize していません");
-    console.log("参照 plugin+npm E2E: sync --offline OK（cache から npm tree を materialize）");
+    const normalCompat = await runFailure(
+      options.compiler,
+      ["run", "compat.nako3"],
+      { cwd: v1 },
+      "v1 compat-js なし実行",
+      ["QuickJsCompatibilityRequired"],
+    );
+    if (normalCompat.stdout.includes("3")) {
+      fail("--compat-js なしの実行が JS を実行しました");
+    }
+    assertNoEnvironmentWrites(v1);
+    console.log("参照 plugin+npm E2E: v1 ローカル実行 OK（通常モードと --compat-js を分離）");
 
-    // --- run --compat-js: plugin 命令と npm bare import の同時実行 ---
-    // `--offline` で auto-prep の再取得を禁じ、要求数も増えないことを固定する
-    // （環境が stale なら fail し、実 registry へフォールバックしない）。
-    const beforeRun = registry.requests.length;
-    const executed = await runChecked(options.compiler, ["run", "main.nako3", "--compat-js", "--offline"], { cwd: app, env }, "run --compat-js");
-    if (registry.requests.length !== beforeRun) {
-      fail(`run --compat-js が registry へ要求しました: ${registry.requests.slice(beforeRun).join(", ")}`);
-    }
-    if (executed.stdout !== expectedStdout) {
-      fail(`run --compat-js の stdout が期待値と異なります:\n--- expected ---\n${expectedStdout}\n--- actual ---\n${executed.stdout}`);
-    }
-    // 通常モード分離: --compat-js なしでは JS/ESM を取り込まない。
-    const normal = await run(options.compiler, ["run", "main.nako3", "--offline"], { cwd: app, env });
-    if (normal.status === 0 || !`${normal.stdout}${normal.stderr}`.includes("--compat-js")) {
-      fail("--compat-js なしの run が JS/ESM を拒否していません");
-    }
-    console.log("参照 plugin+npm E2E: run --compat-js OK（plugin 命令 + npm bare import、通常モードは拒否）");
-
-    if (process.platform === "win32") {
-      console.log("参照 plugin+npm E2E: AOT は Windows 対象外のため skip しました");
-      return;
-    }
-
-    // --- AOT: ESM plugin 命令と npm bare import を生成物で確認する ---
-    // `main.nako3` は plugin 命令 `leftpad__整形` を直接呼ぶ（Issue #55）。
-    // plugin module は AOT runtime が評価し、命令は埋め込み interpreter の
-    // `__lnako_commands` に登録される。
-    const binary = path.join(work, `lnako-plugin-npm-aot${executableSuffix}`);
-    const sbomPath = path.join(work, "lnako-plugin-npm-aot.spdx.json");
-    const beforeBuild = registry.requests.length;
-    await runChecked(options.compiler, ["build", "main.nako3", "--compat-js", "--backend", "aot", "--offline", "-o", binary, "--sbom", sbomPath], { cwd: app, env }, "build --compat-js --backend aot --sbom");
-    if (registry.requests.length !== beforeBuild) {
-      fail(`AOT build が registry へ要求しました: ${registry.requests.slice(beforeBuild).join(", ")}`);
-    }
-    // 同梱した npm instance と path 依存 ESM plugin の license が SBOM に載る。
-    // leftpad には開発用 package.json（GPL-3.0 / 9.9.9 / 別名）を置いてあるため、
-    // path 依存の metadata が nako.toml から採られることも同時に固定する。
-    validateSbom(sbomPath, [
-      { name: "left-pad", version: "1.0.0", license: "MIT", purl: "pkg:npm/left-pad@1.0.0" },
-      { name: "leftpad", version: "1.0.0", license: "MIT", purl: "pkg:nako/leftpad@1.0.0" },
-    ]);
-    // `--sbom` は同梱を行う compat AOT 専用。通常 AOT / embedded では拒否する。
-    const rejectedSbom = await run(options.compiler, ["build", "main.nako3", "--sbom", "rejected.spdx.json", "-o", binary], { cwd: app, env });
-    if (rejectedSbom.status === 0 || !`${rejectedSbom.stdout}${rejectedSbom.stderr}`.includes("--compat-js")) {
-      fail("--sbom が compat AOT 以外で拒否されません");
-    }
-    // plugin 命令が AOT 生成物から実際に動く（interpreter と同じ出力）。
-    const aotRun = await run(binary, [], { cwd: work, env });
-    if (aotRun.status !== 0) fail(`AOT 生成物の実行が失敗しました: ${aotRun.stdout}${aotRun.stderr}`);
-    if (aotRun.stdout !== expectedAotStdout) {
-      fail(`AOT 生成物の stdout が期待値と異なります:\n--- expected ---\n${expectedAotStdout}\n--- actual ---\n${aotRun.stdout}`);
-    }
-    // 生成物・入力 source を SBOM で上書きする指定は拒否する。
-    const overwrittenSbom = await run(options.compiler, ["build", "aot-main.nako3", "--compat-js", "--backend", "aot", "-o", binary, "--sbom", binary], { cwd: app, env });
-    if (overwrittenSbom.status === 0 || !`${overwrittenSbom.stdout}${overwrittenSbom.stderr}`.includes("異なるパス")) {
-      fail("--sbom が出力ファイルと同じパスを受け付けました");
-    }
-    const overwrittenInput = await run(options.compiler, ["build", "aot-main.nako3", "--compat-js", "--backend", "aot", "-o", binary, "--sbom", "aot-main.nako3"], { cwd: app, env });
-    if (overwrittenInput.status === 0 || !`${overwrittenInput.stdout}${overwrittenInput.stderr}`.includes("異なるパス")) {
-      fail("--sbom が入力ファイルと同じパスを受け付けました");
-    }
-    // 入力の hardlink は path が違っても同じ file なので拒否する。
-    const hardlinkPath = path.join(app, "aot-main-hardlink.nako3");
-    fs.linkSync(path.join(app, "aot-main.nako3"), hardlinkPath);
-    const hardlinkedSbom = await run(options.compiler, ["build", "aot-main.nako3", "--compat-js", "--backend", "aot", "-o", binary, "--sbom", "aot-main-hardlink.nako3"], { cwd: app, env });
-    if (hardlinkedSbom.status === 0 || !`${hardlinkedSbom.stdout}${hardlinkedSbom.stderr}`.includes("異なるパス")) {
-      fail("--sbom が入力ファイルの hardlink を受け付けました");
-    }
-    // embedded（同梱を行わない backend）との組み合わせも拒否する。
-    const embeddedSbom = await run(options.compiler, ["build", "aot-main.nako3", "--compat-js", "--sbom", "embedded.spdx.json", "-o", binary], { cwd: app, env });
-    if (embeddedSbom.status === 0 || !`${embeddedSbom.stdout}${embeddedSbom.stderr}`.includes("--compat-js")) {
-      fail("--sbom が --backend embedded で拒否されません");
-    }
-    console.log("参照 plugin+npm E2E: SBOM OK（同梱 npm/ESM package の license を記録）");
-    // QuickJS の module_loader は未登録名を FS から読む fallback を持つため、
-    // 同期済み tree が残っていると manifest 登録が壊れていても import が成功し
-    // 得る（`check_aot_quickjs_separation.mjs` と同じ理由）。実行前に `.nako`・
-    // lock・cache を退避し、cwd も project 外にして manifest 登録だけで解決
-    // できることを固定する。
-    // path 依存 plugin の source も bundling 済みであることを固定するため、
-    // `packages/` と project manifest も退避する。残るのは AOT binary だけ。
-    const parked = path.join(work, "parked-project-state");
-    fs.mkdirSync(parked);
-    fs.renameSync(path.join(app, ".nako"), path.join(parked, "nako-env"));
-    fs.renameSync(path.join(app, "nako.lock"), path.join(parked, "nako.lock"));
-    fs.renameSync(path.join(app, "packages"), path.join(parked, "packages"));
-    fs.renameSync(path.join(app, "nako.toml"), path.join(parked, "nako.toml"));
-    fs.renameSync(cache, path.join(parked, "cache"));
-    const aot = await runChecked(binary, [], { cwd: work }, "AOT 実行");
-    if (aot.stdout !== expectedAotStdout) {
-      fail(`AOT の stdout が期待値と異なります:\n--- expected ---\n${expectedAotStdout}\n--- actual ---\n${aot.stdout}`);
-    }
-    const image = fs.readFileSync(binary);
-    if (!image.includes(Buffer.from("leftpad_reference"))) {
-      fail("AOT 生成物に ESM plugin の source が収録されていません");
-    }
-    // `import("left-pad")` の文字列自体は JS source として必ず収録されるため、
-    // alias の有無は ESM manifest の bare_aliases フィールドで検査する。
-    if (!image.includes(Buffer.from('"bare_aliases":["left-pad"]'))) {
-      fail("AOT 生成物の ESM manifest に npm bare alias が収録されていません");
-    }
-    if (!image.includes(Buffer.from('"is_plugin":true'))) {
-      fail("AOT 生成物の ESM manifest に plugin 識別（is_plugin）が収録されていません");
-    }
-    if (!image.includes(Buffer.from("function leftPad(text, length, ch)"))) {
-      fail("AOT 生成物に npm ESM library の source が収録されていません");
-    }
-    // 同梱 package の metadata（name/version/license）も生成物に収録される。
-    if (!image.includes(Buffer.from('"schema":2'))) {
-      fail("AOT 生成物の ESM manifest が schema 2 ではありません");
-    }
-    if (!image.includes(Buffer.from('"license":"MIT"'))) {
-      fail("AOT 生成物の ESM manifest に同梱 package の license が収録されていません");
-    }
-    console.log("参照 plugin+npm E2E: AOT OK（plugin 命令の dispatch・npm bare import 解決・SBOM 収録）");
+    console.log("参照 plugin+npm E2E: 成功（旧 npm/ESM package 経路は v1 対象外）");
   } finally {
-    await registry.close();
     fs.rmSync(work, { recursive: true, force: true });
   }
 }

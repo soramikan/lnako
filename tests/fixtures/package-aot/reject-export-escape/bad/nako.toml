@@ -1,8 +1,12 @@
+schema_version = 1
+
 [package]
-name = "bad"
+id = "@example/bad"
 version = "1.0.0"
 license = "MIT"
 
-[[exports]]
-name = "main"
-path = "../secret.nako3"
+[exports]
+"." = { entry = "../secret.nako3" }
+
+[artifacts.universal]
+include = ["**"]

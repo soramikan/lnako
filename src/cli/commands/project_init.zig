@@ -6,7 +6,6 @@
 const std = @import("std");
 const lnako = @import("lnako");
 const shared = @import("project.zig");
-const toml_scan = @import("toml_scan.zig");
 
 const project = lnako.package.project;
 const manifest_mod = lnako.package.manifest;
@@ -276,23 +275,25 @@ pub fn runInit(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []
         }
     }
 
-    const name_toml = try toml_scan.tomlEscape(a, name);
+    // v1 のローカル manifest。id/version/license は配布時に必要だが、
+    // ローカル専用プロジェクトでは省略できる（仕様 §2）。旧形式の
+    // [package] name/version や [[exports]] は生成しない。
     var manifest_text: std.ArrayList(u8) = .empty;
     try manifest_text.appendSlice(a, try std.fmt.allocPrint(a,
-        \\[package]
-        \\name = "{s}"
-        \\version = "0.1.0"
-        \\license = "MIT"
+        \\# {s} のローカルプロジェクト。配布するときは [package] に
+        \\# id/version/license を追加する。
+        \\schema_version = 1
         \\
-    , .{name_toml}));
+        \\[package]
+        \\
+    , .{name}));
     if (lib) {
-        try manifest_text.appendSlice(a, try std.fmt.allocPrint(a,
+        try manifest_text.appendSlice(a,
             \\
-            \\[[exports]]
-            \\name = "{s}"
-            \\path = "src/lib.nako3"
+            \\[exports]
+            \\"." = { entry = "src/lib.nako3" }
             \\
-        , .{name_toml}));
+        );
     }
     // 事前検査と書込の間に置かれた file/symlink も `exclusive` で拒否
     // する（symlink 先の外部 file を上書きしない）。

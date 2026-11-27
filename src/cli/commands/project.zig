@@ -17,8 +17,19 @@ const manifest_mod = lnako.package.manifest;
 const lock_model = lnako.package.lock;
 const semver = lnako.package.semver;
 const cache = lnako.package.cache;
+const v1_runtime = lnako.package.v1_runtime;
+const v1_entry = @import("v1_entry.zig");
 
 const Allocator = std.mem.Allocator;
+
+const project_flags = @import("project_flags.zig");
+
+// 分割先の実装を同じ名前で参照できるようにする（呼出し側の API は変えない）。
+pub const PrepFlags = project_flags.PrepFlags;
+pub const flagValue = project_flags.flagValue;
+const parsePrepFlags = project_flags.parsePrepFlags;
+const rejectInertFlags = project_flags.rejectInertFlags;
+pub const extractPrepFlags = project_flags.extractPrepFlags;
 
 // ---------------------------------------------------------------------------
 // 共通
@@ -43,268 +54,6 @@ pub fn failUsage(stderr: *std.Io.Writer, comptime fmt: []const u8, args: anytype
     std.process.exit(2);
 }
 
-/// `run`/`test`/`build` および lock 系コマンド共通の制御フラグ。
-pub const PrepFlags = struct {
-    locked: bool = false,
-    offline: bool = false,
-    no_sync: bool = false,
-    profile: ?[]const u8 = null,
-    features: std.ArrayList([]const u8) = .empty,
-    no_default_features: bool = false,
-    registry: ?[]const u8 = null,
-    cache_dir: ?[]const u8 = null,
-    allow_plaintext_http: bool = false,
-    json: bool = false,
-    /// `check --strict-sharing`: 未検査 package が残れば E033 で失敗する。
-    strict_sharing: bool = false,
-    /// `check --load-plugins`: plugin を実際にロードして実登録照合を行う
-    /// （opt-in。plugin の初期化コード実行を伴うため既定では動かない）。
-    load_plugins: bool = false,
-    /// 共有 writable ACL/mode を検出したら拒否（旧既定）。既定は警告+続行。
-    strict_project_trust: bool = false,
-    /// 共有 writable の警告を出さない（続行はする）。
-    no_project_trust_warning: bool = false,
-    /// `run`/`build --compat-js` の compat 実行。依存解決の ESM 許容と
-    /// lock 鮮度入力へ伝える（prep フラグとしては抽出せず呼出し側が
-    /// 設定する）。
-    compat_js: bool = false,
-    /// `build -O` の実効レベル（`"O0"`〜`"O3"`）。依存解決の
-    /// optimize-gated 実装選択と lock 鮮度入力へ伝える。null は未指定。
-    optimize: ?[]const u8 = null,
-
-    pub fn deinit(self: *PrepFlags, a: Allocator) void {
-        self.features.deinit(a);
-    }
-
-    pub fn toOptions(self: *const PrepFlags, environ_map: ?*const std.process.Environ.Map) project.PrepareOptions {
-        var options = project.PrepareOptions{
-            .locked = self.locked,
-            .profile = self.profile,
-            .features = self.features.items,
-            .no_default_features = self.no_default_features,
-            .registry_url = self.registry,
-            .cache_root = self.cache_dir,
-            // run/test/build・lock 系の要求 runtime は lnako（`lnako sync
-            // --runtime` は cli/commands/sync.zig が別途設定する）。
-            .requested_runtime = "lnako",
-            // engines 照合にこの処理系の version を供給する。未供給だと
-            // `engines.nako`/`engines.lnako` 制約が解決へ効かない。
-            // `cnako_version` も sync と同じ値を供給する。lock input の
-            // version tuple が入口ごとに違うと、`lnako lock` が書いた
-            // lock を `lnako sync` が stale 判定して書き戻す往復に
-            // なるため、どの入口でも同じ組を記録する。
-            .nako_version = lnako.package.semver.Version.parse(project.compat_nako_version) catch null,
-            .cnako_version = lnako.package.semver.Version.parse(project.compat_nako_version) catch null,
-            .lnako_version = lnako.package.semver.Version.parse(lnako.version) catch null,
-            .compat_js = self.compat_js,
-            .optimize = self.optimize,
-        };
-        options.policy.offline = self.offline;
-        options.policy.allow_plaintext_http = self.allow_plaintext_http;
-        if (options.registry_url == null) {
-            if (environ_map) |map| {
-                if (map.get("LNAKO_REGISTRY")) |url| options.registry_url = url;
-            }
-        }
-        // npm の packument は npm registry の JSON schema で配信され、lnako の
-        // static registry（index/record）とは別サービス。同じ URL を暗黙に
-        // 使い回すと private registry 設定下で解決先を取り違えるため、npm 専用
-        // の環境変数でのみ上書きする（既定は registry.npmjs.org）。
-        if (options.npm_registry_url == null) {
-            if (environ_map) |map| {
-                if (map.get("LNAKO_NPM_REGISTRY")) |url| options.npm_registry_url = url;
-            }
-        }
-        return options;
-    }
-
-    /// CLI / 環境変数から共有 writable の扱いを決める。
-    /// `--strict-project-trust` と `--no-project-trust-warning` の同時指定は
-    /// 呼出し側で用法エラーにする。
-    pub fn writableMode(self: *const PrepFlags, environ_map: ?*const std.process.Environ.Map) lnako.package.project_trust.WritableMode {
-        if (self.strict_project_trust) return .enforce;
-        if (self.no_project_trust_warning) return .ignore;
-        if (environ_map) |map| {
-            if (map.get("LNAKO_PROJECT_TRUST")) |raw| {
-                if (lnako.package.project_trust.WritableMode.parse(raw)) |mode| return mode;
-            }
-        }
-        return .warn;
-    }
-};
-
-/// 値を取るフラグの次の引数を値として取り出す。末尾に値が無い場合や、
-/// 次の引数が別のオプション（`-` 始まり）なら用法エラーとする。
-pub fn flagValue(args: []const []const u8, index: *usize, verb: []const u8, flag: []const u8, stderr: *std.Io.Writer) CliError![]const u8 {
-    if (index.* + 1 >= args.len or std.mem.startsWith(u8, args[index.* + 1], "-")) {
-        return failUsage(stderr, "{s}: {s} には値が必要です\n", .{ verb, flag });
-    }
-    index.* += 1;
-    return args[index.*];
-}
-
-const PrepParseResult = struct { flags: PrepFlags, rest: []const []const u8 };
-
-/// `args` から共通フラグを取り出し、残りの位置引数を返す。
-/// 未知オプションは failUsage。
-fn parsePrepFlags(a: Allocator, args: []const []const u8, verb: []const u8, stderr: *std.Io.Writer) (CliError || error{OutOfMemory})!PrepParseResult {
-    var flags = PrepFlags{};
-    var rest: std.ArrayList([]const u8) = .empty;
-    var index: usize = 0;
-    while (index < args.len) : (index += 1) {
-        const argument = args[index];
-        if (std.mem.eql(u8, argument, "--locked")) {
-            flags.locked = true;
-        } else if (std.mem.eql(u8, argument, "--offline")) {
-            flags.offline = true;
-        } else if (std.mem.eql(u8, argument, "--no-sync")) {
-            flags.no_sync = true;
-        } else if (std.mem.eql(u8, argument, "--profile")) {
-            flags.profile = try flagValue(args, &index, verb, "--profile", stderr);
-        } else if (std.mem.eql(u8, argument, "--features")) {
-            const spec = try flagValue(args, &index, verb, "--features", stderr);
-            var it = std.mem.splitScalar(u8, spec, ',');
-            while (it.next()) |name| {
-                const trimmed = std.mem.trim(u8, name, " ");
-                if (trimmed.len > 0) try flags.features.append(a, trimmed);
-            }
-        } else if (std.mem.eql(u8, argument, "--no-default-features")) {
-            flags.no_default_features = true;
-        } else if (std.mem.eql(u8, argument, "--registry")) {
-            flags.registry = try flagValue(args, &index, verb, "--registry", stderr);
-        } else if (std.mem.eql(u8, argument, "--package-cache-dir")) {
-            flags.cache_dir = try flagValue(args, &index, verb, "--package-cache-dir", stderr);
-        } else if (std.mem.eql(u8, argument, "--allow-plaintext-http")) {
-            flags.allow_plaintext_http = true;
-        } else if (std.mem.eql(u8, argument, "--json")) {
-            flags.json = true;
-        } else if (std.mem.eql(u8, argument, "--strict-sharing")) {
-            flags.strict_sharing = true;
-        } else if (std.mem.eql(u8, argument, "--load-plugins")) {
-            flags.load_plugins = true;
-        } else if (std.mem.eql(u8, argument, "--strict-project-trust")) {
-            flags.strict_project_trust = true;
-        } else if (std.mem.eql(u8, argument, "--no-project-trust-warning")) {
-            flags.no_project_trust_warning = true;
-        } else if (std.mem.startsWith(u8, argument, "-")) {
-            return failUsage(stderr, "{s}: 不明なオプションです: {s}\n", .{ verb, argument });
-        } else {
-            try rest.append(a, argument);
-        }
-    }
-    if (flags.strict_project_trust and flags.no_project_trust_warning) {
-        return failUsage(stderr, "{s}: --strict-project-trust と --no-project-trust-warning は同時に指定できません\n", .{verb});
-    }
-    return .{ .flags = flags, .rest = rest.items };
-}
-
-/// verb ごとに意味を持つフラグの許可集合。許可外のフラグが指定された
-/// 場合は黙って無視せず用法エラーとする。
-const FlagMask = struct {
-    locked: bool = false,
-    offline: bool = false,
-    no_sync: bool = false,
-    profile: bool = false,
-    features: bool = false,
-    no_default_features: bool = false,
-    registry: bool = false,
-    cache_dir: bool = false,
-    allow_plaintext_http: bool = false,
-    json: bool = false,
-    strict_sharing: bool = false,
-    load_plugins: bool = false,
-    strict_project_trust: bool = false,
-    no_project_trust_warning: bool = false,
-};
-
-fn rejectInertFlags(flags: *const PrepFlags, verb: []const u8, comptime allowed: FlagMask, stderr: *std.Io.Writer) CliError!void {
-    const bad: ?[]const u8 = if (!allowed.locked and flags.locked)
-        "--locked"
-    else if (!allowed.offline and flags.offline)
-        "--offline"
-    else if (!allowed.no_sync and flags.no_sync)
-        "--no-sync"
-    else if (!allowed.profile and flags.profile != null)
-        "--profile"
-    else if (!allowed.features and flags.features.items.len > 0)
-        "--features"
-    else if (!allowed.no_default_features and flags.no_default_features)
-        "--no-default-features"
-    else if (!allowed.registry and flags.registry != null)
-        "--registry"
-    else if (!allowed.cache_dir and flags.cache_dir != null)
-        "--package-cache-dir"
-    else if (!allowed.allow_plaintext_http and flags.allow_plaintext_http)
-        "--allow-plaintext-http"
-    else if (!allowed.json and flags.json)
-        "--json"
-    else if (!allowed.strict_sharing and flags.strict_sharing)
-        "--strict-sharing"
-    else if (!allowed.load_plugins and flags.load_plugins)
-        "--load-plugins"
-    else if (!allowed.strict_project_trust and flags.strict_project_trust)
-        "--strict-project-trust"
-    else if (!allowed.no_project_trust_warning and flags.no_project_trust_warning)
-        "--no-project-trust-warning"
-    else
-        null;
-    if (bad) |flag| return failUsage(stderr, "{s}: {s} はこのコマンドでは使えません\n", .{ verb, flag });
-}
-
-/// prep 系フラグを `args` から `flags` へ移し、残りの引数配列を返す。
-/// 値を取るフラグは値も一緒に消費する。認識しない引数（dncl 系・位置
-/// 引数・未知オプション）は残りへ保持し、呼出し側の既存検証に委ねる。
-/// `run`/`test`/`build` の自動準備統合用。
-/// 値を取るフラグの直後が別のオプション（`-` 始まり）なら値取りこぼし
-/// とみなして用法エラーとする（`--profile --dncl` の誤消費を防ぐ）。
-pub fn extractPrepFlags(a: Allocator, args: []const []const u8, flags: *PrepFlags, verb: []const u8, stderr: *std.Io.Writer) ![]const []const u8 {
-    var rest: std.ArrayList([]const u8) = .empty;
-    var index: usize = 0;
-    while (index < args.len) : (index += 1) {
-        const argument = args[index];
-        if (std.mem.eql(u8, argument, "--locked")) {
-            flags.locked = true;
-        } else if (std.mem.eql(u8, argument, "--offline")) {
-            flags.offline = true;
-        } else if (std.mem.eql(u8, argument, "--no-sync")) {
-            flags.no_sync = true;
-        } else if (std.mem.eql(u8, argument, "--no-default-features")) {
-            flags.no_default_features = true;
-        } else if (std.mem.eql(u8, argument, "--allow-plaintext-http")) {
-            flags.allow_plaintext_http = true;
-        } else if (std.mem.eql(u8, argument, "--strict-project-trust")) {
-            flags.strict_project_trust = true;
-        } else if (std.mem.eql(u8, argument, "--no-project-trust-warning")) {
-            flags.no_project_trust_warning = true;
-        } else if (std.mem.eql(u8, argument, "--profile") or
-            std.mem.eql(u8, argument, "--features") or
-            std.mem.eql(u8, argument, "--registry") or
-            std.mem.eql(u8, argument, "--package-cache-dir"))
-        {
-            const value = try flagValue(args, &index, verb, argument, stderr);
-            if (std.mem.eql(u8, argument, "--profile")) {
-                flags.profile = value;
-            } else if (std.mem.eql(u8, argument, "--features")) {
-                var it = std.mem.splitScalar(u8, value, ',');
-                while (it.next()) |name| {
-                    const trimmed = std.mem.trim(u8, name, " ");
-                    if (trimmed.len > 0) try flags.features.append(a, trimmed);
-                }
-            } else if (std.mem.eql(u8, argument, "--registry")) {
-                flags.registry = value;
-            } else {
-                flags.cache_dir = value;
-            }
-        } else {
-            try rest.append(a, argument);
-        }
-    }
-    if (flags.strict_project_trust and flags.no_project_trust_warning) {
-        return failUsage(stderr, "{s}: --strict-project-trust と --no-project-trust-warning は同時に指定できません\n", .{verb});
-    }
-    return rest.items;
-}
-
 /// プロジェクトを `start_dir` から上方探索して読み込む。見つからない・
 /// manifest が不正なら診断を出力して失敗する。
 pub fn loadProjectOrFail(a: Allocator, io: std.Io, start_dir: []const u8, stderr: *std.Io.Writer) CliError!project.Project {
@@ -327,6 +76,78 @@ pub fn renderOrFail(diagnostics: *diag.List, stderr: *std.Io.Writer, source_name
         diagnostics.render(stderr, source_name) catch {};
         stderr.flush() catch {};
     }
+}
+
+/// 公開 CLI 入口と、旧内部処理の回帰テストを区別する。公開入口は旧
+/// manifest を旧 loader へ渡さず、`legacy_internal` は旧内部処理のテスト
+/// だけが使う（本番の dispatch からは到達しない）。
+pub const EntryMode = enum { public, legacy_internal };
+
+/// 旧 manifest / 旧 lock 専用コマンドを公開 CLI の v1/旧形式入口へ流さない。
+/// `dir` は編集 lock で pin 済みの root handle（あれば）。旧形式は旧 loader
+/// で読み替えず、v1 の代替（sync --v1-fixture）だけを案内して拒否する。
+pub fn rejectV1LegacyCommand(
+    a: Allocator,
+    io: std.Io,
+    root: []const u8,
+    dir: ?*const std.Io.Dir,
+    verb: []const u8,
+    mode: EntryMode,
+    stderr: *std.Io.Writer,
+) !void {
+    var probe = v1_entry.probe(a, io, root, dir) catch |err| switch (err) {
+        error.OutOfMemory => return err,
+        else => return fail(stderr, "{s}: nako.toml を読めません: {s}\n", .{ verb, @errorName(err) }),
+    };
+    defer probe.deinit(a);
+    switch (probe) {
+        .v1 => {
+            const guidance = if (std.mem.eql(u8, verb, "lock"))
+                v1_entry.v1_lock_guidance
+            else
+                v1_entry.legacyOnlyGuidance(verb);
+            return fail(stderr, "{s}: v1 プロジェクトでは旧形式専用コマンドを使いません。{s}: {s}\n", .{
+                verb,
+                guidance,
+                root,
+            });
+        },
+        .invalid => |err| return fail(stderr, "{s}: nako.toml が v1 形式として不正です（{s}）: {s}\n", .{
+            verb,
+            v1_entry.manifestDiagnostic(err),
+            root,
+        }),
+        // 公開 CLI は旧 manifest も旧 loader へ渡さない。旧内部処理の
+        // 回帰テストだけが `legacy_internal` で従来経路を使う。
+        .legacy => {
+            if (mode == .public) {
+                return fail(stderr, "{s}: {s}: {s}\n", .{
+                    verb,
+                    v1_entry.legacy_manifest_message,
+                    root,
+                });
+            }
+        },
+        .missing => {},
+    }
+}
+
+/// 編集 lock を持たない参照系コマンド用。プロジェクトが無ければ既存の
+/// 読込み側の診断へ委ねる。
+pub fn rejectV1LegacyCommandFrom(
+    a: Allocator,
+    io: std.Io,
+    start_dir: []const u8,
+    verb: []const u8,
+    mode: EntryMode,
+    stderr: *std.Io.Writer,
+) !void {
+    const root = project.findRoot(a, io, start_dir) catch |err| switch (err) {
+        error.OutOfMemory => return err,
+        else => return,
+    } orelse return;
+    defer a.free(root);
+    try rejectV1LegacyCommand(a, io, root, null, verb, mode, stderr);
 }
 
 fn projectErrorMessage(err: anyerror) []const u8 {
@@ -365,7 +186,7 @@ pub fn failProject(stderr: *std.Io.Writer, verb: []const u8, err: anyerror, diag
 // lock / update
 // ---------------------------------------------------------------------------
 
-fn runLock(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []const u8, environ_map: ?*const std.process.Environ.Map, stdout: *std.Io.Writer, stderr: *std.Io.Writer) !void {
+fn runLock(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []const u8, environ_map: ?*const std.process.Environ.Map, mode: EntryMode, stdout: *std.Io.Writer, stderr: *std.Io.Writer) !void {
     const parsed = try parsePrepFlags(a, args, "lock", stderr);
     var flags = parsed.flags;
     defer flags.deinit(a);
@@ -383,10 +204,33 @@ fn runLock(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []cons
         .json = true,
     }, stderr);
 
+    // v1 は編集 lock を取る前に拒否し、.nako も旧 lock も作らない。
+    // 取得後にも再検査して、race で v1 へ変わった manifest を旧 loader へ
+    // 渡さない。
+    try rejectV1LegacyCommandFrom(a, io, start_dir, "lock", mode, stderr);
     // manifest 読込〜lock 公開まで同じ編集 lock を保持し、並行する
     // add/remove/sync/自動準備と lock の書き換えを直列化する。
     var locked = try acquireProjectEditLock(a, io, start_dir, "lock", stderr);
     defer if (locked) |*l| l.deinit(a, io);
+    // v1 manifest を旧 loader へ渡さない。v1 の nako.lock は `lnako sync`
+    // が生成する（旧仕様の lock を v1 プロジェクトへ書かない）。
+    if (locked) |*l| {
+        if (l.root_dir) |*dir| {
+            var probe = v1_entry.probeDir(a, io, dir) catch |err| switch (err) {
+                error.OutOfMemory => return err,
+                else => return fail(stderr, "lock: nako.toml を読めません: {s}\n", .{@errorName(err)}),
+            };
+            defer probe.deinit(a);
+            switch (probe) {
+                .v1 => return fail(stderr, "lock: {s}: {s}\n", .{ l.root, v1_entry.v1_lock_guidance }),
+                .invalid => |err| return fail(stderr, "lock: nako.toml が v1 形式として不正です（{s}）: {s}\n", .{ v1_entry.manifestDiagnostic(err), l.root }),
+                .legacy => {
+                    if (mode == .public) return fail(stderr, "lock: {s}: {s}\n", .{ v1_entry.legacy_manifest_message, l.root });
+                },
+                .missing => {},
+            }
+        }
+    }
     var loaded = if (locked) |*l|
         try loadPinnedProjectOrFail(a, io, l, stderr)
     else
@@ -416,7 +260,7 @@ fn runLock(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []cons
     }
 }
 
-fn runUpdate(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []const u8, environ_map: ?*const std.process.Environ.Map, stderr: *std.Io.Writer) !void {
+fn runUpdate(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []const u8, environ_map: ?*const std.process.Environ.Map, mode: EntryMode, stderr: *std.Io.Writer) !void {
     const parsed = try parsePrepFlags(a, args, "update", stderr);
     var flags = parsed.flags;
     defer flags.deinit(a);
@@ -431,10 +275,17 @@ fn runUpdate(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []co
         .allow_plaintext_http = true,
     }, stderr);
 
+    // v1 は編集 lock を取る前に拒否し、旧 lock の生成も .nako の作成も
+    // 行わない。編集 lock 取得後にも再検査し、race で v1 へ変わった
+    // manifest を旧 loader へ渡さない。
+    try rejectV1LegacyCommandFrom(a, io, start_dir, "update", mode, stderr);
     // lock/update も add/remove と同じ編集 lock で直列化する（manifest
     // 読込〜lock 公開まで）。
     var locked = try acquireProjectEditLock(a, io, start_dir, "update", stderr);
     defer if (locked) |*l| l.deinit(a, io);
+    if (locked) |*l| {
+        if (l.root_dir) |*dir| try rejectV1LegacyCommand(a, io, l.root, dir, "update", mode, stderr);
+    }
     var loaded = if (locked) |*l|
         try loadPinnedProjectOrFail(a, io, l, stderr)
     else
@@ -683,7 +534,7 @@ pub fn depKeyIdMap(a: Allocator, manifest: *const manifest_mod.Manifest, root: [
     return maps;
 }
 
-fn runTree(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []const u8, environ_map: ?*const std.process.Environ.Map, stdout: *std.Io.Writer, stderr: *std.Io.Writer) !void {
+fn runTree(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []const u8, environ_map: ?*const std.process.Environ.Map, mode: EntryMode, stdout: *std.Io.Writer, stderr: *std.Io.Writer) !void {
     const parsed = try parsePrepFlags(a, args, "tree", stderr);
     var flags = parsed.flags;
     defer flags.deinit(a);
@@ -697,6 +548,7 @@ fn runTree(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []cons
         .no_default_features = true,
     }, stderr);
 
+    try rejectV1LegacyCommandFrom(a, io, start_dir, "tree", mode, stderr);
     var loaded = try loadProjectOrFail(a, io, start_dir, stderr);
     defer loaded.deinit();
     var outcome = try lockForQuery(a, io, &loaded, &flags, environ_map, "tree", stderr);
@@ -836,7 +688,7 @@ fn printTreeNode(a: Allocator, stdout: *std.Io.Writer, packages: []const lock_mo
     }
 }
 
-fn runWhy(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []const u8, environ_map: ?*const std.process.Environ.Map, stdout: *std.Io.Writer, stderr: *std.Io.Writer) !void {
+fn runWhy(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []const u8, environ_map: ?*const std.process.Environ.Map, mode: EntryMode, stdout: *std.Io.Writer, stderr: *std.Io.Writer) !void {
     const parsed = try parsePrepFlags(a, args, "why", stderr);
     var flags = parsed.flags;
     defer flags.deinit(a);
@@ -850,6 +702,7 @@ fn runWhy(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []const
     }, stderr);
     const name = parsed.rest[0];
 
+    try rejectV1LegacyCommandFrom(a, io, start_dir, "why", mode, stderr);
     var loaded = try loadProjectOrFail(a, io, start_dir, stderr);
     defer loaded.deinit();
     var outcome = try lockForQuery(a, io, &loaded, &flags, environ_map, "why", stderr);
@@ -996,6 +849,10 @@ fn declaredMatch(a: Allocator, packages: []const lock_model.PackageEntry, decl: 
 /// 既存環境が現行 lock と整合するか検査する。`.nako` を作成しない。
 /// 環境が current のときは命令 metadata の静的検査も行う（Issue #52）。
 pub fn checkProject(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []const u8, environ_map: ?*const std.process.Environ.Map, stdout: *std.Io.Writer, stderr: *std.Io.Writer) !void {
+    return checkProjectMode(a, io, args, start_dir, environ_map, .public, stdout, stderr);
+}
+
+fn checkProjectMode(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []const u8, environ_map: ?*const std.process.Environ.Map, mode: EntryMode, stdout: *std.Io.Writer, stderr: *std.Io.Writer) !void {
     const parsed = try parsePrepFlags(a, args, "check", stderr);
     var flags = parsed.flags;
     defer flags.deinit(a);
@@ -1015,6 +872,8 @@ pub fn checkProject(a: Allocator, io: std.Io, args: []const []const u8, start_di
         .strict_project_trust = true,
         .no_project_trust_warning = true,
     }, stderr);
+
+    try rejectV1LegacyCommandFrom(a, io, start_dir, "check", mode, stderr);
 
     var diagnostics = diag.List.init(a);
     defer diagnostics.deinit();
@@ -1381,8 +1240,8 @@ pub fn prepareForExecution(
     verb: []const u8,
     stderr: *std.Io.Writer,
 ) !void {
-    var diagnostics = diag.List.init(a);
-    defer diagnostics.deinit();
+    // v1 入口は fixture を引数で受けるため、旧 registry/cache 設定は使わない。
+    _ = environ_map;
     const start_dir = inputDir(a, io, input) catch return;
     defer a.free(start_dir);
     // --no-sync は読み取り専用のため lock 不要。自動準備は lock と
@@ -1392,89 +1251,80 @@ pub fn prepareForExecution(
         locked = try acquireProjectEditLock(a, io, start_dir, verb, stderr);
     }
     defer if (locked) |*l| l.deinit(a, io);
-    // 探索自体の失敗（破損した manifest 等）は黙って実行しない。
-    // lock を取った経路では pin 済み root handle から読み込み、lock
-    // 対象と別 dir の manifest を読まないようにする。
-    const found = if (locked) |*l|
-        project.loadFromDir(a, io, l.root, l.takeDir(), &diagnostics) catch |err| {
-            renderOrFail(&diagnostics, stderr, l.root);
-            return fail(stderr, "{s}: プロジェクトを読み込めません: {s}\n", .{ verb, @errorName(err) });
-        }
-    else
-        (project.discoverAndLoad(a, io, start_dir, &diagnostics) catch |err| {
-            renderOrFail(&diagnostics, stderr, start_dir);
-            return fail(stderr, "{s}: プロジェクトを読み込めません: {s}\n", .{ verb, @errorName(err) });
-        }) orelse return; // 非プロジェクト: 従来動作
-    var project_var = found;
-    defer project_var.deinit();
-    if (diagnostics.errorCount() > 0) {
-        renderOrFail(&diagnostics, stderr, project_var.manifest_path);
-        return error.Failed;
-    }
-
-    var options = flags.toOptions(environ_map);
-    // --locked は --no-sync と併用されても必ず検証する（書き込みを伴わ
-    // ない静的検査のため sync 禁止と矛盾しない）。
-    if (flags.locked) {
-        project.verifyLocked(a, io, &project_var, &options, &diagnostics) catch |err| {
-            return failProject(stderr, verb, err, &diagnostics, project_var.manifest_path);
+    // manifest を先に分類し、旧 manifest を旧 loader へ渡さない（Q12）。
+    // 旧形式は再作成を案内して拒否し、v1 は依存が無ければ環境なしで受理、
+    // 依存があって環境が無ければ fixture 指定の sync を案内する。
+    var discovered_root: ?[]const u8 = null;
+    defer if (discovered_root) |root| a.free(@constCast(root));
+    const project_root: ?[]const u8 = if (locked) |*l| l.root else blk: {
+        discovered_root = project.findRoot(a, io, start_dir) catch null;
+        break :blk if (discovered_root) |root| root else null;
+    };
+    if (project_root) |root| {
+        const probe_dir: ?*const std.Io.Dir = if (locked) |*l| blk: {
+            if (l.root_dir) |*dir| break :blk dir;
+            break :blk null;
+        } else null;
+        var probe = v1_entry.probe(a, io, root, probe_dir) catch |err| switch (err) {
+            error.OutOfMemory => return err,
+            else => return fail(stderr, "{s}: nako.toml を読めません: {s}\n", .{ verb, @errorName(err) }),
         };
-    }
-    if (flags.no_sync) {
-        // 自動準備禁止: 既存環境だけを静的検査する。
-        try ensureEnvironmentUsable(a, io, &project_var, &options, &diagnostics, verb, stderr);
+        defer probe.deinit(a);
+        switch (probe) {
+            .missing => {},
+            .legacy => return fail(stderr, "{s}: {s}: {s}\n", .{ verb, v1_entry.legacy_manifest_message, root }),
+            .invalid => |err| return fail(stderr, "{s}: nako.toml が v1 形式として不正です（{s}）: {s}\n", .{ verb, v1_entry.manifestDiagnostic(err), root }),
+            .v1 => |*v1| {
+                if (v1_runtime.environmentPresent(io, root, a)) {
+                    try prepareV1Execution(a, io, root, flags, verb, stderr);
+                } else {
+                    const needs = v1_entry.needsEnvironment(a, &v1.manifest, verb, .{
+                        .profile = flags.profile,
+                        .features = flags.features.items,
+                        .no_default_features = flags.no_default_features,
+                    }) catch |err| switch (err) {
+                        error.OutOfMemory => return err,
+                        error.UnknownProfile => return fail(stderr, "{s}: profile が見つかりません（--profile を指定してください）\n", .{verb}),
+                        error.UnknownFeature => return fail(stderr, "{s}: 要求した feature は宣言されていません\n", .{verb}),
+                        error.DuplicateDependency => return fail(stderr, "{s}: 同じ Package ID が dependencies と runtime-dependencies に異なる内容で宣言されています\n", .{verb}),
+                    };
+                    if (needs) return fail(stderr, "{s}: {s}: {s}\n", .{ verb, v1_entry.sync_fixture_guidance, root });
+                }
+            },
+        }
         return;
     }
-    const outcome = project.ensureEnvironment(a, io, &project_var, &options, &diagnostics) catch |err| {
-        return failProject(stderr, verb, err, &diagnostics, project_var.manifest_path);
-    };
-    if (outcome.synced or outcome.lock_wrote) {
-        stderr.print("{s}: 依存環境を準備しました（profile: {s}）\n", .{ verb, outcome.profile }) catch {};
-        stderr.flush() catch {};
-    }
+    // 非プロジェクト: 従来どおり何もしない。
 }
 
-/// `--no-sync` 時の静的環境検査。lock が現在の manifest/profile/features/
-/// target に対して fresh であること（読み取り専用）と `.nako` の整合を
-/// 確認し、不足があれば必要な操作を診断して失敗する。
-/// `ensureEnvironment` と同じ profile・runtime 条件で環境を照合する
-/// （profile は `loadFreshLock` が manifest から解決した実 profile）。
-fn ensureEnvironmentUsable(a: Allocator, io: std.Io, loaded: *project.Project, options: *const project.PrepareOptions, diagnostics: *diag.List, verb: []const u8, stderr: *std.Io.Writer) !void {
-    // lock の意味検証と manifest/profile/features/target に対する鮮度検査
-    // を書き込みなしで行う（pin hash 不一致もここで検出される）。
-    // lock だけを見て env を受理すると manifest 変更後の古い lock+env を
-    // そのまま通してしまうため、鮮度検証は省略できない。
-    var outcome = project.loadFreshLock(a, io, loaded, options, diagnostics) catch |err| {
-        return failProject(stderr, verb, err, diagnostics, loaded.manifest_path);
+/// v1 環境の実行前検証。lock と materialize 済み世代の対応を確認し、
+/// 旧 `.nako/environment.json` へのフォールバックは行わない。
+/// 現時点では既存環境の検証のみを行い、再生成は `lnako sync --v1-fixture <fixture-dir>`（P10
+/// client）に委ねる。自動再生成を接続する場合はここで client pipeline を
+/// 呼ぶ。
+fn prepareV1Execution(
+    a: Allocator,
+    io: std.Io,
+    project_root: []const u8,
+    flags: *const PrepFlags,
+    verb: []const u8,
+    stderr: *std.Io.Writer,
+) !void {
+    var environment = v1_runtime.load(a, io, project_root, flags.v1LoadOptions()) catch |err| switch (err) {
+        error.OutOfMemory => return err,
+        error.LegacyLock => return fail(stderr, "{s}: 旧形式の nako.lock です。v1 の lock を再作成してください（`lnako sync --v1-fixture <fixture-dir>`）: {s}\n", .{ verb, project_root }),
+        error.StaleEnvironment => return fail(stderr, "{s}: v1 環境が nako.lock / materialize と一致しません（`lnako sync --v1-fixture <fixture-dir>` で再生成してください）: {s}\n", .{ verb, project_root }),
+        else => return fail(stderr, "{s}: v1 パッケージ環境を検証できません（`lnako sync --v1-fixture <fixture-dir>` で再生成してください）: {s} ({s})\n", .{ verb, project_root, @errorName(err) }),
     };
-    defer outcome.deinit();
-    var digest: [32]u8 = undefined;
-    // `loaded.root_dir`（pinned handle）相対で検査する。path 文字列の
-    // 再解決では root の rename/replace 競合で別 dir の `.nako` を読み
-    // 得る。
-    const has_lock = project.lockDigestDir(a, io, loaded.root_dir, &digest) catch false;
-    const env = project.readEnvironmentInfoDir(a, io, loaded.root_dir) catch null;
-    const env_ok = has_lock and env != null and
-        project.environmentMatchesLock(env.?, &digest) and
-        env.?.schema_version == 1 and
-        // schema v1 の profile/runtime は必須項目。欠落・型違いの環境は
-        // 選択 profile/runtime を証明できないため不一致として拒否する。
-        (env.?.profile != null and std.mem.eql(u8, env.?.profile.?, outcome.profile)) and
-        (env.?.runtime != null and std.mem.eql(u8, env.?.runtime.?, "lnako")) and
-        // 参照世代 dir が消えた環境は不一致とする。
-        (env.?.generation != null and project.generationExistsDir(io, loaded.root_dir, env.?.generation.?)) and
-        // packages 記録・実体の欠落も不一致とする（内容検証）。
-        (project.environmentPackagesUsableDir(a, io, loaded.root_dir, &outcome.lock, outcome.profile) catch false) and
-        // metadata-only な mutable path 変更で環境 snapshot が陳腐化した
-        // 場合も不一致とする（環境記録の digest と現行 dir を照合）。
-        (project.environmentMutablePathsUsableDir(a, io, loaded.root_dir, env.?, &outcome.lock) catch false);
-    if (!env_ok) {
-        if (env == null) {
-            return fail(stderr, "{s}: .nako 環境がありません（--no-sync のため自動準備しません。`lnako sync` を実行してください）\n", .{verb});
-        } else {
-            return fail(stderr, "{s}: .nako 環境が nako.lock と一致しません（`lnako sync` で再構築してください）\n", .{verb});
+    if (environment) |*env| {
+        defer env.deinit();
+        if (flags.no_sync) {
+            stderr.print("{s}: v1 パッケージ環境を確認しました（profile: {s}）\n", .{ verb, env.profile }) catch {};
+            stderr.flush() catch {};
         }
+        return;
     }
+    return fail(stderr, "{s}: v1 環境を読み込めません（`lnako sync --v1-fixture <fixture-dir>` を実行してください）: {s}\n", .{ verb, project_root });
 }
 
 pub fn inputDir(a: Allocator, io: std.Io, input: []const u8) ![]const u8 {
@@ -1513,6 +1363,7 @@ pub fn run(
 }
 
 /// `start_dir` を起点にプロジェクトを探索してコマンドを実行する。
+/// 公開 CLI の入口で、旧 manifest / 旧 lock は移行案内して拒否する。
 /// テストから任意の作業ディレクトリで駆動できるよう分離してある。
 pub fn runIn(
     allocator: Allocator,
@@ -1524,18 +1375,51 @@ pub fn runIn(
     stdout: *std.Io.Writer,
     stderr: *std.Io.Writer,
 ) !void {
+    return runInMode(allocator, io, verb, args, start_dir, environ_map, .public, stdout, stderr);
+}
+
+/// 旧形式専用の内部処理を検証するテスト専用入口。公開 CLI の dispatch
+/// からは呼ばず、本番では panic する。旧型・旧 lock の内部回帰テストと、
+/// 公開入口の guard テストを混同しないために分離する。
+pub fn runInLegacyInternalForTest(
+    allocator: Allocator,
+    io: std.Io,
+    verb: []const u8,
+    args: []const []const u8,
+    start_dir: []const u8,
+    environ_map: ?*const std.process.Environ.Map,
+    stdout: *std.Io.Writer,
+    stderr: *std.Io.Writer,
+) !void {
+    if (!@import("builtin").is_test) @panic("runInLegacyInternalForTest is test-only");
+    return runInMode(allocator, io, verb, args, start_dir, environ_map, .legacy_internal, stdout, stderr);
+}
+
+fn runInMode(
+    allocator: Allocator,
+    io: std.Io,
+    verb: []const u8,
+    args: []const []const u8,
+    start_dir: []const u8,
+    environ_map: ?*const std.process.Environ.Map,
+    mode: EntryMode,
+    stdout: *std.Io.Writer,
+    stderr: *std.Io.Writer,
+) !void {
     if (std.mem.eql(u8, verb, "init")) return init_cmd.runInit(allocator, io, args, start_dir, stderr);
-    if (std.mem.eql(u8, verb, "add")) return edit.runAdd(allocator, io, args, start_dir, environ_map, stderr);
-    if (std.mem.eql(u8, verb, "remove") or std.mem.eql(u8, verb, "rm")) return edit.runRemove(allocator, io, args, start_dir, environ_map, stderr);
-    if (std.mem.eql(u8, verb, "lock")) return runLock(allocator, io, args, start_dir, environ_map, stdout, stderr);
-    if (std.mem.eql(u8, verb, "update")) return runUpdate(allocator, io, args, start_dir, environ_map, stderr);
-    if (std.mem.eql(u8, verb, "tree")) return runTree(allocator, io, args, start_dir, environ_map, stdout, stderr);
-    if (std.mem.eql(u8, verb, "why")) return runWhy(allocator, io, args, start_dir, environ_map, stdout, stderr);
-    if (std.mem.eql(u8, verb, "check")) return checkProject(allocator, io, args, start_dir, environ_map, stdout, stderr);
+    if (std.mem.eql(u8, verb, "add")) return edit.runAdd(allocator, io, args, start_dir, environ_map, mode, stderr);
+    if (std.mem.eql(u8, verb, "remove") or std.mem.eql(u8, verb, "rm")) return edit.runRemove(allocator, io, args, start_dir, environ_map, mode, stderr);
+    if (std.mem.eql(u8, verb, "lock")) return runLock(allocator, io, args, start_dir, environ_map, mode, stdout, stderr);
+    if (std.mem.eql(u8, verb, "update")) return runUpdate(allocator, io, args, start_dir, environ_map, mode, stderr);
+    if (std.mem.eql(u8, verb, "tree")) return runTree(allocator, io, args, start_dir, environ_map, mode, stdout, stderr);
+    if (std.mem.eql(u8, verb, "why")) return runWhy(allocator, io, args, start_dir, environ_map, mode, stdout, stderr);
+    if (std.mem.eql(u8, verb, "check")) return checkProjectMode(allocator, io, args, start_dir, environ_map, mode, stdout, stderr);
     if (std.mem.eql(u8, verb, "cache")) return runCache(allocator, io, args, stdout, stderr);
     return failUsage(stderr, "不明なプロジェクトコマンドです: {s}\n", .{verb});
 }
 
 test {
     _ = @import("project_test.zig");
+    _ = @import("project_v1_entry_test.zig");
+    _ = @import("v1_entry.zig");
 }

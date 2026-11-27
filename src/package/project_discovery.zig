@@ -87,11 +87,31 @@ pub fn findProjectRootDetailed(
 
     current = start;
     while (true) {
-        const environment_path = try std.fs.path.join(temporary, &.{ current, ".nako", "environment.json" });
-        if (std.Io.Dir.cwd().access(io, environment_path, .{})) |_| {
+        // v1 環境（`.nako/v1/environment.json`）は旧 `.nako/environment.json`
+        // より優先する。v1 環境しか無いプロジェクトでも package import を
+        // 解決できるよう、どちらかの存在で root を返す（旧環境への
+        // フォールバックは compile 側が v1 を読めなかった場合だけ）。
+        const legacy_environment_path = try std.fs.path.join(temporary, &.{ current, ".nako", "environment.json" });
+        const v1_environment_path = try std.fs.path.join(temporary, &.{ current, ".nako", "v1", "environment.json" });
+        const environment_path: ?[]const u8 = blk: {
+            if (std.Io.Dir.cwd().access(io, v1_environment_path, .{})) |_| {
+                break :blk v1_environment_path;
+            } else |err| switch (err) {
+                error.FileNotFound => {},
+                else => return err,
+            }
+            if (std.Io.Dir.cwd().access(io, legacy_environment_path, .{})) |_| {
+                break :blk legacy_environment_path;
+            } else |err| switch (err) {
+                error.FileNotFound => {},
+                else => return err,
+            }
+            break :blk null;
+        };
+        if (environment_path) |env_path| {
             const nako_path = try std.fs.path.join(temporary, &.{ current, ".nako" });
             const canonical_nako = realPathDirAlloc(temporary, io, nako_path) catch return null;
-            const canonical_environment = std.Io.Dir.cwd().realPathFileAlloc(io, environment_path, temporary) catch return null;
+            const canonical_environment = std.Io.Dir.cwd().realPathFileAlloc(io, env_path, temporary) catch return null;
             // path 逸脱は常に拒否。writable は mode に従う。
             if (!isPathWithin(root, canonical_nako) or !isPathWithin(canonical_nako, canonical_environment)) return null;
             if (project_trust.shouldRejectWritable(mode, try project_trust.isUnsafeWritablePath(temporary, io, canonical_nako), writable_warning))
@@ -109,9 +129,6 @@ pub fn findProjectRootDetailed(
                 else => return err,
             }
             return try allocator.dupe(u8, root);
-        } else |err| switch (err) {
-            error.FileNotFound => {},
-            else => return err,
         }
         if (std.mem.eql(u8, current, root)) break;
         const parent = std.fs.path.dirname(current) orelse break;

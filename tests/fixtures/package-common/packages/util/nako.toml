@@ -1,0 +1,13 @@
+schema_version = 1
+
+[package]
+id = "@example/util"
+version = "1.0.0"
+license = "MIT"
+capabilities = ["pure-nako"]
+
+[exports]
+"." = { entry = "src/util.nako3" }
+
+[artifacts.universal]
+include = ["src/**"]

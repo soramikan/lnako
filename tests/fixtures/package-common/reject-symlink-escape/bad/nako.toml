@@ -1,0 +1,12 @@
+schema_version = 1
+
+[package]
+id = "@example/symlink-demo"
+version = "1.0.0"
+license = "MIT"
+
+[exports]
+"." = { entry = "src/link.nako3" }
+
+[artifacts.universal]
+include = ["src/**"]
