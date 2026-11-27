@@ -272,6 +272,12 @@ pub const UninspectedAliasState = struct {
     warned: bool = false,
 };
 
+/// 組み込み名が実命令として呼出せるか。`改行`・`それ`・`母艦パス`のような
+/// システム定数・特殊変数は値であり、命令表（標準・低レイヤー）に無い。
+pub fn builtinIsCallable(name: []const u8) bool {
+    return builtin_catalog.findArity(name) != null or low_level_foundation.commandArity(name) != null;
+}
+
 pub const Analyzer = struct {
     allocator: std.mem.Allocator,
     inputs: []const ModuleInput,
@@ -412,8 +418,10 @@ pub const Analyzer = struct {
         }
         if (node.kind == .property_assignment)
             try self.property_assignment_order.put(self.allocator, node, self.stream_order);
-        if (node.kind == .assignment or node.kind == .increment)
-            try self.write_order.put(self.allocator, node, self.stream_order);
+        switch (node.kind) {
+            .assignment, .increment, .for_statement, .foreach_statement => try self.write_order.put(self.allocator, node, self.stream_order),
+            else => {},
+        }
         // 関数宣言の引数情報は事前走査で確定済み。
         if (node.kind == .function_definition or node.kind == .test_definition) return;
         if (node.kind == .anonymous_function) return;
@@ -438,6 +446,10 @@ pub const Analyzer = struct {
             // `{非公開}`属性はモジュール変数の公開を打ち消す（公式isExport相当）。
             _ = try self.declare(module_index, scope, node.name, if (node.is_const) .constant else .variable, node.span, exportable and node.is_export, !node.is_const, 0, true);
         } else if (node.kind == .variable_list_definition) {
+            // 公式convDefLocalVarlistは初期化式を先に変換する。式の無名関数の
+            // 定義位置を記録してから、分割対象を読み取り専用にする。
+            for (node.children) |child| try self.predeclareBlockEx(child, module_index, scope, recurse, expansion);
+            self.stream_order += 1;
             for (node.arguments) |name| {
                 _ = try self.rejectFunctionTarget(name.span, module_index, name.name);
                 // 公式convDefLocalVarlistは分割宣言の二重定義を検査しない
@@ -473,6 +485,7 @@ pub const Analyzer = struct {
                 }
                 _ = try self.declare(module_index, scope, name.name, if (node.is_const) .constant else .variable, name.span, exportable and node.is_export, !node.is_const, 0, true);
             }
+            return;
         } else if (node.kind == .assignment or node.kind == .increment or node.kind == .increment_indexed or
             node.kind == .array_assignment)
         {
@@ -592,7 +605,20 @@ pub const Analyzer = struct {
             .function_pointer => try self.resolveFunctionPointer(node, module_index, scope),
             .break_statement, .continue_statement => try self.checkLoopContext(node, module_index),
             .for_statement, .foreach_statement => if (node.name.len > 0 and !std.mem.eql(u8, node.name, "それ")) {
-                if (self.lookupLexical(scope, node.name)) |symbol| try self.bind(node, .declaration, node.name, symbol.qualified_name, symbol.id);
+                if (self.lookupLexical(scope, node.name)) |symbol| {
+                    // 公式は暗黙のループ変数を作る前に、可視な同名定数も検査する。
+                    const existing = if (symbol.kind == .loop_variable and !symbol.explicit_definition)
+                        self.resolveSymbolExcluding(module_index, scope, node.name, node.span, symbol.id) orelse symbol
+                    else
+                        symbol;
+                    if (!existing.is_mutable and !self.writeBeforeConstantDeclaration(existing, module_index, scope, node)) {
+                        const shown = displayQualifiedName(existing.qualified_name);
+                        const loop_name = if (node.kind == .foreach_statement) "『反復』のループ" else "ループ";
+                        const message = try std.fmt.allocPrint(self.allocator, "定数『{s}』は{s}変数に指定できません。別の変数名を指定してください。", .{ shown, loop_name });
+                        try self.addDiagnostic(.assign_to_constant, node.span, self.modules.items[module_index].path, message);
+                    }
+                    try self.bind(node, .declaration, node.name, symbol.qualified_name, symbol.id);
+                }
             },
             // 実効取り込み文は取り込み先エントリへの呼び出しとして束縛する。
             // 公式のトークン展開と同じ位置でトップレベルが実行される。
@@ -781,12 +807,6 @@ pub const Analyzer = struct {
         if (!has_real_argument) return false;
         try self.addDiagnostic(.unresolved_word, node.span, self.modules.items[module_index].path, "『戻』文の直前に未解決の引数があります。『(式)を戻す』のように式をカッコで括ってください。");
         return true;
-    }
-
-    /// 組み込み名が実命令として呼出せるか。`改行`・`それ`・`母艦パス`のような
-    /// システム定数・特殊変数は値であり、命令表（標準・低レイヤー）に無い。
-    fn builtinIsCallable(name: []const u8) bool {
-        return builtin_catalog.findArity(name) != null or low_level_foundation.commandArity(name) != null;
     }
 
     fn resolveReference(self: *Analyzer, node: *ast.Node, module_index: u32, scope: ScopeId, callable: bool) !void {
@@ -998,9 +1018,14 @@ pub const Analyzer = struct {
     }
 
     pub fn resolveSymbol(self: *Analyzer, module_index: u32, scope: ScopeId, name: []const u8, use_span: ast.Span) ?Symbol {
+        return self.resolveSymbolExcluding(module_index, scope, name, use_span, null);
+    }
+
+    fn resolveSymbolExcluding(self: *Analyzer, module_index: u32, scope: ScopeId, name: []const u8, use_span: ast.Span, excluded: ?SymbolId) ?Symbol {
         var current: ?ScopeId = scope;
         while (current) |id| : (current = self.scopes.items[id].parent) {
             if (self.lookupLexical(id, name)) |symbol| {
+                if (symbol.id == excluded) continue;
                 if (module_index < self.modules.items.len and self.scopes.items[id].kind == .module and id == self.modules.items[module_index].scope and
                     std.mem.indexOf(u8, name, "__") != null)
                 {

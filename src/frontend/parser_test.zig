@@ -323,6 +323,23 @@ test "「AがBと等しいならば」を助詞呼出しの条件式へ変換す
     try std.testing.expectEqualStrings("と", condition.children[1].josi);
 }
 
+test "がの比較条件の右辺で既知命令のC風呼出しを読む" {
+    for ([_][]const u8{ "ならば", "でなければ" }, [_][]const u8{ "eq", "noteq" }) |josi, operator| {
+        const source = try std.fmt.allocPrint(std.testing.allocator, "もし、AがINT(3){s}、B=1\n", .{josi});
+        defer std.testing.allocator.free(source);
+        var result = try parse(std.testing.allocator, source, "main.nako3");
+        defer result.deinit();
+        try std.testing.expect(result.succeeded());
+        const condition = result.root.?.children[0].children[0];
+        try std.testing.expectEqual(ast.Kind.binary_operator, condition.kind);
+        try std.testing.expectEqualStrings(operator, condition.operator);
+        const rhs = condition.children[1];
+        try std.testing.expect(rhs.is_c_style_call);
+        try std.testing.expectEqualStrings("INT", rhs.name);
+        try std.testing.expectEqualStrings("3", rhs.children[0].value);
+    }
+}
+
 test "「Aが奇数ならば」を既知命令の条件呼出しへ変換する" {
     // 公式`yIFCond`は`A`の直後が`func`トークンなら`奇数(A)`を作る。
     // `A=奇数`の等価比較へ落とすと条件が常に偽になるため、呼出し形状を固定する。
@@ -512,6 +529,39 @@ test "取り込み先の関数呼出し候補を『戻る』の直前で実引�
     try std.testing.expectEqual(ast.Kind.word, fallback.children[0].kind);
     try std.testing.expectEqualStrings("A", fallback.children[0].value);
     try std.testing.expectEqual(@as(usize, 0), fallback.children[0].children.len);
+}
+
+test "組み込みの範囲に一致する助詞がなければ外側の引数を全て残す" {
+    var result = try parse(std.testing.allocator, "1と範囲を表示\n", "main.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const display = result.root.?.children[0];
+    try std.testing.expectEqualStrings("表示", display.name);
+    try std.testing.expectEqual(@as(usize, 2), display.children.len);
+    try std.testing.expectEqualStrings("1", display.children[0].value);
+    const range = display.children[1];
+    try std.testing.expectEqualStrings("範囲", range.name);
+    try std.testing.expectEqual(@as(usize, 0), range.children.len);
+}
+
+test "利用者が定義した範囲を連鎖とC風呼出しの引数で組み込み扱いしない" {
+    const definition = "●(XからYを)範囲とは\nXで戻る\nここまで\n";
+    const cases = [_][]const u8{ "2から3を範囲を表示\n", "表示(2から3を範囲)\n" };
+    for (cases) |line| {
+        const source = try std.mem.concat(std.testing.allocator, u8, &.{ line, definition });
+        defer std.testing.allocator.free(source);
+        var result = try parse(std.testing.allocator, source, "main.nako3");
+        defer result.deinit();
+        try std.testing.expect(result.succeeded());
+        const display = result.root.?.children[0];
+        try std.testing.expectEqualStrings("表示", display.name);
+        try std.testing.expectEqual(@as(usize, 1), display.children.len);
+        const range = display.children[0];
+        try std.testing.expectEqualStrings("範囲", range.name);
+        try std.testing.expectEqual(@as(usize, 2), range.children.len);
+        try std.testing.expectEqualStrings("3", range.children[1].value);
+        try std.testing.expectEqualStrings("を", range.children[1].josi);
+    }
 }
 
 test "片端省略の範囲を『それ』で補完し外側の引数を参照へ残す" {

@@ -2,7 +2,6 @@ const std = @import("std");
 const ast = @import("../frontend/ast.zig");
 const semantic = @import("../semantic/analyzer.zig");
 const argument_completion = @import("../semantic/argument_completion.zig");
-const builtin_catalog = @import("../semantic/builtin_catalog.zig");
 const builtin_josi = @import("../semantic/builtin_josi.zig");
 
 pub const NodeId = u32;
@@ -478,10 +477,10 @@ const Lowerer = struct {
     }
 
     /// 組み込み命令へ束縛された`.word`ノードを暗黙呼出しにするか判定する。
-    /// 「それ」「対象」など組み込み名の変数はarity表に無いため呼出しへ変換しない。
+    /// 「それ」「対象」など組み込み名の変数は命令表に無いため呼出しへ変換しない。
     fn bindingIsBuiltinCommand(self: Lowerer, node: *ast.Node) bool {
         if (!self.bindingIsBuiltin(node)) return false;
-        return builtin_catalog.findArity(node.value) != null;
+        return semantic.builtinIsCallable(node.value);
     }
 
     /// 実引数を伴う戻り値候補がESM/native pluginの動的命令へ束縛されたとき、
@@ -843,6 +842,37 @@ test "裸の「エラー発生」語をthrow_statementへ下げる" {
         found = true;
     }
     try std.testing.expect(found);
+}
+
+test "戻り値に使う低レイヤー命令の実引数と組み込み値の読み出しを保つ" {
+    const parser = @import("../frontend/parser.zig");
+    const source =
+        "●確認とは\n「truncate」を低レイヤー機能対応判定で戻る\nここまで\n" ++
+        "●改行確認とは\n改行で戻る\nここまで\n";
+    var parsed = try parser.parse(std.testing.allocator, source, "main.nako3");
+    defer parsed.deinit();
+    try std.testing.expect(parsed.succeeded());
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "main.nako3");
+    defer analyzed.deinit();
+    try std.testing.expect(analyzed.succeeded());
+    var program = try lowerSingle(std.testing.allocator, parsed.root.?, "main", "main.nako3", analyzed);
+    defer program.deinit();
+    var saw_call = false;
+    var saw_value = false;
+    for (program.nodes) |node| {
+        if (std.mem.eql(u8, node.name, "低レイヤー機能対応判定")) {
+            try std.testing.expectEqual(Kind.call, node.kind);
+            try std.testing.expect(node.is_builtin_call);
+            try std.testing.expectEqual(@as(usize, 1), node.children.len);
+            try std.testing.expectEqualStrings("truncate", program.nodes[node.children[0]].text);
+            saw_call = true;
+        } else if (std.mem.eql(u8, node.name, "改行")) {
+            try std.testing.expectEqual(Kind.load_global, node.kind);
+            try std.testing.expect(!node.is_builtin_call);
+            saw_value = true;
+        }
+    }
+    try std.testing.expect(saw_call and saw_value);
 }
 
 test "組み込み名の変数は暗黙呼出しへ変換しない" {

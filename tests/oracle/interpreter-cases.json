@@ -1103,5 +1103,52 @@
       "capture-const-other-scope.nako3": "A=9\n"
     },
     "source": "●定数側とは\n定数[A,B]=[4,5]\n[A,B]で戻る\nここまで\n●書込側とは\n!「./capture-const-other-scope.nako3」を取り込む。\nAで戻る\nここまで\nJSONエンコード(定数側())を表示。\n書込側()を表示。\n"
+  },
+  {
+    "id": "range-without-matching-particles-keeps-outer-argument",
+    "source": "●(XとYを)確認とは\n  JSONエンコード([X,Y])を表示\nここまで\nそれ=2\n「外」と範囲を確認\n"
+  },
+  {
+    "id": "range-name-shadowed-by-function",
+    "source": "●(XからYを)範囲とは\n  Xで戻る\nここまで\n2から3を範囲を表示\nJSONエンコード(2から3を範囲)を表示\n"
+  },
+  {
+    "id": "range-name-shadowed-by-imported-function",
+    "source": "!「./override.nako3」を取り込む\n2から3を範囲を表示\n",
+    "files": {
+      "override.nako3": "●(XからYを)範囲とは\n  Xで戻る\nここまで\n"
+    }
+  },
+  {
+    "id": "destructured-constant-initializer-captures-mutable-binding",
+    "source": "●確認とは\n  A=0\n  定数[A,B]=実行(関数()\n    A=8\n    [A,5]で戻る\n  ここまで)\n  Aを表示\nここまで\n確認\n"
+  },
+  {
+    "id": "destructured-constant-captured-after-initializer",
+    "source": "●確認とは\n  A=0\n  定数[A,B]=[4,5]\n  F=関数()\n    A=8\n  ここまで\n  F()\nここまで\n確認\n",
+    "expectedDiagnostic": {
+      "code": "assign_to_constant",
+      "line": 5
+    }
+  },
+  {
+    "id": "loops-before-destructured-constant",
+    "source": "A=0\nAを1から2まで繰り返す\n  Aを表示\nここまで\nAで[3,4]を反復\n  Aを表示\nここまで\n定数[A,B]=[4,5]\nAを表示\n"
+  },
+  {
+    "id": "for-rejects-destructured-constant-target",
+    "source": "A=0\n定数[A,B]=[4,5]\nAを1から2まで繰り返す\n  Aを表示\nここまで\n",
+    "expectedDiagnostic": {
+      "code": "assign_to_constant",
+      "line": 3
+    }
+  },
+  {
+    "id": "foreach-rejects-destructured-constant-target",
+    "source": "A=0\n定数[A,B]=[4,5]\nAで[1,2]を反復\n  Aを表示\nここまで\n",
+    "expectedDiagnostic": {
+      "code": "assign_to_constant",
+      "line": 3
+    }
   }
 ]

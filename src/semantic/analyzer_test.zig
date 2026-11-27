@@ -1117,6 +1117,7 @@ test "分割定数宣言は宣言位置以降の代入だけを拒否する" {
                 if (first_line == null) first_line = item.span.line;
             }
             try std.testing.expectEqual(expected, assignments);
+            if (expected == 0) try std.testing.expect(program.succeeded());
             if (expected_line) |line| {
                 try std.testing.expectEqual(line, first_line orelse @as(usize, 0));
             }
@@ -1131,6 +1132,23 @@ test "分割定数宣言は宣言位置以降の代入だけを拒否する" {
     try Case.expectAssignments("A=0\n定数[A,B]=[4,5]\n変数[A,B]=[1,2]\n", 2, 2);
     // 可変のままの既存変数への分割再代入は従来どおり成功する。
     try Case.expectAssignments("A=0\nB=0\n変数[A,B]=[4,5]\nA=9\nJSONエンコード([A,B])を表示。\n", 0, null);
+    const declaration = "定数[A,B]=[4,5]\n";
+    const loops = [_][]const u8{
+        "Aを1から2まで繰り返す\nAを表示\nここまで\n",
+        "Aで[1,2]を反復\nAを表示\nここまで\n",
+    };
+    inline for (loops) |loop| {
+        try Case.expectAssignments("A=0\n" ++ loop ++ declaration, 0, null);
+        try Case.expectAssignments("A=0\n" ++ declaration ++ loop, 1, 2);
+    }
+
+    try Case.expectAssignments("A=0\n" ++ declaration ++ "●Fとは\n" ++ loops[0] ++ "ここまで\nF\n", 1, 3);
+    try Case.expectAssignments("●Fとは\nA=0\n" ++ declaration ++ "G=関数()\n" ++ loops[1] ++ "ここまで\nG()\nここまで\nF\n", 1, 4);
+
+    // 初期化式に含まれる匿名関数の変換は、分割宣言が束縛を定数化する前。
+    try Case.expectAssignments("●Fとは\nA=0\n定数[A,B]=実行(関数()\nA=8\n[A,5]で戻る\nここまで)\nAを表示\nここまで\nF\n", 0, null);
+    try Case.expectAssignments("●Fとは\nA=0\n定数[A,B]=[4,5]\nG=関数()\nA=8\nここまで\nG()\nここまで\nF\n", 1, 4);
+
     // 増減も同じ位置規則で拒否する。
     try Case.expectAssignments("A=0\n定数[A,B]=[4,5]\nAを1増やす\n", 1, 2);
     // 関数スコープでも宣言前は成功し、宣言後の増減だけを拒否する。
@@ -1201,6 +1219,7 @@ test "関数内取り込みの分割定数宣言は展開済み順序で前後�
                 result.assignments += 1;
                 if (result.first_line == null) result.first_line = item.span.line;
             }
+            if (result.assignments == 0) try std.testing.expect(program.succeeded());
             return result;
         }
     };
@@ -1321,6 +1340,7 @@ test "分割定数を捕捉した匿名関数は宣言の展開位置と関数�
                 result.count += 1;
                 if (result.line == null) result.line = item.span.line;
             }
+            if (result.count == 0) try std.testing.expect(program.succeeded());
             return result;
         }
     }.assignments;

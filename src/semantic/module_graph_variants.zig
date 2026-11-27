@@ -71,6 +71,7 @@ fn variantForSite(loader: *Loader, target: u32, ambient: token_mod.Mode, site_pa
         .forced = target_module.forced_mode,
         .initial = effective_initial,
         .builtin_commands = &builtin_catalog.function_names,
+        .has_exported_range_function = loader.has_exported_range_function,
     }) catch |err| {
         try loader.importDiagnosticAt(site_span, site_path, "循環取り込みの再展開コピーを文脈の構文モードで解析できません");
         return err;
@@ -121,6 +122,7 @@ fn variantForSite(loader: *Loader, target: u32, ambient: token_mod.Mode, site_pa
             .initial = ambient,
             .tail_modes = tail_modes.items,
             .builtin_commands = &builtin_catalog.function_names,
+            .has_exported_range_function = loader.has_exported_range_function,
         }) catch |err| {
             try loader.importDiagnosticAt(site_span, site_path, "循環取り込みの再展開コピーを文脈の構文モードで解析できません");
             return err;

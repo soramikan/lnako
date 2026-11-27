@@ -3,6 +3,7 @@ const ast = @import("../ast.zig");
 const token_mod = @import("../token.zig");
 const parser_mod = @import("../parser.zig");
 const builder = @import("builder.zig");
+const expressions = @import("expressions.zig");
 const helpers = @import("helpers.zig");
 
 const Parser = parser_mod.Parser;
@@ -206,12 +207,15 @@ pub fn isBuiltinCommandName(self: *Parser, value: []const u8) bool {
     return false;
 }
 
+fn isUserFunctionName(self: *Parser, value: []const u8) bool {
+    for (self.user_functions) |name| if (std.mem.eql(u8, name, value)) return true;
+    return false;
+}
+
 /// 公式の`func token`として解決できる名前かどうか。公式は組み込み命令に
 /// 加えて、ソース内で定義された関数も`func token`にする。
 pub fn isKnownCommandName(self: *Parser, value: []const u8) bool {
-    if (self.isBuiltinCommandName(value)) return true;
-    for (self.user_functions) |name| if (std.mem.eql(u8, name, value)) return true;
-    return false;
+    return self.isBuiltinCommandName(value) or isUserFunctionName(self, value);
 }
 
 /// 助詞付きでも命令として解決する文法上の命令名。これらは
@@ -258,10 +262,8 @@ const RangeSelection = struct {
 
 /// 範囲の助詞スロット（`から`／`の`・`までの`）に一致する引数だけを選ぶ。
 /// 片端が省略されていても見つかったスロットだけを消費し、残りは外側の
-/// 呼出しへ渡す（公式yCallFuncのpopStack相当）。両方見つからない場合だけ
-/// 選択なしとして`null`を返す。
-fn selectRangeArguments(arguments: []const *ast.Node) ?RangeSelection {
-    if (arguments.len == 0) return null;
+/// 呼出しへ渡す（公式yCallFuncのpopStack相当）。
+fn selectRangeArguments(arguments: []const *ast.Node) RangeSelection {
     var to_index: ?usize = null;
     var index = arguments.len;
     while (index > 0) {
@@ -282,7 +284,6 @@ fn selectRangeArguments(arguments: []const *ast.Node) ?RangeSelection {
             break;
         }
     }
-    if (from_index == null and to_index == null) return null;
     return .{ .from = from_index, .to = to_index };
 }
 
@@ -295,7 +296,15 @@ pub const RangeCallParts = struct {
 /// 外側の引数を元の順序のまま返す。省略したスロットは公式`yCallFunc`と
 /// 同じく変数『それ』で補完する。
 pub fn rangeCallParts(self: *Parser, command: Token, items: []*ast.Node) ParseFailure!?RangeCallParts {
-    const selection = selectRangeArguments(items) orelse return null;
+    if (!std.mem.eql(u8, command.value, "範囲") or
+        !self.isBuiltinCommandName(command.value) or
+        self.has_exported_range_function or isUserFunctionName(self, command.value)) return null;
+
+    const selection = selectRangeArguments(items);
+    // 一致する助詞がないときも外側の実引数は全て残す。範囲自身の2引数の
+    // 省略可否と『それ』補完は、通常の助詞呼出しと同じく意味解析へ委ねる。
+    if (selection.from == null and selection.to == null)
+        return .{ .call_arguments = &.{}, .remaining = items };
     var consumed: usize = 0;
     if (selection.from != null) consumed += 1;
     if (selection.to != null) consumed += 1;
@@ -319,19 +328,65 @@ pub fn callChainedBuiltinCommand(self: *Parser, arguments: *std.ArrayList(*ast.N
     if (!self.isChainedBuiltinCommand(self.peek())) return false;
     const command = self.advance();
     const items = try arguments.toOwnedSlice(self.allocator);
-    var call_arguments: []*ast.Node = items;
-    var remaining: []const *ast.Node = &.{};
-    if (std.mem.eql(u8, command.value, "範囲")) {
-        if (try self.rangeCallParts(command, items)) |parts| {
-            call_arguments = parts.call_arguments;
-            remaining = parts.remaining;
-        }
-    }
-    const call = try self.makeCommandCall(command, call_arguments);
+    const parts = try rangeCallParts(self, command, items);
+    const call = try self.makeCommandCall(command, if (parts) |split| split.call_arguments else items);
     arguments.* = .empty;
-    try arguments.appendSlice(self.allocator, remaining);
+    if (parts) |split| try arguments.appendSlice(self.allocator, split.remaining);
     try arguments.append(self.allocator, call);
     return true;
+}
+
+/// 公式`yCall`相当の助詞シーケンス収集。先頭の値`first`に続けて助詞付きの
+/// 値と既知命令名を読み、命令名の手前までに集まった値をその命令の引数として
+/// 呼出し式を組み立てる（`Aが3以下`＝`以下(A,3)`、
+/// `Dに"a"が辞書キー存在`＝`辞書キー存在(D,"a")`）。
+/// 命令の助詞が無い、または連文助詞の場合はそこで呼出しが確定する
+/// （公式`yCallFunc`の言い切り相当）。
+/// カンマは公式`yValue`の読み飛ばしと同じく透過的に扱う。
+/// 戻り値は解決後に残ったノード列で、`first`を先頭に含む。
+pub fn collectJosiSequence(self: *Parser, first: *ast.Node) ParseFailure![]*ast.Node {
+    var stack: std.ArrayList(*ast.Node) = .empty;
+    try stack.append(self.allocator, first);
+    while (true) {
+        if (self.at(.identifier) and self.isKnownCommandName(self.peek().value)) {
+            const command = self.advance();
+            const items = try stack.toOwnedSlice(self.allocator);
+            stack = .empty;
+            const parts = try rangeCallParts(self, command, items);
+            const call = try self.makeCommandCall(command, if (parts) |split| split.call_arguments else items);
+            if (parts) |split| try stack.appendSlice(self.allocator, split.remaining);
+            try stack.append(self.allocator, call);
+            // 条件助詞は公式では命令語ではなく独立トークンで、`yIFCond`が
+            // 呼出しの終端として消費する。lnakoは直前の命令語へ付くため、
+            // ここで呼出し列を打ち切り、同じ行の真節を引数として取り込まない
+            // （`もし、Aが30から50の範囲内ならば、「…」と表示。`）。
+            if (isConditionalJosi(command.josi)) break;
+            // 言い切り・連文の助詞はそこで一度切る（公式`yCallFunc`）。
+            // ただし直後に演算子が続くなら、公式`yCall`は呼出し結果へ
+            // `yGetArgOperator`を適用してシーケンスを続ける
+            // （`Aの要素数+Bの要素数`の後半`要素数`は演算式全体を引数に取る）。
+            if (command.josi.len == 0 or isSequenceJosi(command.josi)) {
+                if (helpers.operatorInfo(self.peek().kind) == null) break;
+                stack.items[stack.items.len - 1] = try expressions.parseOperatorTail(self, call, 0);
+            }
+            continue;
+        }
+        if (self.at(.comma)) {
+            _ = self.advance();
+            continue;
+        }
+        if (!helpers.canStartExpression(self.peek().kind)) break;
+        try stack.append(self.allocator, try expressions.parseExpression(self, 0));
+    }
+    return stack.toOwnedSlice(self.allocator);
+}
+
+/// 公式`yCall`相当の式解析。`collectJosiSequence`の収集結果が単一の値に
+/// 解決されるときだけ受理し、残った値があれば文法エラーにする。
+pub fn parseJosiCallExpression(self: *Parser, first: *ast.Node) ParseFailure!*ast.Node {
+    const stack = try self.collectJosiSequence(first);
+    if (stack.len == 1) return stack[0];
+    return self.fail(.unexpected_token, "命令呼び出しを構成できません", self.peek());
 }
 
 pub fn makeCommandCall(self: *Parser, command: Token, arguments: []*ast.Node) ParseFailure!*ast.Node {
