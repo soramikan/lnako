@@ -1,5 +1,6 @@
 const std = @import("std");
 const lnako = @import("lnako");
+const v1_runtime = lnako.package.v1_runtime;
 
 /// 入力コンパイルのオプション。`forced_mode` は .dncl/.dncl2 拡張子や
 /// --dncl/--dncl2 フラグで強制される構文モード。
@@ -12,16 +13,15 @@ const InvalidPackageEnvironment = struct {
 pub const InputOptions = struct {
     compat_js: bool = false,
     forced_mode: lnako.frontend.token.Mode = .{},
-    /// Optional explicit package resolver. CLI compilation loads the verified
-    /// `.nako/environment.json` automatically when this is null.
+    /// Optional explicit package resolver. null のとき CLI は検証済みの
+    /// v1 環境（`.nako/v1`）だけを自動で読む。旧 `.nako/environment.json`
+    /// へはフォールバックしない（Q12）。
     package_resolver: ?lnako.semantic.module_graph.PackageResolver = null,
-    /// package 所有 JS の bare npm specifier を解決する resolver。CLI は
-    /// `.nako/environment.json` 同梱の lock から自動構築するため通常 null。
-    /// 明示指定した場合は環境自動ロード時も上書きしない。
+    /// package 所有 JS の bare npm specifier を解決する resolver。v1 環境を
+    /// 自動で読む場合もここで指定した resolver を上書きしない。
     npm_module_resolver: ?lnako.semantic.module_graph.NpmModuleResolver = null,
-    /// lock `npmInstances` を復元する cache root。null は OS 標準 cache dir。
-    /// CLI の `run`/`build` は `--package-cache-dir` をここへ伝播する。
-    /// `package_resolver` を明示指定した場合は環境をロードしないため使われない。
+    /// `--package-cache-dir` の後方互換フィールド。v1 環境の自動読込では
+    /// 使わない。明示 resolver と併用する呼出し側が cache を管理する。
     package_cache_root: ?[]const u8 = null,
     /// 共有 writable ACL/mode の扱い。既定は warn+continue。
     writable_mode: lnako.package.project_trust.WritableMode = .warn,
@@ -29,6 +29,10 @@ pub const InputOptions = struct {
     /// から自動で用意する。明示 provider を渡す呼出し側（埋め込み・テスト）
     /// はここで上書きできる。
     declared_commands_provider: ?lnako.semantic.module_graph.DeclaredCommandsProvider = null,
+    /// `--profile` / `--features` / `--no-default-features`。`prepareForExecution`
+    /// が検証したのと同じ入力を v1 環境の再読込へ渡す。既定値は manifest の
+    /// 既定 profile・既定 feature 選択。
+    v1: v1_runtime.LoadOptions = .{},
     /// `lnako check` 用: semantic 解析で未検査の package 命令呼出しが残った
     /// 場合に stderr へ表示する（成功扱いにしないため）。
     report_uninspected_packages: bool = false,
@@ -51,13 +55,11 @@ pub fn compileInput(allocator: std.mem.Allocator, io: std.Io, path: []const u8, 
 
 pub fn compileInputTraced(allocator: std.mem.Allocator, io: std.Io, path: []const u8, options: InputOptions, stderr: *std.Io.Writer, trace: bool) !?lnako.ir.nako_ir.Program {
     var file_provider = lnako.semantic.module_graph.FileProvider{ .io = io };
-    var package_environment: ?lnako.package.import_resolver.Resolver = null;
-    defer if (package_environment) |*environment| environment.deinit();
     var package_root: ?[]u8 = null;
     defer if (package_root) |root| allocator.free(root);
+    var v1_environment: ?v1_runtime.Environment = null;
+    defer if (v1_environment) |*environment| environment.deinit();
     var effective_options = options;
-    var declared_index: ?lnako.package.command_inspect.DeclaredIndex = null;
-    defer if (declared_index) |*index| index.deinit();
     var invalid_package_environment = InvalidPackageEnvironment{};
     if (effective_options.package_resolver == null) {
         var project_rejected = false;
@@ -73,6 +75,20 @@ pub fn compileInputTraced(allocator: std.mem.Allocator, io: std.Io, path: []cons
             if (err == error.OutOfMemory) return err;
             break :blk null;
         };
+        // `findProjectRootDetailed` は旧 `.nako/environment.json` を境界の
+        // 証拠にするため、v1 だけの環境では null になる。v1 manifest を
+        // 持つプロジェクトも取り込み解決へ入れるよう、`nako.toml` 探索へ
+        // フォールバックする（v1 環境の有無は v1_runtime が判定する）。
+        if (package_root == null and !project_rejected) {
+            const start_dir = std.fs.path.dirname(path) orelse ".";
+            if (lnako.package.project.findRoot(allocator, io, start_dir) catch |err| blk: {
+                if (err == error.OutOfMemory) return err;
+                break :blk null;
+            }) |found| {
+                defer allocator.free(found);
+                package_root = try allocator.dupe(u8, found);
+            }
+        }
         if (package_root == null and project_rejected) {
             // nako.toml はあるが --strict-project-trust で書き込み権限検証が
             // 拒否した場合、パッケージ取り込みは一律で失敗する。
@@ -81,40 +97,29 @@ pub fn compileInputTraced(allocator: std.mem.Allocator, io: std.Io, path: []cons
             stderr.print("警告: プロジェクト配置の書き込み権限が共有されています（パッケージ import は続行。停止は --strict-project-trust、非表示は --no-project-trust-warning）: {s}\n", .{path}) catch {};
         }
         if (package_root) |root| {
-            // 宣言命令 metadata は plugin を初期化せず environment snapshot から
-            // 読む（Issue #52）。解決結果と同じ package key で索引を引く。
-            if (effective_options.declared_commands_provider == null) {
-                // environment が無い・壊れている場合は未検査として続行するが、
-                // OOM は隠さず伝播させる（隣接する Resolver.loadWithOptions と同方針）。
-                declared_index = try lnako.package.command_inspect.loadDeclaredCommands(allocator, io, root);
-                if (declared_index) |*index| effective_options.declared_commands_provider = index.provider();
-            }
-            package_environment = lnako.package.import_resolver.Resolver.loadWithOptions(allocator, io, root, .{
-                .writable_mode = effective_options.writable_mode,
-                .cache_root = effective_options.package_cache_root,
-            }) catch |err| switch (err) {
-                error.NoEnvironment => null,
+            // 公開コンパイル環境は v1 の `.nako/v1` だけを使う。旧 manifest の
+            // `.nako/environment.json` は Q12 に合わせてフォールバックしない。
+            // 旧環境しか無いプロジェクトでも、パッケージを使わない通常入力は
+            // そのままコンパイルできる。package specifier だけを fail-closed に
+            // する（明示 package_resolver は上の分岐で従来どおり優先）。
+            v1_environment = v1_runtime.load(allocator, io, root, effective_options.v1) catch |err| switch (err) {
                 error.OutOfMemory => return err,
+                error.LegacyLock => blk: {
+                    stderr.print("旧形式の nako.lock です。v1 の nako.lock を再作成してください（自動変換は行いません）: {s}\n", .{root}) catch {};
+                    break :blk null;
+                },
+                error.NoV1Environment => null,
                 else => blk: {
-                    // 環境を黙って捨てるとパッケージ取り込みは一律「解決できません」
-                    // になり、原因（lock 束縛・materialized root・権限・export）が
-                    // 分からない。`lnako check` の診断へ誘導する 1 行だけ残す。
-                    stderr.print("パッケージ環境を検証できません（`lnako check` で確認してください）: {s}\n", .{root}) catch {};
+                    stderr.print("v1 パッケージ環境を検証できません（`lnako sync` で再生成してください）: {s}\n", .{root}) catch {};
                     break :blk null;
                 },
             };
-            if (package_environment) |*environment| {
-                if (environment.writable_warning and effective_options.writable_mode == .warn and !writable_warning) {
-                    stderr.print("警告: パッケージ tree の書き込み権限が共有されています（import は続行。停止は --strict-project-trust）: {s}\n", .{root}) catch {};
-                }
-                effective_options.package_resolver = environment.packageResolver();
-                // 呼出し側が明示した resolver を環境側で黙って置き換えない。
-                if (effective_options.npm_module_resolver == null) {
-                    effective_options.npm_module_resolver = environment.npm.moduleResolver();
+            if (v1_environment) |*environment| {
+                effective_options.package_resolver = environment.resolver();
+                if (effective_options.declared_commands_provider == null) {
+                    effective_options.declared_commands_provider = environment.declaredCommands();
                 }
             } else {
-                // A stale/broken environment must not prevent unrelated source
-                // imports from compiling. Package specifiers still fail closed.
                 effective_options.package_resolver = .{ .context = &invalid_package_environment, .resolveFn = InvalidPackageEnvironment.resolve };
             }
         }
@@ -1101,4 +1106,8 @@ test "check経路は未検査のpackage命令呼出しをstderrへ表示する" 
     compiled.deinit();
     try std.testing.expect(std.mem.indexOf(u8, stderr.writer.buffered(), "未検査") != null);
     try std.testing.expect(std.mem.indexOf(u8, stderr.writer.buffered(), "lib__加算") != null);
+}
+
+test {
+    _ = @import("v1_compile_test.zig");
 }

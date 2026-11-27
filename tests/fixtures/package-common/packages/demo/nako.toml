@@ -1,0 +1,16 @@
+schema_version = 1
+
+[package]
+id = "@example/demo"
+version = "1.0.0"
+license = "MIT"
+capabilities = ["pure-nako"]
+
+# v1 はサブパスをキーにした exports だけを持つ（旧 [[exports]] は無い）。
+[exports]
+"." = { entry = "src/demo.nako3" }
+"./calc" = { entry = "src/demo__calc.nako3" }
+"./preview" = { entry = "src/demo__preview.nako3" }
+
+[artifacts.universal]
+include = ["src/**"]

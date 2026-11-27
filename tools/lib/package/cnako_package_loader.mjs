@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 // 公式 cnako3 に `パッケージ:` / `pkg:` 取り込みを委譲するloader（#61契約のテスト用adapter）。
 //
-// 公式 cnako3 v3.7.24 は `パッケージ:` 構文を持たない。仕様
-// （docs/package-system/SPECIFICATION.md §7.3）では、依存解決・同期は
-// lnako へ委譲し、cnako 側は `lnako sync --json` が書いた
-// `.nako/environment.json` の alias → package key 対応だけを使って export
-// を解決する。このモジュールはその契約をテストから実行できる形にした
-// adapter であり、cnako 本体への実装（#61）を置き換えるものではない。
+// 公式 cnako3 v3.7.24 は `パッケージ:` 構文を持たない。仕様 v1 では
+// 依存解決・同期は lnako へ委譲し、cnako 側は `lnako sync` が公開した
+// `.nako/v1` 環境の package/export 対応だけを使って export を解決する。
+// このモジュールはその契約をテストから実行できる形にした adapter であり、
+// cnako 本体への実装（#61）を置き換えるものではない。旧
+// `.nako/environment.json`・旧 lock・旧 manifest は読まない。
 //
 // 重要: fixture のソースは書き換えない。公式 cnako3 の loader
 // （`resolvePath`）を差し替え、パッケージ指定子だけを環境上の
@@ -16,12 +16,13 @@
 // 使い方:
 //   node tools/lib/package/cnako_package_loader.mjs \
 //     --root <project root> --entry <main.nako3> --oracle <nadesiko3 root> \
-//     [--lnako <lnako executable>] [--no-sync]
+//     [--lnako <lnako executable>] [--v1-fixture <dir>] \
+//     [--registry <https url>] [--no-sync]
 //
-// `--no-sync` は lnako を起動せず、既存 `.nako/environment.json` の
-// `lockSha256` と `nako.lock` の実 SHA-256 を照合してから実行する。
-// このadapterの `--no-sync` 検証は §7.3 のうち `lockSha256`（3形式）、
-// 環境recordの形状・alias衝突、managed path成分のsymlink検査のみ。profile・
+// `--no-sync` は lnako を起動せず、既存 `.nako/v1` 環境の `lock_sha256` と
+// `nako.lock` の実 SHA-256 を照合してから実行する。このadapterの
+// `--no-sync` 検証は v1 environment の世代・profile・runtime・
+// `lock_sha256`（3形式）、managed path成分のsymlink検査のみ。profile・
 // 命令metadata・lockグラフの完全一致は cnako 本体実装（#61）の範囲。
 // 診断コードは本体と完全一致しない（例: 同一aliasが複数packageを指す環境は
 // 本体では生成時に拒否され、このadapterではE034）。
@@ -51,12 +52,14 @@ export class UsageError extends Error {}
 
 export function usage() {
   return [
-    "cnako package loader: --root <dir> --entry <file> --oracle <dir> [--lnako <path>] [--no-sync]",
-    "  --root    nako.toml を持つプロジェクトroot",
-    "  --entry   実行する .nako3（root相対または絶対path）",
-    "  --oracle  nadesiko3 v3.7.24 の展開先（src/cnako3mod.mjs を含む）",
-    "  --lnako   lnako 実行ファイル（省略時は zig-out/bin/lnako）",
-    "  --no-sync lnako を起動せず既存 environment.json を検証して使う",
+    "cnako package loader: --root <dir> --entry <file> --oracle <dir> [--lnako <path>] [--v1-fixture <dir>] [--registry <url>] [--no-sync]",
+    "  --root        nako.toml を持つプロジェクトroot",
+    "  --entry       実行する .nako3（root相対または絶対path）",
+    "  --oracle      nadesiko3 v3.7.24 の展開先（src/cnako3mod.mjs を含む）",
+    "  --lnako       lnako 実行ファイル（省略時は zig-out/bin/lnako）",
+    "  --v1-fixture  lnako sync に渡す静的ローカル index のルート",
+    "  --registry    lnako sync に渡す HTTPS の registry URL",
+    "  --no-sync     lnako を起動せず既存 .nako/v1 環境を検証して使う",
   ].join("\n");
 }
 
@@ -85,6 +88,12 @@ function parseArguments(argv) {
       case "--lnako":
         options.lnako = takeValue(argument);
         break;
+      case "--v1-fixture":
+        options.v1Fixture = takeValue(argument);
+        break;
+      case "--registry":
+        options.registry = takeValue(argument);
+        break;
       case "--no-sync":
         options.sync = false;
         break;
@@ -99,6 +108,10 @@ function parseArguments(argv) {
   for (const required of ["root", "entry", "oracle"]) {
     if (!options[required]) throw new UsageError(`${required} を指定してください`);
   }
+  if (options.sync && !options.v1Fixture) {
+    throw new UsageError("--v1-fixture を指定してください（v1 sync の取得元）");
+  }
+  options.registry = options.registry ?? "https://registry.example.invalid";
   return options;
 }
 
@@ -117,9 +130,131 @@ function normalizeSha256(value) {
   return digest.length === 32 ? digest.toString("hex") : null;
 }
 
-/** `lnako sync --json` の委譲呼出し。失敗はそのまま準備失敗として扱う。 */
-function syncEnvironment(root, lnako) {
-  const result = spawnSync(lnako, ["sync", "--json"], {
+function readRegularFile(file, label) {
+  let stat;
+  try {
+    stat = fs.lstatSync(file);
+  } catch (error) {
+    throw new PackageLoaderError(
+      "E034_INVALID_ENVIRONMENT_REFERENCE",
+      `${label} を読めません（先に lnako sync が必要です）: ${error.message}`,
+    );
+  }
+  if (stat.isSymbolicLink()) {
+    throw new PackageLoaderError("E034_INVALID_ENVIRONMENT_REFERENCE", `${label} がsymlinkです`);
+  }
+  if (!stat.isFile()) {
+    throw new PackageLoaderError("E034_INVALID_ENVIRONMENT_REFERENCE", `${label} が通常ファイルではありません`);
+  }
+  return fs.readFileSync(file, "utf8");
+}
+
+/** `--no-sync` 用の v1 `nako.lock`（JSON）を読み、最小構造を検査する。 */
+function readLock(root) {
+  const text = readRegularFile(path.join(root, "nako.lock"), "nako.lock");
+  let lock;
+  try {
+    lock = JSON.parse(text);
+  } catch (error) {
+    throw new PackageLoaderError("E034_INVALID_ENVIRONMENT_REFERENCE", `nako.lock が不正なJSONです: ${error.message}`);
+  }
+  if (lock?.schema_version !== 1 || !Array.isArray(lock.profiles)) {
+    throw new PackageLoaderError("E034_INVALID_ENVIRONMENT_REFERENCE", "nako.lock が v1 形式ではありません");
+  }
+  return lock;
+}
+
+function localName(id) {
+  const slash = id.lastIndexOf("/");
+  return slash < 0 ? id : id.slice(slash + 1);
+}
+
+function edgeDependency(edge) {
+  if (typeof edge?.to !== "string" || typeof edge?.id !== "string") {
+    throw new PackageLoaderError("E034_INVALID_ENVIRONMENT_REFERENCE", "nako.lock の依存edgeが不正です");
+  }
+  const alias = typeof edge.alias === "string" ? edge.alias : localName(edge.id);
+  return { alias, package: edge.to };
+}
+
+function exportName(subpath) {
+  if (subpath === ".") return "main";
+  if (typeof subpath === "string" && subpath.startsWith("./")) return subpath.slice(2);
+  throw new PackageLoaderError("E034_INVALID_ENVIRONMENT_REFERENCE", `environment の export subpath が不正です: ${String(subpath)}`);
+}
+
+/**
+ * v1 environment（`.nako/v1/generations/<gen>/environment.json` と
+ * `lnako sync --json` の出力）を、既存 resolver の adapter 形式へ写す。
+ * package の実体は materialize 済みの v1 世代 dir を指す。
+ */
+export function environmentFromV1(v1Environment, lock) {
+  if (v1Environment?.schema_version !== 1 || !Array.isArray(v1Environment.packages)) {
+    throw new PackageLoaderError("E034_INVALID_ENVIRONMENT_REFERENCE", "v1 environment の形状が不正です");
+  }
+  if (typeof v1Environment.profile !== "string") {
+    throw new PackageLoaderError("E034_INVALID_ENVIRONMENT_REFERENCE", "v1 environment の profile がありません");
+  }
+  if (v1Environment.runtime !== "lnako") {
+    throw new PackageLoaderError("E034_INVALID_ENVIRONMENT_REFERENCE", `v1 environment の runtime が lnako ではありません: ${String(v1Environment.runtime)}`);
+  }
+  if (typeof v1Environment.generation !== "string" || !/^gen-[0-9a-f]{16}$/.test(v1Environment.generation)) {
+    throw new PackageLoaderError("E034_INVALID_ENVIRONMENT_REFERENCE", "v1 environment の generation が不正です");
+  }
+  const profile = lock.profiles.find((candidate) => candidate?.name === v1Environment.profile);
+  if (profile === undefined || !Array.isArray(profile.nodes) || !Array.isArray(profile.root) || !Array.isArray(profile.edges)) {
+    throw new PackageLoaderError("E034_INVALID_ENVIRONMENT_REFERENCE", `nako.lock に profile ${v1Environment.profile} がありません`);
+  }
+  const keyByIdentity = new Map();
+  for (const node of profile.nodes) {
+    if (typeof node?.key !== "string" || typeof node.id !== "string" || typeof node.version !== "string" || typeof node.sha256 !== "string") {
+      throw new PackageLoaderError("E034_INVALID_ENVIRONMENT_REFERENCE", "nako.lock の node が不正です");
+    }
+    keyByIdentity.set(`${node.id}\0${node.version}\0${node.sha256}`, node.key);
+  }
+
+  const packages = {};
+  for (const pkg of v1Environment.packages) {
+    if (typeof pkg?.id !== "string" || typeof pkg.version !== "string" || typeof pkg.sha256 !== "string" || typeof pkg.root !== "string") {
+      throw new PackageLoaderError("E034_INVALID_ENVIRONMENT_REFERENCE", "v1 environment の package record が不正です");
+    }
+    const key = keyByIdentity.get(`${pkg.id}\0${pkg.version}\0${pkg.sha256}`);
+    if (key === undefined) {
+      throw new PackageLoaderError("E034_INVALID_ENVIRONMENT_REFERENCE", `v1 environment の package ${pkg.id}@${pkg.version} が nako.lock にありません`);
+    }
+    if (packages[key] !== undefined) {
+      throw new PackageLoaderError("E034_INVALID_ENVIRONMENT_REFERENCE", `v1 environment の package key が重複しています: ${key}`);
+    }
+    if (!Array.isArray(pkg.exports)) {
+      throw new PackageLoaderError("E034_INVALID_ENVIRONMENT_REFERENCE", `v1 environment の package ${pkg.id} に exports がありません`);
+    }
+    const exports = pkg.exports.map((entry) => {
+      if (typeof entry?.subpath !== "string" || typeof entry.entry !== "string") {
+        throw new PackageLoaderError("E034_INVALID_ENVIRONMENT_REFERENCE", `v1 environment の export が不正です: ${pkg.id}`);
+      }
+      return { name: exportName(entry.subpath), path: entry.entry };
+    });
+    packages[key] = {
+      name: localName(pkg.id),
+      version: pkg.version,
+      path: path.posix.join(".nako", "v1", "generations", v1Environment.generation, pkg.root),
+      exports,
+      dependencies: profile.edges.filter((edge) => edge?.from === key).map(edgeDependency),
+    };
+  }
+  return {
+    schemaVersion: 1,
+    lockSha256: v1Environment.lock_sha256,
+    profile: v1Environment.profile,
+    runtime: v1Environment.runtime,
+    packages,
+    dependencies: profile.root.map(edgeDependency),
+  };
+}
+
+/** `lnako sync --json` の委譲呼出し。v1 環境を adapter 形式へ写す。 */
+function syncEnvironment(root, lnako, options) {
+  const result = spawnSync(lnako, ["sync", "--v1-fixture", options.v1Fixture, "--registry", options.registry, "--json"], {
     cwd: root,
     encoding: "utf8",
     maxBuffer: 16 * 1024 * 1024,
@@ -143,49 +278,53 @@ function syncEnvironment(root, lnako) {
   if (text.length === 0) {
     throw new PackageLoaderError("E034_INVALID_ENVIRONMENT_REFERENCE", "lnako sync --json の出力が空です");
   }
+  let v1Environment;
   try {
-    return JSON.parse(text);
+    v1Environment = JSON.parse(text);
   } catch (error) {
     throw new PackageLoaderError("E034_INVALID_ENVIRONMENT_REFERENCE", `lnako sync --json の出力がJSONとして不正です: ${error.message}`);
   }
+  validateEnvironmentLock(v1Environment, path.join(root, "nako.lock"));
+  return environmentFromV1(v1Environment, readLock(root));
 }
 
-/** `--no-sync` 用: lnako を起動せず環境と lock の対応だけを検証する。 */
+/** `--no-sync` 用: lnako を起動せず v1 環境と lock の対応だけを検証する。 */
 function readEnvironmentWithoutSync(root) {
-  // `.nako` は環境の管理path。中間成分がsymlinkなら管理外を指すため読まない。
-  assertNoSymlinkComponents(root, path.join(root, ".nako"));
-  const environmentPath = path.join(root, ".nako", "environment.json");
-  const lockPath = path.join(root, "nako.lock");
+  const v1Dir = path.join(root, ".nako", "v1");
+  assertNoSymlinkComponents(root, v1Dir);
+  const pointerText = readRegularFile(path.join(v1Dir, "environment.json"), ".nako/v1/environment.json");
+  let pointer;
   try {
-    if (fs.lstatSync(environmentPath).isSymbolicLink()) {
-      throw new PackageLoaderError("E034_INVALID_ENVIRONMENT_REFERENCE", ".nako/environment.json がsymlinkです");
-    }
+    pointer = JSON.parse(pointerText);
   } catch (error) {
-    if (error instanceof PackageLoaderError) throw error;
+    throw new PackageLoaderError("E034_INVALID_ENVIRONMENT_REFERENCE", `.nako/v1/environment.json が不正なJSONです: ${error.message}`);
   }
-  let text;
+  if (pointer?.schema_version !== 1 || typeof pointer.generation !== "string" || !/^gen-[0-9a-f]{16}$/.test(pointer.generation)) {
+    throw new PackageLoaderError("E034_INVALID_ENVIRONMENT_REFERENCE", ".nako/v1/environment.json の generation が不正です");
+  }
+  const generationPath = path.join(v1Dir, "generations", pointer.generation);
+  assertNoSymlinkComponents(root, generationPath);
+  const text = readRegularFile(path.join(generationPath, "environment.json"), `.nako/v1/generations/${pointer.generation}/environment.json`);
+  let v1Environment;
   try {
-    text = fs.readFileSync(environmentPath, "utf8");
+    v1Environment = JSON.parse(text);
   } catch (error) {
-    throw new PackageLoaderError(
-      "E034_INVALID_ENVIRONMENT_REFERENCE",
-      `.nako/environment.json を読めません（先に lnako sync が必要です）: ${error.message}`,
-    );
+    throw new PackageLoaderError("E034_INVALID_ENVIRONMENT_REFERENCE", `v1 世代の environment.json が不正なJSONです: ${error.message}`);
   }
-  let environment;
-  try {
-    environment = JSON.parse(text);
-  } catch (error) {
-    throw new PackageLoaderError("E034_INVALID_ENVIRONMENT_REFERENCE", `.nako/environment.json が不正なJSONです: ${error.message}`);
+  if (v1Environment.generation !== pointer.generation) {
+    throw new PackageLoaderError("E034_INVALID_ENVIRONMENT_REFERENCE", ".nako/v1/environment.json の generation が世代の environment.json と一致しません");
   }
-  validateEnvironmentLock(environment, lockPath);
-  return environment;
+  validateEnvironmentLock(v1Environment, path.join(root, "nako.lock"));
+  return environmentFromV1(v1Environment, readLock(root));
 }
 
-/** environment の `lockSha256` と `nako.lock` の実digestを照合する（テスト用にexport）。 */
+/** v1 environment の identity と `nako.lock` の実digestを照合する（テスト用にexport）。 */
 export function validateEnvironmentLock(environment, lockPath) {
-  if (environment?.schemaVersion !== 1) {
-    throw new PackageLoaderError("E034_INVALID_ENVIRONMENT_REFERENCE", `environment の schemaVersion が不正です: ${String(environment?.schemaVersion)}`);
+  if (environment?.schema_version !== 1) {
+    throw new PackageLoaderError("E034_INVALID_ENVIRONMENT_REFERENCE", `environment の schema_version が不正です: ${String(environment?.schema_version)}`);
+  }
+  if (typeof environment.generation !== "string" || !/^gen-[0-9a-f]{16}$/.test(environment.generation)) {
+    throw new PackageLoaderError("E034_INVALID_ENVIRONMENT_REFERENCE", "environment の generation がありません");
   }
   if (typeof environment.profile !== "string") {
     throw new PackageLoaderError("E034_INVALID_ENVIRONMENT_REFERENCE", "environment の profile がありません");
@@ -197,8 +336,8 @@ export function validateEnvironmentLock(environment, lockPath) {
     throw new PackageLoaderError("E034_INVALID_ENVIRONMENT_REFERENCE", "nako.lock がありません");
   }
   const actual = sha256HexFile(lockPath);
-  if (normalizeSha256(environment.lockSha256) !== actual) {
-    throw new PackageLoaderError("E034_INVALID_ENVIRONMENT_REFERENCE", ".nako/environment.json の lockSha256 が nako.lock と一致しません");
+  if (normalizeSha256(environment.lock_sha256) !== actual) {
+    throw new PackageLoaderError("E034_INVALID_ENVIRONMENT_REFERENCE", "v1 environment の lock_sha256 が nako.lock と一致しません");
   }
 }
 
@@ -579,8 +718,9 @@ async function main() {
   const options = parseArguments(process.argv.slice(2));
   options.root = path.resolve(options.root);
   options.oracle = path.resolve(options.oracle);
+  if (options.v1Fixture) options.v1Fixture = path.resolve(options.v1Fixture);
   options.lnako = options.lnako ?? path.join(repositoryRoot, "zig-out", "bin", process.platform === "win32" ? "lnako.exe" : "lnako");
-  const environment = options.sync ? syncEnvironment(options.root, options.lnako) : readEnvironmentWithoutSync(options.root);
+  const environment = options.sync ? syncEnvironment(options.root, options.lnako, options) : readEnvironmentWithoutSync(options.root);
   await runWithOfficialCnako(options, environment);
 }
 

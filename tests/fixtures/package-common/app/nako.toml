@@ -1,9 +1,9 @@
-[package]
-name = "package-common-app"
-version = "0.1.0"
-license = "MIT"
+schema_version = 1
 
-# 共通fixtureのパッケージはすべてリポジトリ内のpath依存にする（外部ネットワーク不要）。
-[dependencies.path]
-demo = { path = "demo" }
-util = { path = "util" }
+[package]
+
+# v1 の依存は完全修飾 Package ID と SemVer range で宣言する。
+# 旧 [dependencies.path] は存在しない。取得元は --v1-fixture の静的 index。
+[dependencies]
+"@example/demo" = { version = "^1.0.0", alias = "demo" }
+"@example/util" = "^1.0.0"

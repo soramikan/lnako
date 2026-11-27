@@ -190,6 +190,8 @@ pub fn run(
                 .forced_mode = options.forced_mode,
                 .package_cache_root = prep.cache_dir,
                 .writable_mode = prep.writableMode(init.environ_map),
+                // prepareForExecution が検証した v1 選択を再読込でも使う。
+                .v1 = prep.v1LoadOptions(),
             }, stderr, init.environ_map.get("LNAKO_LLVM_TRACE") != null)) orelse {
                 try stderr.flush();
                 std.process.exit(1);
@@ -451,6 +453,8 @@ pub fn run(
                 .forced_mode = run_mode,
                 .package_cache_root = run_prep.cache_dir,
                 .writable_mode = run_prep.writableMode(init.environ_map),
+                // prepareForExecution が検証した v1 選択を再読込でも使う。
+                .v1 = run_prep.v1LoadOptions(),
             }, stderr) catch |err| {
                 if (err == error.ConflictingDnclModes) {
                     try stderr.writeAll("run: 拡張子と--dncl/--dncl2が異なるDNCL方言を要求しています\n");
@@ -538,7 +542,7 @@ pub fn run(
             };
             // プロジェクト内の入力なら依存環境を自動準備する。
             try project_command.prepareForExecution(allocator, io, input, &test_prep, init.environ_map, "test", stderr);
-            const succeeded = test_command.runTestTarget(allocator, io, input, test_mode, test_prep.writableMode(init.environ_map), test_prep.cache_dir, stdout, stderr) catch |err| {
+            const succeeded = test_command.runTestTarget(allocator, io, input, test_mode, test_prep.writableMode(init.environ_map), test_prep.cache_dir, test_prep.v1LoadOptions(), stdout, stderr) catch |err| {
                 if (err == error.ConflictingDnclModes) {
                     try stderr.writeAll("test: 拡張子と--dncl/--dncl2が異なるDNCL方言を要求しています\n");
                     try stderr.flush();

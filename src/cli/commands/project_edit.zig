@@ -532,7 +532,7 @@ fn writeAndLock(
     return outcome;
 }
 
-pub fn runAdd(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []const u8, environ_map: ?*const std.process.Environ.Map, stderr: *std.Io.Writer) !void {
+pub fn runAdd(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []const u8, environ_map: ?*const std.process.Environ.Map, mode: shared.EntryMode, stderr: *std.Io.Writer) !void {
     var request = AddRequest{ .name = "" };
     var flags = PrepFlags{};
     defer flags.deinit(a);
@@ -673,10 +673,17 @@ pub fn runAdd(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []c
         else => {},
     }
 
+    // v1 は編集 lock を取る前に拒否し、旧 lock の生成も .nako の作成も
+    // 行わない。編集 lock 取得後にも再検査し、race で v1 へ変わった
+    // manifest を旧 loader へ渡さない。
+    try shared.rejectV1LegacyCommandFrom(a, io, start_dir, "add", mode, stderr);
     // manifest の読込・候補生成・置換・lock 更新を同一ロック区間に入れ、
     // 同時実行の add/remove による変更喪失を防ぐ。
     var locked = try acquireEditLock(a, io, start_dir, "add", stderr);
     defer if (locked) |*l| l.deinit(a, io);
+    if (locked) |*l| {
+        if (l.root_dir) |*dir| try shared.rejectV1LegacyCommand(a, io, l.root, dir, "add", mode, stderr);
+    }
     var loaded = if (locked) |*l|
         try loadPinnedProjectOrFail(a, io, l, stderr)
     else
@@ -746,7 +753,7 @@ fn findDepPosition(manifest: *const manifest_mod.Manifest, name: []const u8, dev
     return null;
 }
 
-pub fn runRemove(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []const u8, environ_map: ?*const std.process.Environ.Map, stderr: *std.Io.Writer) !void {
+pub fn runRemove(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []const u8, environ_map: ?*const std.process.Environ.Map, mode: shared.EntryMode, stderr: *std.Io.Writer) !void {
     var dev = false;
     var flags = PrepFlags{};
     defer flags.deinit(a);
@@ -809,8 +816,12 @@ pub fn runRemove(a: Allocator, io: std.Io, args: []const []const u8, start_dir: 
         return failUsage(stderr, "remove: --locked は remove では使えません（manifest を変更するため lock は必ず更新されます）\n", .{});
     }
 
+    try shared.rejectV1LegacyCommandFrom(a, io, start_dir, "remove", mode, stderr);
     var locked = try acquireEditLock(a, io, start_dir, "remove", stderr);
     defer if (locked) |*l| l.deinit(a, io);
+    if (locked) |*l| {
+        if (l.root_dir) |*dir| try shared.rejectV1LegacyCommand(a, io, l.root, dir, "remove", mode, stderr);
+    }
     var loaded = if (locked) |*l|
         try loadPinnedProjectOrFail(a, io, l, stderr)
     else
@@ -1416,10 +1427,10 @@ test "remove -- は以降を位置引数として扱う" {
 
     var err: std.Io.Writer.Allocating = .init(a);
     // `-` 始まりの裸引数は従来どおり option として拒否する。
-    try std.testing.expectError(error.Usage, runRemove(a, io, &.{"-local"}, root, null, &err.writer));
+    try std.testing.expectError(error.Usage, runRemove(a, io, &.{"-local"}, root, null, .legacy_internal, &err.writer));
     try std.testing.expect(std.mem.indexOf(u8, err.written(), "不明なオプション") != null);
     // `--` 以降は位置引数なのでハイフン始まりの dep key を削除できる。
-    try runRemove(a, io, &.{ "--", "-local" }, root, null, &err.writer);
+    try runRemove(a, io, &.{ "--", "-local" }, root, null, .legacy_internal, &err.writer);
     const manifest = try temporary.dir.readFileAlloc(io, "app/nako.toml", a, .limited(4096));
     try std.testing.expect(std.mem.indexOf(u8, manifest, "-local") == null);
 }

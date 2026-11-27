@@ -158,6 +158,11 @@ pub const Range = struct {
     sets: []const []const Comparator,
     text: []const u8,
 
+    /// 範囲構文の解釈モード。`legacy` は lnako の既存内部 API が依存する
+    /// 厳格な wildcard 規則、`node_semver` は v1 が照合する node-semver
+    /// 7.7.4 既定 API の wildcard/qualifier 規則を表す。
+    pub const Mode = enum { legacy, node_semver };
+
     pub fn deinit(self: *Range, allocator: std.mem.Allocator) void {
         for (self.sets) |set| allocator.free(set);
         allocator.free(self.sets);
@@ -168,24 +173,46 @@ pub const Range = struct {
     /// 対応形式: `*`、`x`、部分バージョン、`^`/`~`、`>`系、`-` ハイフン、`||`。
     /// 構文エラーは `error.InvalidRange` に正規化する。
     pub fn parse(allocator: std.mem.Allocator, text: []const u8) Error!Range {
+        return parseWithMode(allocator, text, .legacy);
+    }
+
+    /// v1 の依存・engine 範囲が照合する node-semver 7.7.4 既定 API の
+    /// 構文モード。旧内部 API の `parse` は変更しない。
+    pub fn parseNodeSemver(allocator: std.mem.Allocator, text: []const u8) Error!Range {
+        // ECMAScript 空白走査は UTF-8 のコードポイント単位で進むため、
+        // 入口で不正・途中終端の UTF-8 を拒否する。legacy の Range.parse は
+        // 従来のバイト単位動作を変えない。
+        if (!std.unicode.utf8ValidateSlice(text)) return error.InvalidRange;
+        return parseWithMode(allocator, text, .node_semver);
+    }
+
+    fn parseWithMode(allocator: std.mem.Allocator, text: []const u8, mode: Mode) Error!Range {
         var sets: std.ArrayList([]const Comparator) = .empty;
         errdefer {
             for (sets.items) |set| allocator.free(set);
             sets.deinit(allocator);
         }
         // 空文字は node-semver と同じく全バージョン一致として扱う。
-        if (std.mem.trim(u8, text, " \t\n\r").len == 0) {
+        const empty_text = if (mode == .node_semver)
+            trimEcmaWhitespace(text).len == 0
+        else
+            std.mem.trim(u8, text, " \t\n\r").len == 0;
+        if (empty_text) {
             try sets.append(allocator, &.{});
             return .{ .sets = try sets.toOwnedSlice(allocator), .text = text };
         }
         // `||` のみが OR 区切り。空の選択肢は node-semver と同じく `*` として扱う。
         var alternatives = std.mem.splitSequence(u8, text, "||");
         while (alternatives.next()) |alternative| {
-            if (std.mem.trim(u8, alternative, " \t\n\r").len == 0) {
+            const empty_alternative = if (mode == .node_semver)
+                trimEcmaWhitespace(alternative).len == 0
+            else
+                std.mem.trim(u8, alternative, " \t\n\r").len == 0;
+            if (empty_alternative) {
                 try sets.append(allocator, &.{});
                 continue;
             }
-            const set = parseSet(allocator, alternative) catch |err| switch (err) {
+            const set = parseSet(allocator, alternative, mode) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
                 else => return error.InvalidRange,
             };
@@ -246,13 +273,119 @@ fn isWildcard(text: []const u8) bool {
     return std.mem.eql(u8, text, "x") or std.mem.eql(u8, text, "X") or std.mem.eql(u8, text, "*");
 }
 
-fn parsePartial(text: []const u8) Error!Partial {
+/// ECMAScript の `\s` / `String.prototype.trim()` が扱う空白。
+/// Node の Range は入力を `trim()` して `\s+` を ASCII 空白へ畳むため、
+/// v1 モードでは NBSP・BOM・Unicode Zs なども区切りとして扱う。
+fn isEcmaWhitespace(codepoint: u21) bool {
+    return switch (codepoint) {
+        0x0009, 0x000A, 0x000B, 0x000C, 0x000D, 0x0020, 0x00A0, 0x1680, 0x2028, 0x2029, 0x202F, 0x205F, 0x3000, 0xFEFF => true,
+        0x2000...0x200A => true,
+        else => false,
+    };
+}
+
+fn utf8CharLen(text: []const u8, index: usize) usize {
+    if (index >= text.len) return 0;
+    const first = text[index];
+    if (first < 0x80) return 1;
+    const sequence_len = std.unicode.utf8ByteSequenceLength(first) catch 1;
+    // 入口検証後でも、走査中のスライスが残りバイト数を超えないようにする。
+    return @min(sequence_len, text.len - index);
+}
+
+fn ecmaWhitespaceLen(text: []const u8, index: usize) usize {
+    if (index >= text.len) return 0;
+    const first = text[index];
+    if (first < 0x80) return if (isEcmaWhitespace(first)) 1 else 0;
+    const len = std.unicode.utf8ByteSequenceLength(first) catch return 0;
+    if (index + len > text.len) return 0;
+    const codepoint = std.unicode.utf8Decode(text[index .. index + len]) catch return 0;
+    return if (isEcmaWhitespace(codepoint)) len else 0;
+}
+
+fn trimEcmaWhitespace(text: []const u8) []const u8 {
+    var start: usize = 0;
+    while (start < text.len) {
+        const len = ecmaWhitespaceLen(text, start);
+        if (len == 0) break;
+        start += len;
+    }
+    var end = start;
+    var index = start;
+    while (index < text.len) {
+        const whitespace = ecmaWhitespaceLen(text, index);
+        if (whitespace != 0) {
+            index += whitespace;
+            continue;
+        }
+        index += utf8CharLen(text, index);
+        end = index;
+    }
+    return text[start..end];
+}
+
+fn nextEcmaToken(text: []const u8, index: *usize) ?[]const u8 {
+    while (index.* < text.len) {
+        const whitespace = ecmaWhitespaceLen(text, index.*);
+        if (whitespace == 0) break;
+        index.* += whitespace;
+    }
+    if (index.* >= text.len) return null;
+    const start = index.*;
+    while (index.* < text.len) {
+        const whitespace = ecmaWhitespaceLen(text, index.*);
+        if (whitespace != 0) break;
+        index.* += utf8CharLen(text, index.*);
+    }
+    return text[start..index.*];
+}
+
+/// node-semver の前置 `[v=\s]*` を、v1 モードでどこまで再現するか。
+/// caret/tilde は任意の v/= 前置を許し、それ以外は完全一致する
+/// 数値バージョンだけ単一 v を許す（部分版・wildcard は XRANGE 書換えで
+/// 任意の v/= 前置を許す）。
+const PrefixPolicy = enum { plain, caret_tilde };
+
+const NodePrefix = struct {
+    rest: []const u8,
+    v_count: usize,
+    eq_count: usize,
+};
+
+fn stripNodePrefix(text: []const u8) NodePrefix {
+    var index: usize = 0;
+    var v_count: usize = 0;
+    var eq_count: usize = 0;
+    while (index < text.len) : (index += 1) {
+        switch (text[index]) {
+            'v' => v_count += 1,
+            '=' => eq_count += 1,
+            else => break,
+        }
+    }
+    return .{ .rest = text[index..], .v_count = v_count, .eq_count = eq_count };
+}
+
+fn isFullNumericVersion(major: []const u8, minor: ?[]const u8, patch: ?[]const u8) bool {
+    const minor_text = minor orelse return false;
+    const patch_text = patch orelse return false;
+    return !isWildcard(major) and !isWildcard(minor_text) and !isWildcard(patch_text);
+}
+
+fn parsePartial(text: []const u8, mode: Range.Mode, policy: PrefixPolicy) Error!Partial {
     var rest = text;
-    // node-semver は範囲内のバージョン前置 `v` を剥がす（`v1.2.3`）。
-    // バージョン位置の `=` は意図的に受理しない。node-semver 7.x の
-    // `[v=\s]*` 前置より厳しいが、npm/node-semver#691 で提案される
-    // 次期メジャーの `v?` のみ前置と一致する（`=` は演算子としてのみ有効）。
-    if (rest.len > 0 and rest[0] == 'v') rest = rest[1..];
+    var node_prefix = NodePrefix{ .rest = text, .v_count = 0, .eq_count = 0 };
+    if (mode == .node_semver) {
+        // v1 は node-semver 7.7.4 の `[v=\s]*` 前置を再現する。ただし
+        // 完全一致する数値バージョンでは XRANGE 書換えが走らないため、
+        // caret/tilde 以外は単一 v だけを許す（`>=vv1.2.3` は不正、
+        // `>=vv1.2` は部分版なので受理）。
+        node_prefix = stripNodePrefix(rest);
+        rest = node_prefix.rest;
+    } else if (rest.len > 0 and rest[0] == 'v') {
+        // 旧内部 API は従来どおり単一 v だけを剥がす。
+        rest = rest[1..];
+    }
     if (std.mem.indexOfScalar(u8, rest, '+')) |plus| {
         // range 中の build メタデータは比較に影響しないが、構文としては許容する。
         try validateIdentifiers(rest[plus + 1 ..], false);
@@ -270,9 +403,18 @@ fn parsePartial(text: []const u8) Error!Partial {
     const patch_text = parts.next();
     if (parts.next() != null) return error.InvalidRange;
 
+    if (mode == .node_semver) {
+        if (policy == .plain and isFullNumericVersion(major_text, minor_text, patch_text)) {
+            // 完全一致の数値バージョンは Comparator の `v?` 前置だけを許す。
+            // `=` 前置や複数の v は node-semver 7.7.4 でも不正。
+            if (node_prefix.eq_count > 0 or node_prefix.v_count > 1) return error.InvalidRange;
+        }
+        return parseNodePartial(major_text, minor_text, patch_text, prerelease);
+    }
+
     var result: Partial = .{ .major = null, .minor = null, .patch = null, .prerelease = prerelease };
     if (isWildcard(major_text)) {
-        // node-semver と同じく wildcard の後続位置は wildcard のみ許容し
+        // 旧内部 API の規則: wildcard の後続位置は wildcard のみ許容し
         // （`*.*`/`x.x.x` は match-all、`*.1`/`*.*.5` は不正）、
         // prerelease は major wildcard では常に不正（`*.*-alpha` も拒否）。
         // build メタデータは任意位置で許容する。
@@ -313,6 +455,56 @@ fn parsePartial(text: []const u8) Error!Partial {
     return result;
 }
 
+/// node-semver 7.7.4 の XRANGE 文法に対応する partial 解析。
+/// wildcard の後続位置は数値でもよく、major/minor wildcard の下では
+/// 後続値と prerelease を無視する（`1.x.5` → `1.x`、`*.1` → `*`、
+/// `*.*.*-alpha` → `*`）。prerelease は第3要素がある場合だけ付く。
+fn parseNodePartial(
+    major_text: []const u8,
+    minor_text: ?[]const u8,
+    patch_text: ?[]const u8,
+    prerelease: []const u8,
+) Error!Partial {
+    var result: Partial = .{ .major = null, .minor = null, .patch = null, .prerelease = prerelease };
+    if (prerelease.len > 0 and patch_text == null) return error.InvalidRange;
+
+    if (isWildcard(major_text)) {
+        if (minor_text) |minor| try validateDiscardedComponent(minor);
+        if (patch_text) |patch| try validateDiscardedComponent(patch);
+        result.prerelease = "";
+        return result;
+    }
+    result.major = try numericPart(major_text);
+    if (minor_text) |minor| {
+        if (isWildcard(minor)) {
+            if (patch_text) |patch| try validateDiscardedComponent(patch);
+            result.prerelease = "";
+            return result;
+        }
+        result.minor = try numericPart(minor);
+    }
+    if (patch_text) |patch| {
+        if (isWildcard(patch)) {
+            result.prerelease = "";
+            return result;
+        }
+        result.patch = try numericPart(patch);
+    }
+    return result;
+}
+
+/// 捨てられる wildcard 後続位置は node-semver の XRANGEIDENTIFIER 文法だけを
+/// 検査する。値は展開に使わないため MAX_SAFE_INTEGER や u64 の上限を課さない
+/// （`1.x.9007199254740992` は有効）。
+fn validateDiscardedComponent(text: []const u8) Error!void {
+    if (isWildcard(text)) return;
+    if (text.len == 0) return error.InvalidRange;
+    if (text.len > 1 and text[0] == '0') return error.InvalidRange;
+    for (text) |byte| {
+        if (!std.ascii.isDigit(byte)) return error.InvalidRange;
+    }
+}
+
 fn partialToVersion(partial: Partial) Version {
     return .{
         .major = partial.major orelse 0,
@@ -322,44 +514,70 @@ fn partialToVersion(partial: Partial) Version {
     };
 }
 
+/// node-semver は caret/tilde/wildcard の排他上限を `X.Y.Z-0` にする。
+/// これにより上限タプルの prerelease（例: `2.0.0-alpha`）を範囲へ
+/// 巻き込まない。`-0` を落とすと ID-07 の
+/// `^1.2.3 >=2.0.0-alpha.1` が `2.0.0-alpha.2` を誤って受理する。
+fn prereleaseZero(version: Version) Version {
+    var out = version;
+    out.prerelease = "0";
+    out.build = "";
+    return out;
+}
+
 /// `^1.2.3` 等の上限を返す。左端の非ゼロ要素を保持する。
 fn caretUpper(partial: Partial) ?Version {
     const major = partial.major orelse return null;
     if (partial.minor == null) {
-        // `^1`/`^0` は `~` と同等ではなく `>=x.0.0 <(x+1).0.0`
-        return .{ .major = major + 1, .minor = 0, .patch = 0 };
+        // `^1`/`^0` は `~` と同等ではなく `>=x.0.0 <(x+1).0.0-0`
+        return prereleaseZero(.{ .major = major + 1, .minor = 0, .patch = 0 });
     }
     const minor = partial.minor.?;
     if (partial.patch == null) {
-        if (major > 0) return .{ .major = major + 1, .minor = 0, .patch = 0 };
-        return .{ .major = 0, .minor = minor + 1, .patch = 0 };
+        if (major > 0) return prereleaseZero(.{ .major = major + 1, .minor = 0, .patch = 0 });
+        return prereleaseZero(.{ .major = 0, .minor = minor + 1, .patch = 0 });
     }
     const patch = partial.patch.?;
-    if (major > 0) return .{ .major = major + 1, .minor = 0, .patch = 0 };
-    if (minor > 0) return .{ .major = 0, .minor = minor + 1, .patch = 0 };
-    if (patch > 0) return .{ .major = 0, .minor = 0, .patch = patch + 1 };
-    return .{ .major = 0, .minor = 0, .patch = 1 };
+    if (major > 0) return prereleaseZero(.{ .major = major + 1, .minor = 0, .patch = 0 });
+    if (minor > 0) return prereleaseZero(.{ .major = 0, .minor = minor + 1, .patch = 0 });
+    if (patch > 0) return prereleaseZero(.{ .major = 0, .minor = 0, .patch = patch + 1 });
+    return prereleaseZero(.{ .major = 0, .minor = 0, .patch = 1 });
 }
 
 /// `~1.2`/`~1.2.3`/`~1` の上限を返す。
 fn tildeUpper(partial: Partial) ?Version {
     const major = partial.major orelse return null;
-    if (partial.minor == null) return .{ .major = major + 1, .minor = 0, .patch = 0 };
-    return .{ .major = major, .minor = partial.minor.? + 1, .patch = 0 };
+    if (partial.minor == null) return prereleaseZero(.{ .major = major + 1, .minor = 0, .patch = 0 });
+    return prereleaseZero(.{ .major = major, .minor = partial.minor.? + 1, .patch = 0 });
 }
 
 fn wildcardUpper(partial: Partial) ?Version {
     const major = partial.major orelse return null;
-    if (partial.minor == null) return .{ .major = major + 1, .minor = 0, .patch = 0 };
-    return .{ .major = major, .minor = partial.minor.? + 1, .patch = 0 };
+    if (partial.minor == null) return prereleaseZero(.{ .major = major + 1, .minor = 0, .patch = 0 });
+    return prereleaseZero(.{ .major = major, .minor = partial.minor.? + 1, .patch = 0 });
 }
 
-fn appendBound(list: *std.ArrayList(Comparator), allocator: std.mem.Allocator, op: Op, version: Version) Error!void {
+/// `>1.2` の下限 `>=1.3.0` 用。node-semver はこの下限に `-0` を付けない。
+fn nextRelease(partial: Partial) ?Version {
+    const upper = wildcardUpper(partial) orelse return null;
+    var out = upper;
+    out.prerelease = "";
+    return out;
+}
+
+fn appendBound(mode: Range.Mode, list: *std.ArrayList(Comparator), allocator: std.mem.Allocator, op: Op, version: Version) Error!void {
+    // node-semver は生成した比較子も SemVer として検証する。caret/tilde/
+    // wildcard の +1 が MAX_SAFE_INTEGER を超える場合は範囲全体を拒否する。
+    if (mode == .node_semver and
+        (version.major > max_component or version.minor > max_component or version.patch > max_component))
+    {
+        return error.InvalidRange;
+    }
     try list.append(allocator, .{ .op = op, .version = version });
 }
 
 /// 1つの比較トークン（`^1.2`、`>=1.0.0`、`1.2.x` 等）を AND 比較子列へ展開する。
-fn expandToken(allocator: std.mem.Allocator, list: *std.ArrayList(Comparator), token: []const u8) Error!void {
+fn expandToken(allocator: std.mem.Allocator, list: *std.ArrayList(Comparator), token: []const u8, mode: Range.Mode) Error!void {
     if (token.len == 0) return;
     if (isWildcard(token)) return;
 
@@ -372,43 +590,46 @@ fn expandToken(allocator: std.mem.Allocator, list: *std.ArrayList(Comparator), t
             break;
         }
     }
-    try expandOp(allocator, list, op_text, rest);
+    try expandOp(allocator, list, op_text, rest, mode);
 }
 
 /// 演算子とバージョン文字列を比較子列へ展開する。`rest` は呼出し側が
 /// 所有するテキストのスライスで、比較子はそのスライスを参照してよい。
-fn expandOp(allocator: std.mem.Allocator, list: *std.ArrayList(Comparator), op_text: []const u8, rest: []const u8) Error!void {
-    const partial = try parsePartial(rest);
+fn expandOp(allocator: std.mem.Allocator, list: *std.ArrayList(Comparator), op_text: []const u8, rest: []const u8, mode: Range.Mode) Error!void {
+    const policy: PrefixPolicy = if (std.mem.eql(u8, op_text, "^") or
+        std.mem.eql(u8, op_text, "~") or
+        std.mem.eql(u8, op_text, "~>")) .caret_tilde else .plain;
+    const partial = try parsePartial(rest, mode, policy);
 
     if (std.mem.eql(u8, op_text, "^")) {
         const lower = partialToVersion(partial);
         const upper = caretUpper(partial) orelse return; // `^*` は制約なし
-        try appendBound(list, allocator, .gte, lower);
-        try appendBound(list, allocator, .lt, upper);
+        try appendBound(mode, list, allocator, .gte, lower);
+        try appendBound(mode, list, allocator, .lt, upper);
         return;
     }
     if (std.mem.eql(u8, op_text, "~") or std.mem.eql(u8, op_text, "~>")) {
         const lower = partialToVersion(partial);
         const upper = tildeUpper(partial) orelse return;
-        try appendBound(list, allocator, .gte, lower);
-        try appendBound(list, allocator, .lt, upper);
+        try appendBound(mode, list, allocator, .gte, lower);
+        try appendBound(mode, list, allocator, .lt, upper);
         return;
     }
     if (std.mem.eql(u8, op_text, ">=") or std.mem.eql(u8, op_text, ">")) {
         const is_gte = op_text.len == 2;
         if (partial.major == null) {
             // node-semver は `>*` を `<0.0.0-0`（空範囲）、`>=*` を `*` に写す。
-            if (!is_gte) try appendBound(list, allocator, .lt, .{ .major = 0, .minor = 0, .patch = 0, .prerelease = "0" });
+            if (!is_gte) try appendBound(mode, list, allocator, .lt, .{ .major = 0, .minor = 0, .patch = 0, .prerelease = "0" });
             return;
         }
         if (partial.minor != null and partial.patch != null) {
-            try appendBound(list, allocator, if (is_gte) .gte else .gt, partialToVersion(partial));
+            try appendBound(mode, list, allocator, if (is_gte) .gte else .gt, partialToVersion(partial));
         } else if (is_gte) {
             // `>=1.2` は `>=1.2.0`
-            try appendBound(list, allocator, .gte, partialToVersion(partial));
+            try appendBound(mode, list, allocator, .gte, partialToVersion(partial));
         } else {
-            // `>1.2` は `>=1.3.0`
-            try appendBound(list, allocator, .gte, wildcardUpper(partial).?);
+            // `>1.2` は `>=1.3.0`（`-0` を付けない）
+            try appendBound(mode, list, allocator, .gte, nextRelease(partial).?);
         }
         return;
     }
@@ -416,17 +637,17 @@ fn expandOp(allocator: std.mem.Allocator, list: *std.ArrayList(Comparator), op_t
         const is_lte = op_text.len == 2;
         if (partial.major == null) {
             // node-semver は `<*` を `<0.0.0-0`（空範囲）、`<=*` を `*` に写す。
-            if (!is_lte) try appendBound(list, allocator, .lt, .{ .major = 0, .minor = 0, .patch = 0, .prerelease = "0" });
+            if (!is_lte) try appendBound(mode, list, allocator, .lt, .{ .major = 0, .minor = 0, .patch = 0, .prerelease = "0" });
             return;
         }
         if (partial.minor != null and partial.patch != null) {
-            try appendBound(list, allocator, if (is_lte) .lte else .lt, partialToVersion(partial));
+            try appendBound(mode, list, allocator, if (is_lte) .lte else .lt, partialToVersion(partial));
         } else if (is_lte) {
             // `<=1.2` は `<1.3.0`
-            try appendBound(list, allocator, .lt, wildcardUpper(partial).?);
+            try appendBound(mode, list, allocator, .lt, wildcardUpper(partial).?);
         } else {
-            // `<1.2` は `<1.2.0`
-            try appendBound(list, allocator, .lt, partialToVersion(partial));
+            // `<1.2` は `<1.2.0-0`
+            try appendBound(mode, list, allocator, .lt, prereleaseZero(partialToVersion(partial)));
         }
         return;
     }
@@ -435,29 +656,40 @@ fn expandOp(allocator: std.mem.Allocator, list: *std.ArrayList(Comparator), op_t
     if (partial.minor == null or partial.patch == null) {
         const lower = partialToVersion(partial);
         const upper = wildcardUpper(partial).?;
-        try appendBound(list, allocator, .gte, lower);
-        try appendBound(list, allocator, .lt, upper);
+        try appendBound(mode, list, allocator, .gte, lower);
+        try appendBound(mode, list, allocator, .lt, upper);
         return;
     }
-    try appendBound(list, allocator, .eq, partialToVersion(partial));
+    try appendBound(mode, list, allocator, .eq, partialToVersion(partial));
 }
 
 /// 1つの OR 選択肢（空白区切りの AND 比較子）を解析する。
-fn parseSet(allocator: std.mem.Allocator, alternative: []const u8) Error![]const Comparator {
+fn parseSet(allocator: std.mem.Allocator, alternative: []const u8, mode: Range.Mode) Error![]const Comparator {
     var tokens: std.ArrayList([]const u8) = .empty;
     defer tokens.deinit(allocator);
-    var iter = std.mem.tokenizeAny(u8, alternative, " \t\n\r");
-    while (iter.next()) |token| try tokens.append(allocator, token);
+    if (mode == .node_semver) {
+        var token_index: usize = 0;
+        while (nextEcmaToken(alternative, &token_index)) |token| try tokens.append(allocator, token);
+    } else {
+        var iter = std.mem.tokenizeAny(u8, alternative, " \t\n\r");
+        while (iter.next()) |token| try tokens.append(allocator, token);
+    }
     if (tokens.items.len == 0) return error.InvalidRange;
 
     var list: std.ArrayList(Comparator) = .empty;
     errdefer list.deinit(allocator);
+    if (mode == .node_semver and tokens.items.len == 3 and std.mem.eql(u8, tokens.items[1], "-")) {
+        // node-semver の HYPHENRANGE は選択肢全体に一致する場合だけ展開する。
+        // `1.2.3 - 2.0.0 >=1` のような後続比較子付きは不正。
+        try expandHyphen(allocator, &list, tokens.items[0], tokens.items[2], mode);
+        return list.toOwnedSlice(allocator);
+    }
     var i: usize = 0;
     while (i < tokens.items.len) {
         const token = tokens.items[i];
         if (std.mem.eql(u8, token, "-")) return error.InvalidRange;
-        if (i + 2 < tokens.items.len and std.mem.eql(u8, tokens.items[i + 1], "-")) {
-            try expandHyphen(allocator, &list, token, tokens.items[i + 2]);
+        if (mode == .legacy and i + 2 < tokens.items.len and std.mem.eql(u8, tokens.items[i + 1], "-")) {
+            try expandHyphen(allocator, &list, token, tokens.items[i + 2], mode);
             i += 3;
             continue;
         }
@@ -466,11 +698,31 @@ fn parseSet(allocator: std.mem.Allocator, alternative: []const u8) Error![]const
         // 呼出し側テキストのスライスのまま保持するため）。
         if (isLoneOperator(token)) {
             if (i + 1 >= tokens.items.len or std.mem.eql(u8, tokens.items[i + 1], "-")) return error.InvalidRange;
-            try expandOp(allocator, &list, token, tokens.items[i + 1]);
+            const next = tokens.items[i + 1];
+            if (mode == .node_semver and
+                (std.mem.eql(u8, token, "^") or std.mem.eql(u8, token, "~")) and
+                std.mem.eql(u8, next, "=") and i + 2 < tokens.items.len)
+            {
+                // CARET/TILDE の `^ = 1.2.3` は `^=1.2.3` と同じ。
+                if (std.mem.eql(u8, tokens.items[i + 2], "-")) return error.InvalidRange;
+                try expandOp(allocator, &list, token, tokens.items[i + 2], mode);
+                i += 3;
+                continue;
+            }
+            if (mode == .node_semver and (std.mem.eql(u8, token, ">") or std.mem.eql(u8, token, "<")) and
+                next.len > 1 and next[0] == '=')
+            {
+                // node-semver の COMPARATORTRIM は `> =1.2.3` を `>=1.2.3`、
+                // `< =1.2` を `<=1.2` に畳む。
+                const combined: []const u8 = if (token[0] == '>') ">=" else "<=";
+                try expandOp(allocator, &list, combined, next[1..], mode);
+            } else {
+                try expandOp(allocator, &list, token, next, mode);
+            }
             i += 2;
             continue;
         }
-        try expandToken(allocator, &list, token);
+        try expandToken(allocator, &list, token, mode);
         i += 1;
     }
     return list.toOwnedSlice(allocator);
@@ -486,20 +738,20 @@ fn isLoneOperator(token: []const u8) bool {
 }
 
 /// `a - b` のハイフン範囲を展開する。
-fn expandHyphen(allocator: std.mem.Allocator, list: *std.ArrayList(Comparator), lower_text: []const u8, upper_text: []const u8) Error!void {
-    const lower = try parsePartial(lower_text);
-    const upper = try parsePartial(upper_text);
+fn expandHyphen(allocator: std.mem.Allocator, list: *std.ArrayList(Comparator), lower_text: []const u8, upper_text: []const u8, mode: Range.Mode) Error!void {
+    const lower = try parsePartial(lower_text, mode, .plain);
+    const upper = try parsePartial(upper_text, mode, .plain);
     if (lower.major != null) {
-        try appendBound(list, allocator, .gte, partialToVersion(lower));
+        try appendBound(mode, list, allocator, .gte, partialToVersion(lower));
     }
     if (upper.major == null) {
         return;
     } else if (upper.minor == null) {
-        try appendBound(list, allocator, .lt, .{ .major = upper.major.? + 1, .minor = 0, .patch = 0 });
+        try appendBound(mode, list, allocator, .lt, prereleaseZero(.{ .major = upper.major.? + 1, .minor = 0, .patch = 0 }));
     } else if (upper.patch == null) {
-        try appendBound(list, allocator, .lt, .{ .major = upper.major.?, .minor = upper.minor.? + 1, .patch = 0 });
+        try appendBound(mode, list, allocator, .lt, prereleaseZero(.{ .major = upper.major.?, .minor = upper.minor.? + 1, .patch = 0 }));
     } else {
-        try appendBound(list, allocator, .lte, partialToVersion(upper));
+        try appendBound(mode, list, allocator, .lte, partialToVersion(upper));
     }
 }
 
@@ -1006,4 +1258,196 @@ test "wildcard位置へのqualifier規則はnode-semverと一致する" {
         var range = try Range.parse(allocator, text);
         defer range.deinit(allocator);
     }
+}
+
+test "ID-07 caret上端は-prerelease 0で排他する" {
+    const allocator = std.testing.allocator;
+    var range = try Range.parse(allocator, "^1.2.3 >=2.0.0-alpha.1");
+    defer range.deinit(allocator);
+    // `^1.2.3` の `<2.0.0-0` が `2.0.0-alpha.2` を除外する。
+    try std.testing.expect(!range.satisfies(try Version.parse("2.0.0-alpha.2")));
+    var caret = try Range.parse(allocator, "^1.2.3");
+    defer caret.deinit(allocator);
+    try std.testing.expect(caret.satisfies(try Version.parse("1.9.0")));
+}
+
+fn renderNodeRange(allocator: std.mem.Allocator, range: Range) ![]u8 {
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    defer aw.deinit();
+    const writer = &aw.writer;
+    for (range.sets, 0..) |set, set_index| {
+        if (set_index > 0) try writer.writeAll(" || ");
+        if (set.len == 0) {
+            try writer.writeAll("*");
+            continue;
+        }
+        for (set, 0..) |comparator, index| {
+            if (index > 0) try writer.writeByte(' ');
+            switch (comparator.op) {
+                .lt => try writer.writeAll("<"),
+                .lte => try writer.writeAll("<="),
+                .gt => try writer.writeAll(">"),
+                .gte => try writer.writeAll(">="),
+                .eq => {},
+            }
+            try writer.print("{d}.{d}.{d}", .{
+                comparator.version.major,
+                comparator.version.minor,
+                comparator.version.patch,
+            });
+            if (comparator.version.prerelease.len > 0) {
+                try writer.print("-{s}", .{comparator.version.prerelease});
+            }
+        }
+    }
+    return allocator.dupe(u8, aw.written());
+}
+
+test "node-semver 7.7.4 の wildcard と qualifier を差分照合する" {
+    const allocator = std.testing.allocator;
+    const Case = struct {
+        range: []const u8,
+        canonical: []const u8,
+        matching: []const []const u8 = &.{},
+        non_matching: []const []const u8 = &.{},
+    };
+    // canonical は実 node-semver 7.7.4 の `validRange()` 出力。
+    const cases = [_]Case{
+        .{ .range = "1.x.5", .canonical = ">=1.0.0 <2.0.0-0", .matching = &.{ "1.0.0", "1.9.9" }, .non_matching = &.{ "0.9.9", "2.0.0", "2.0.0-alpha" } },
+        .{ .range = "*.1", .canonical = "*", .matching = &.{ "0.0.0", "9.9.9" }, .non_matching = &.{"1.0.0-alpha"} },
+        .{ .range = "*.*.*-alpha", .canonical = "*", .matching = &.{ "0.0.0", "9.9.9" }, .non_matching = &.{"1.0.0-alpha"} },
+        .{ .range = "1.x.5-alpha", .canonical = ">=1.0.0 <2.0.0-0", .matching = &.{"1.5.0"}, .non_matching = &.{"1.5.0-alpha"} },
+        .{ .range = "1.x.5+build", .canonical = ">=1.0.0 <2.0.0-0", .matching = &.{"1.5.0"} },
+        .{ .range = ">1.x.5", .canonical = ">=2.0.0", .matching = &.{"2.0.0"}, .non_matching = &.{ "1.9.9", "2.0.0-alpha" } },
+        .{ .range = "<1.x.5", .canonical = "<1.0.0-0", .matching = &.{"0.9.9"}, .non_matching = &.{"1.0.0"} },
+        .{ .range = "<=1.x.5", .canonical = "<2.0.0-0", .matching = &.{"1.9.9"}, .non_matching = &.{"2.0.0"} },
+        .{ .range = ">=1.x.5", .canonical = ">=1.0.0", .matching = &.{"1.0.0"}, .non_matching = &.{"0.9.9"} },
+        .{ .range = "^1.x.5", .canonical = ">=1.0.0 <2.0.0-0", .matching = &.{"1.9.9"}, .non_matching = &.{"2.0.0"} },
+        .{ .range = "~1.x.5", .canonical = ">=1.0.0 <2.0.0-0", .matching = &.{"1.9.9"}, .non_matching = &.{"2.0.0"} },
+        .{ .range = "1.x.5 - 2.x.3", .canonical = ">=1.0.0 <3.0.0-0", .matching = &.{"2.9.9"}, .non_matching = &.{"3.0.0"} },
+        .{ .range = "1.2.x-alpha", .canonical = ">=1.2.0 <1.3.0-0", .matching = &.{"1.2.5"} },
+        .{ .range = "1.x.x-alpha", .canonical = ">=1.0.0 <2.0.0-0", .matching = &.{"1.5.0"} },
+        .{ .range = "*.*.5", .canonical = "*", .matching = &.{"9.9.9"}, .non_matching = &.{"1.0.0-alpha"} },
+        .{ .range = "x.2.3", .canonical = "*", .matching = &.{"9.9.9"}, .non_matching = &.{"1.0.0-alpha"} },
+        .{ .range = "*.1+build", .canonical = "*", .matching = &.{"9.9.9"} },
+        .{ .range = "1+build", .canonical = ">=1.0.0 <2.0.0-0", .matching = &.{"1.9.9"}, .non_matching = &.{"2.0.0"} },
+        .{ .range = "1.2+build", .canonical = ">=1.2.0 <1.3.0-0", .matching = &.{"1.2.9"}, .non_matching = &.{"1.3.0"} },
+        .{ .range = "1.x+build", .canonical = ">=1.0.0 <2.0.0-0", .matching = &.{"1.9.9"}, .non_matching = &.{"2.0.0"} },
+        .{ .range = "1.2.x+build", .canonical = ">=1.2.0 <1.3.0-0", .matching = &.{"1.2.9"}, .non_matching = &.{"1.3.0"} },
+        .{ .range = "1.x.5-alpha+build", .canonical = ">=1.0.0 <2.0.0-0", .matching = &.{"1.5.0"}, .non_matching = &.{"1.5.0-alpha"} },
+        .{ .range = "^=1.2.3", .canonical = ">=1.2.3 <2.0.0-0", .matching = &.{"1.2.3"}, .non_matching = &.{"2.0.0"} },
+        .{ .range = "~=1.2.3", .canonical = ">=1.2.3 <1.3.0-0", .matching = &.{"1.2.9"}, .non_matching = &.{"1.3.0"} },
+        .{ .range = "^=v1.2.3", .canonical = ">=1.2.3 <2.0.0-0", .matching = &.{"1.9.9"}, .non_matching = &.{"2.0.0"} },
+        .{ .range = "~>=v1.2.3", .canonical = ">=1.2.3 <1.3.0-0", .matching = &.{"1.2.9"}, .non_matching = &.{"1.3.0"} },
+        .{ .range = "^vvv=1.2.3", .canonical = ">=1.2.3 <2.0.0-0", .matching = &.{"1.9.9"}, .non_matching = &.{"2.0.0"} },
+        .{ .range = ">=vv1.2", .canonical = ">=1.2.0", .matching = &.{"1.2.0"}, .non_matching = &.{"1.1.9"} },
+        .{ .range = ">=v=1.2", .canonical = ">=1.2.0", .matching = &.{"1.2.0"}, .non_matching = &.{"1.1.9"} },
+        .{ .range = "v1.2", .canonical = ">=1.2.0 <1.3.0-0", .matching = &.{"1.2.9"}, .non_matching = &.{"1.3.0"} },
+        .{ .range = "vv1.2", .canonical = ">=1.2.0 <1.3.0-0", .matching = &.{"1.2.9"}, .non_matching = &.{"1.3.0"} },
+        .{ .range = "v=1.2", .canonical = ">=1.2.0 <1.3.0-0", .matching = &.{"1.2.9"}, .non_matching = &.{"1.3.0"} },
+        .{ .range = "v1.2.3", .canonical = "1.2.3", .matching = &.{"1.2.3"}, .non_matching = &.{"1.2.4"} },
+        .{ .range = ">v1.2.3", .canonical = ">1.2.3", .matching = &.{"1.2.4"}, .non_matching = &.{"1.2.3"} },
+        .{ .range = "1.2.3 - 2.0.0", .canonical = ">=1.2.3 <=2.0.0", .matching = &.{"2.0.0"}, .non_matching = &.{"2.0.1"} },
+        .{ .range = "v1.2.3 - v2.0.0", .canonical = ">=1.2.3 <=2.0.0", .matching = &.{"1.2.3"}, .non_matching = &.{"1.2.2"} },
+        .{ .range = "1.x - 2.0.0", .canonical = ">=1.0.0 <=2.0.0", .matching = &.{"1.9.9"}, .non_matching = &.{"2.0.1"} },
+        .{ .range = "1.2.3 - 2.x", .canonical = ">=1.2.3 <3.0.0-0", .matching = &.{"2.9.9"}, .non_matching = &.{"3.0.0"} },
+        .{ .range = "1.2.3 - 2.0.0 || 3.0.0", .canonical = ">=1.2.3 <=2.0.0 || 3.0.0", .matching = &.{ "2.0.0", "3.0.0" }, .non_matching = &.{ "2.0.1", "2.9.9" } },
+        .{ .range = "1.2 - 2", .canonical = ">=1.2.0 <3.0.0-0", .matching = &.{"2.9.9"}, .non_matching = &.{"3.0.0"} },
+        .{ .range = "^ = 1.2.3", .canonical = ">=1.2.3 <2.0.0-0", .matching = &.{"1.9.9"}, .non_matching = &.{"2.0.0"} },
+        .{ .range = "~ =v1.2.3", .canonical = ">=1.2.3 <1.3.0-0", .matching = &.{"1.2.9"}, .non_matching = &.{"1.3.0"} },
+        .{ .range = "< =1.2", .canonical = "<1.3.0-0", .matching = &.{"1.2.9"}, .non_matching = &.{"1.3.0"} },
+        .{ .range = "< =1.2.3", .canonical = "<=1.2.3", .matching = &.{"1.2.3"}, .non_matching = &.{"1.2.4"} },
+        .{ .range = "> =1.2", .canonical = ">=1.2.0", .matching = &.{"1.2.0"}, .non_matching = &.{"1.1.9"} },
+        .{ .range = "> =v1.2.3", .canonical = ">=1.2.3", .matching = &.{"1.2.3"}, .non_matching = &.{"1.2.2"} },
+        .{ .range = "^9007199254740990.0.0", .canonical = ">=9007199254740990.0.0 <9007199254740991.0.0-0", .matching = &.{"9007199254740990.0.0"}, .non_matching = &.{"9007199254740991.0.0"} },
+        .{ .range = "~9007199254740991.0.0", .canonical = ">=9007199254740991.0.0 <9007199254740991.1.0-0", .matching = &.{"9007199254740991.0.9"}, .non_matching = &.{"9007199254740991.1.0"} },
+        .{ .range = "1.9007199254740990", .canonical = ">=1.9007199254740990.0 <1.9007199254740991.0-0", .matching = &.{"1.9007199254740990.9"}, .non_matching = &.{"1.9007199254740991.0"} },
+        .{ .range = "9007199254740990.x", .canonical = ">=9007199254740990.0.0 <9007199254740991.0.0-0", .matching = &.{"9007199254740990.9.9"}, .non_matching = &.{"9007199254740991.0.0"} },
+        .{ .range = "1.x.9007199254740992", .canonical = ">=1.0.0 <2.0.0-0", .matching = &.{"1.5.0"}, .non_matching = &.{"2.0.0"} },
+        .{ .range = "*.1.9007199254740992", .canonical = "*", .matching = &.{"9.9.9"} },
+        .{ .range = "1.x.999999999999999999999999", .canonical = ">=1.0.0 <2.0.0-0", .matching = &.{"1.5.0"} },
+        .{ .range = "1.x.9007199254740992-alpha", .canonical = ">=1.0.0 <2.0.0-0", .matching = &.{"1.5.0"}, .non_matching = &.{"1.5.0-alpha"} },
+        .{ .range = "*.1.999999999999999999999999", .canonical = "*", .matching = &.{"9.9.9"} },
+        .{ .range = "\u{00A0}^1.2.3\u{00A0}", .canonical = ">=1.2.3 <2.0.0-0", .matching = &.{"1.9.9"}, .non_matching = &.{"2.0.0"} },
+        .{ .range = ">= \u{00A0}1.2.3", .canonical = ">=1.2.3", .matching = &.{"1.2.3"}, .non_matching = &.{"1.2.2"} },
+        .{ .range = "1.2.3\u{00A0}-\u{00A0}2.0.0", .canonical = ">=1.2.3 <=2.0.0", .matching = &.{"2.0.0"}, .non_matching = &.{"2.0.1"} },
+        .{ .range = "^1.2.3\u{00A0}||\u{3000}2.0.0", .canonical = ">=1.2.3 <2.0.0-0 || 2.0.0", .matching = &.{ "1.9.9", "2.0.0" }, .non_matching = &.{"2.0.1"} },
+        .{ .range = "\u{FEFF}~1.2.3\u{FEFF}", .canonical = ">=1.2.3 <1.3.0-0", .matching = &.{"1.2.9"}, .non_matching = &.{"1.3.0"} },
+    };
+    for (cases) |case| {
+        var range = try Range.parseNodeSemver(allocator, case.range);
+        defer range.deinit(allocator);
+        const rendered = try renderNodeRange(allocator, range);
+        defer allocator.free(rendered);
+        try std.testing.expectEqualStrings(case.canonical, rendered);
+        for (case.matching) |text| {
+            try std.testing.expect(range.satisfies(try Version.parse(text)));
+        }
+        for (case.non_matching) |text| {
+            try std.testing.expect(!range.satisfies(try Version.parse(text)));
+        }
+    }
+
+    for ([_][]const u8{
+        "1.x.5.6",   "*.1.2.3",   "*.*.5.6",   "*.*.*.*",   "*-alpha",    "*.*-alpha",   "x-alpha",           "1-alpha",          "1.2-alpha",        "1.x-alpha",
+        ">=vv1.2.3", ">=v=1.2.3", ">v=1.2.3",  "==v1.2.3",  "v=1.2.3",    "vv1.2.3",     "1.2.3 - 2.0.0 >=1", "1.2.3 - 2.0.0 <3", "<3 1.2.3 - 2.0.0", "1.2.3 - 2.0.0 3.0.0 - 4.0.0",
+        "< = 1.2.3", "> = 1.2.3", ">= =1.2.3", "> ==1.2.3", "~> = 1.2.3", "^ v = 1.2.3",
+    }) |text| {
+        try std.testing.expectError(error.InvalidRange, Range.parseNodeSemver(allocator, text));
+    }
+
+    for ([_][]const u8{
+        "^9007199254740991.0.0", "^9007199254740991",  "~9007199254740991",        "9007199254740991",
+        "1.9007199254740991",    "9007199254740991.x", "1.2.3 - 9007199254740991", "1.x.05",
+        "^1.2.3\u{0085}",        "^1.2.3\u{200B}",
+    }) |text| {
+        try std.testing.expectError(error.InvalidRange, Range.parseNodeSemver(allocator, text));
+    }
+
+    // 旧内部 API は既存の厳格な wildcard 規則を保つ。
+    for ([_][]const u8{ "1.x.5", "*.1", "*.*.*-alpha", "1.x.5-alpha", ">1.x.5" }) |text| {
+        try std.testing.expectError(error.InvalidRange, Range.parse(allocator, text));
+    }
+}
+
+test "node-semver mode でも ID-07 の caret 上限を維持する" {
+    const allocator = std.testing.allocator;
+    var range = try Range.parseNodeSemver(allocator, "^1.2.3 >=2.0.0-alpha.1");
+    defer range.deinit(allocator);
+    try std.testing.expect(!range.satisfies(try Version.parse("2.0.0-alpha.2")));
+    var caret = try Range.parseNodeSemver(allocator, "^1.2.3");
+    defer caret.deinit(allocator);
+    try std.testing.expect(caret.satisfies(try Version.parse("1.9.0")));
+    try std.testing.expect(!caret.satisfies(try Version.parse("2.0.0-alpha.0")));
+}
+
+test "v1 入口は不正UTF-8を拒否し、有効なUnicode空白と数値境界を維持する" {
+    const allocator = std.testing.allocator;
+    for ([_][]const u8{
+        "\xE3\x81", // 3バイト文字の末尾2バイト
+        "\xF0\x9F", // 4バイト文字の末尾2バイト
+        "\xFF", // 不正な先頭バイト
+        "\x80", // 孤立した継続バイト
+        "^1.2.3\xE3\x81", // 有効な範囲 + 末尾途切れ
+        "\u{00A0}^1.2.3\xE3\x81", // 有効な空白 + 末尾途切れ
+    }) |text| {
+        try std.testing.expectError(error.InvalidRange, Range.parseNodeSemver(allocator, text));
+    }
+
+    // 有効な ECMAScript 空白は引き続き受理する。
+    var spaced = try Range.parseNodeSemver(allocator, "\u{00A0}^1.2.3\u{00A0}");
+    defer spaced.deinit(allocator);
+    try std.testing.expect(spaced.satisfies(try Version.parse("1.9.9")));
+    try std.testing.expect(spaced.satisfies(try Version.parse("1.2.3")));
+    try std.testing.expect(!spaced.satisfies(try Version.parse("2.0.0")));
+
+    // MAX_SAFE_INTEGER 前後の上限判定を維持する。
+    try std.testing.expectError(error.InvalidRange, Range.parseNodeSemver(allocator, "^9007199254740991.0.0"));
+    var max_ok = try Range.parseNodeSemver(allocator, "^9007199254740990.0.0");
+    defer max_ok.deinit(allocator);
+    try std.testing.expect(max_ok.satisfies(try Version.parse("9007199254740990.0.0")));
+    try std.testing.expect(!max_ok.satisfies(try Version.parse("9007199254740991.0.0")));
+
+    // legacy は従来の経路のまま。不正バイトでも panic せず InvalidRange。
+    try std.testing.expectError(error.InvalidRange, Range.parse(allocator, "\xE3\x81"));
 }

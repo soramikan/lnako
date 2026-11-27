@@ -10,6 +10,36 @@ const effective = @import("module_graph_effective.zig");
 const variants = @import("module_graph_variants.zig");
 const builtin_catalog = @import("builtin_catalog.zig");
 
+const graph_js = @import("module_graph_js.zig");
+const graph_paths = @import("module_graph_paths.zig");
+const graph_expansion = @import("module_graph_expansion.zig");
+const graph_naming = @import("module_graph_naming.zig");
+
+// 分割先の実装を同じ名前で参照できるようにする（呼出し側の意味は変えない）。
+const JavaScriptScan = graph_js.JavaScriptScan;
+const collectJavaScriptImports = graph_js.collectJavaScriptImports;
+const normalizePath = graph_paths.normalizePath;
+const isNativePluginExtension = graph_paths.isNativePluginExtension;
+const isPackageSpecifier = graph_paths.isPackageSpecifier;
+const ResolvedImport = graph_paths.ResolvedImport;
+const resolveRequestedImport = graph_paths.resolveRequestedImport;
+const pathWithinRoot = graph_paths.pathWithinRoot;
+const moduleIsPackageContent = graph_paths.moduleIsPackageContent;
+const descendantInheritance = graph_paths.descendantInheritance;
+const resolveImport = graph_paths.resolveImport;
+const ModeState = graph_expansion.ModeState;
+pub const orMode = graph_expansion.orMode;
+pub const modeEql = graph_expansion.modeEql;
+const modeSubset = graph_expansion.modeSubset;
+const buildExpansion = graph_expansion.buildExpansion;
+const expandModule = graph_expansion.expandModule;
+const effectiveImportTarget = graph_expansion.effectiveImportTarget;
+const isNativeBuiltinPlugin = graph_expansion.isNativeBuiltinPlugin;
+const collectImports = graph_expansion.collectImports;
+const uniqueInternalModuleName = graph_naming.uniqueInternalModuleName;
+pub const extensionForcedMode = graph_naming.extensionForcedMode;
+const rangeFunctionExported = graph_naming.rangeFunctionExported;
+
 pub const SourceProvider = struct {
     context: *anyopaque,
     readFn: *const fn (context: *anyopaque, allocator: std.mem.Allocator, path: []const u8) anyerror![]u8,
@@ -35,6 +65,13 @@ pub const DeclaredCommand = declared_types.DeclaredCommand;
 pub const DeclaredCommands = declared_types.DeclaredCommands;
 const PackageCommandAlias = declared_types.PackageCommandAlias;
 
+/// `global` 入口の命令を無修飾名で解決するための alias。
+/// runtime の登録名は loader が取り込み先 module の実効名から組み立てる
+/// （source package は衝突回避後の公開 module 名、plugin は dispatch 名）。
+pub const GlobalCommand = struct {
+    name: []const u8,
+};
+
 /// PackageResolver returns all fields allocated from its supplied allocator;
 /// the loader retains them in its graph arena.
 pub const ResolvedPackageImport = struct {
@@ -57,6 +94,11 @@ pub const ResolvedPackageImport = struct {
     /// export names may contain `/` (`pkg:x` export `api/v1` would be
     /// misattributed to `pkg:x/api` by trailing-slash parsing).
     package_owner: ?[]const u8 = null,
+    /// Resolver が選んだ公開サブパス。入口別宣言索引の選択に使う。
+    export_subpath: ?[]const u8 = null,
+    /// `global` binding の入口が公開する命令。空は scoped のみ。
+    /// 呼出し側 allocator 所有で、loader は graph arena に保持する。
+    global_commands: []const GlobalCommand = &.{},
 };
 
 /// Lock/environment-backed package specifier resolver. The callback returns the
@@ -81,12 +123,20 @@ pub const PackageResolver = struct {
 /// `command_inspect.DeclaredIndex` が行い、module graph は lifecycle だけを持つ。
 pub const DeclaredCommandsProvider = struct {
     context: *anyopaque,
-    lookupFn: *const fn (context: *anyopaque, allocator: std.mem.Allocator, package_owner: []const u8) anyerror!?DeclaredCommands,
+    /// package 単位の従来索引。入口解決では `exportLookupFn` を優先する。
+    lookupFn: ?*const fn (context: *anyopaque, allocator: std.mem.Allocator, package_owner: []const u8) anyerror!?DeclaredCommands = null,
+    /// 選択された入口の索引。返却スライスは `analyzeModules` 中有効。
+    exportLookupFn: ?*const fn (context: *anyopaque, allocator: std.mem.Allocator, package_owner: []const u8, export_subpath: ?[]const u8) anyerror!?DeclaredCommands = null,
 
-    /// 返却スライスは少なくとも `analyzeModules` の実行中は有効であること
-    /// （provider/index 所有でも graph の arena 所有でもよい）。
     pub fn lookup(self: DeclaredCommandsProvider, allocator: std.mem.Allocator, package_owner: []const u8) !?DeclaredCommands {
-        return self.lookupFn(self.context, allocator, package_owner);
+        const lookup_fn = self.lookupFn orelse return null;
+        return lookup_fn(self.context, allocator, package_owner);
+    }
+
+    /// 入口別 provider があれば優先し、無い場合だけ package 単位へ戻る。
+    pub fn lookupExport(self: DeclaredCommandsProvider, allocator: std.mem.Allocator, package_owner: []const u8, export_subpath: ?[]const u8) !?DeclaredCommands {
+        if (self.exportLookupFn) |lookup_fn| return lookup_fn(self.context, allocator, package_owner, export_subpath);
+        return self.lookup(allocator, package_owner);
     }
 };
 
@@ -209,6 +259,11 @@ pub const Import = struct {
     /// 循環再展開コピーが文脈モードの別パースを要する場合の、
     /// 対象モジュール variants 内のindex。
     variant: ?u32 = null,
+    /// この取り込み辺で解決した入口の宣言索引。module を共有しても
+    /// 辺ごとの入口宣言を混同しない。
+    declared_commands: ?DeclaredCommands = null,
+    /// この取り込み辺が `global` 入口なら、無修飾で解決する命令 alias。
+    global_commands: []const GlobalCommand = &.{},
 };
 
 /// 循環取り込みの再展開コピー。公式は循環取り込み位置で有効だった
@@ -397,6 +452,7 @@ pub const ModuleGraph = struct {
             var allows_dynamic_commands = false;
             var allows_dynamic_commands_from: usize = std.math.maxInt(usize);
             var dynamic_command_aliases: std.ArrayList(analyzer.DynamicCommandAlias) = .empty;
+            var global_command_aliases: std.ArrayList(analyzer.GlobalCommandAlias) = .empty;
             for (module.imports) |item| if (item.target) |target| {
                 const target_module = self.modules[target];
                 if (target_module.kind == .native_plugin or target_module.kind == .javascript) {
@@ -487,6 +543,55 @@ pub const ModuleGraph = struct {
                         allows_dynamic_commands_from = @min(allows_dynamic_commands_from, item.span.start);
                     }
                 }
+                // `global` binding の入口は命令名を無修飾で解決する。
+                // source package の関数は内部 namespace の実シンボルへ直接
+                // 束縛する（runtime 登録名は内部 namespace で組み立てられる）。
+                // plugin は従来どおり登録 dispatch 名へ exact alias で結び付ける。
+                if (item.global_commands.len > 0) {
+                    const source_target = item.target != null and target_module.kind == .nako3;
+                    const dispatch_prefix = if (source_target)
+                        internal_module_names[target]
+                    else
+                        item.dispatch_namespace orelse item.namespace orelse "";
+                    for (item.global_commands) |global| {
+                        if (source_target) {
+                            const target_input = loader_to_input[target];
+                            var listed = false;
+                            for (global_command_aliases.items) |existing| {
+                                if (existing.target_module == target_input and
+                                    std.mem.eql(u8, existing.name, global.name) and
+                                    std.mem.eql(u8, existing.internal_namespace, internal_module_names[target]))
+                                {
+                                    listed = true;
+                                    break;
+                                }
+                            }
+                            if (!listed) try global_command_aliases.append(temp, .{
+                                .name = try temp.dupe(u8, global.name),
+                                .internal_namespace = internal_module_names[target],
+                                .target_module = target_input,
+                                .import_position = item.span.start,
+                            });
+                        }
+                        const dispatch_name = try std.fmt.allocPrint(temp, "{s}__{s}", .{ dispatch_prefix, global.name });
+                        var listed = false;
+                        for (dynamic_command_aliases.items) |existing| {
+                            if (existing.exact and
+                                std.mem.eql(u8, existing.source_namespace, global.name) and
+                                std.mem.eql(u8, existing.dispatch_namespace, dispatch_name))
+                            {
+                                listed = true;
+                                break;
+                            }
+                        }
+                        if (!listed) try dynamic_command_aliases.append(temp, .{
+                            .source_namespace = try temp.dupe(u8, global.name),
+                            .dispatch_namespace = dispatch_name,
+                            .import_position = item.span.start,
+                            .exact = true,
+                        });
+                    }
+                }
                 // 実効辺のみ取り込み位置での実行対象になる
                 if (item.effective and target_module.kind == .nako3) {
                     try import_entries.append(temp, .{
@@ -536,7 +641,7 @@ pub const ModuleGraph = struct {
                 try package_command_aliases.append(temp, .{
                     .source_namespace = source_namespace,
                     .import_position = item.span.start,
-                    .declared = self.modules[target].declared_commands,
+                    .declared = item.declared_commands,
                     .target_module = if (self.modules[target].kind == .nako3) blk: {
                         std.debug.assert(target < loader_to_input.len);
                         break :blk loader_to_input[target];
@@ -615,6 +720,7 @@ pub const ModuleGraph = struct {
                 .allows_dynamic_commands_from = if (allows_dynamic_commands_from == std.math.maxInt(usize)) 0 else allows_dynamic_commands_from,
                 .dynamic_command_aliases = try dynamic_command_aliases.toOwnedSlice(temp),
                 .is_package = moduleIsPackageContent(module),
+                .global_command_aliases = try global_command_aliases.toOwnedSlice(temp),
                 .package_command_aliases = try package_command_aliases.toOwnedSlice(temp),
                 .expands_in_function = module.expands_in_function,
                 .owns_scoped_namespace_collision = owns_scoped_namespace_collision,
@@ -632,45 +738,6 @@ pub const ModuleGraph = struct {
         return analyzer.analyzeModules(allocator, inputs.items);
     }
 };
-
-fn uniqueInternalModuleName(
-    allocator: std.mem.Allocator,
-    modules: []*LoadedModule,
-    internal_names: []const []const u8,
-    assigned: []const bool,
-    module_index: u32,
-    base_name: []const u8,
-    kind: []const u8,
-) std.mem.Allocator.Error![]const u8 {
-    var attempt: usize = 0;
-    while (true) : (attempt += 1) {
-        const candidate = if (attempt == 0)
-            try std.fmt.allocPrint(allocator, "{s}__lnako_{s}_{d}", .{ base_name, kind, module_index })
-        else
-            try std.fmt.allocPrint(allocator, "{s}__lnako_{s}_{d}_{d}", .{ base_name, kind, module_index, attempt });
-        var collision = false;
-        for (modules) |other| {
-            if (other.index == module_index) continue;
-            if (std.mem.eql(u8, candidate, other.name) or
-                (assigned[other.index] and std.mem.eql(u8, candidate, internal_names[other.index])))
-            {
-                collision = true;
-                break;
-            }
-        }
-        if (!collision) return candidate;
-    }
-}
-
-/// パスの拡張子が強制するDNCL方言モード（.dncl→dncl、.dncl2→dncl2、大小文字無視）。
-/// CLI強制フラグとの競合検査（埋め込み実行ファイル生成時の事前検査など）に使う。
-pub fn extensionForcedMode(path: []const u8) token_mod.Mode {
-    const extension = std.fs.path.extension(path);
-    return .{
-        .dncl = std.ascii.eqlIgnoreCase(extension, ".dncl"),
-        .dncl2 = std.ascii.eqlIgnoreCase(extension, ".dncl2"),
-    };
-}
 
 pub fn load(backing_allocator: std.mem.Allocator, entry_path: []const u8, provider: SourceProvider, options: Options) !ModuleGraph {
     var arena = std.heap.ArenaAllocator.init(backing_allocator);
@@ -719,20 +786,6 @@ pub fn load(backing_allocator: std.mem.Allocator, entry_path: []const u8, provid
     };
 }
 
-// 循環コピー変体・関数内展開の構築は module_graph_variants.zig へ分離している
-// （サイズガードレール対応）。Loaderの状態を共有するためpubで公開する。
-/// 裸名で取り込める『範囲』の定義を探す。関数の登録はAnalyzerと同じく後勝ち。
-fn rangeFunctionExported(node: *const ast.Node) ?bool {
-    if (node.kind == .import) return null;
-    var index = node.children.len;
-    while (index > 0) {
-        index -= 1;
-        if (rangeFunctionExported(node.children[index])) |exported| return exported;
-    }
-    return if ((node.kind == .function_definition or node.kind == .test_definition) and
-        std.mem.eql(u8, node.name, "範囲")) node.is_export else null;
-}
-
 pub const Loader = struct {
     backing_allocator: std.mem.Allocator,
     allocator: std.mem.Allocator,
@@ -758,7 +811,7 @@ pub const Loader = struct {
     /// Package context a resolved import edge carries into the loaded module.
     /// For canonical exports `root` comes from the resolver; for relative
     /// descendants both fields propagate from the importing package module.
-    const PackageInheritance = struct {
+    pub const PackageInheritance = struct {
         root: ?[]const u8 = null,
         owner: ?[]const u8 = null,
     };
@@ -1002,7 +1055,9 @@ pub const Loader = struct {
             for (import_nodes.items) |node| {
                 const resolved_import = resolveRequestedImport(self.allocator, path, module.package_owner, node.value, self.options.package_resolver) catch |err| {
                     if (err == error.OutOfMemory) return err;
-                    const message = if (isPackageSpecifier(node.value))
+                    const message = if (err == error.GlobalCommandsNotAllowed)
+                        "global 命令の許可がありません（宣言元の依存に allow_global_commands = true を指定してください）"
+                    else if (isPackageSpecifier(node.value))
                         "パッケージ参照を解決できません（同期済み環境・公開export・aliasを確認してください）"
                     else
                         "相対取り込みパスが不正です";
@@ -1055,7 +1110,7 @@ pub const Loader = struct {
                     descendantInheritance(module, resolved_target);
                 const existing = self.findImport(resolved_target, resolved_import.canonical_id, edge_inheritance);
                 const resolved_declared = if (resolved_import.canonical_id != null)
-                    try self.declaredCommandsFor(resolved_import.package_owner)
+                    try self.declaredCommandsFor(resolved_import)
                 else
                     null;
                 var target: ?u32 = existing;
@@ -1090,6 +1145,8 @@ pub const Loader = struct {
                     .target = target,
                     .span = node.span,
                     .cyclic = cyclic,
+                    .declared_commands = resolved_declared,
+                    .global_commands = resolved_import.global_commands,
                 });
             }
             module.imports = try imports.toOwnedSlice(self.allocator);
@@ -1098,12 +1155,12 @@ pub const Loader = struct {
         return module.index;
     }
 
-    /// package owner key に対応する宣言命令索引を provider から引く。
+    /// 選択された入口の宣言命令索引を provider から引く。
     /// provider 未設定・非 package 取り込みは null（= 未検査）。
-    fn declaredCommandsFor(self: *Loader, package_owner: ?[]const u8) !?DeclaredCommands {
+    fn declaredCommandsFor(self: *Loader, resolved: ResolvedImport) !?DeclaredCommands {
         const provider = self.options.declared_commands_provider orelse return null;
-        const owner = package_owner orelse return null;
-        return provider.lookup(self.allocator, owner);
+        const owner = resolved.package_owner orelse return null;
+        return provider.lookupExport(self.allocator, owner, resolved.export_subpath);
     }
 
     /// 公式のreplaceRequireStatements相当の実効辺決定は`module_graph_effective.zig`へ
@@ -1282,301 +1339,9 @@ pub const Loader = struct {
     }
 };
 
-const ModeState = enum { unvisited, visiting, done };
-
-pub fn orMode(a: token_mod.Mode, b: token_mod.Mode) token_mod.Mode {
-    return .{
-        .dncl = a.dncl or b.dncl,
-        .dncl2 = a.dncl2 or b.dncl2,
-        .indent = a.indent or b.indent,
-    };
-}
-
-pub fn modeEql(a: token_mod.Mode, b: token_mod.Mode) bool {
-    return a.dncl == b.dncl and a.dncl2 == b.dncl2 and a.indent == b.indent;
-}
-
-/// aのモードbitが全てbに含まれるか
-fn modeSubset(a: token_mod.Mode, b: token_mod.Mode) bool {
-    return (!a.dncl or b.dncl) and (!a.dncl2 or b.dncl2) and (!a.indent or b.indent);
-}
-
-/// 結合ストリーム上の文順位をDFSで構築する。公式の取り込みは先勝ちの
-/// include guard付きトークン置換なので、各モジュールの内容は最初の実効
-/// 取り込み辺の位置に一度だけ展開される。文内部の取り込み文はその文の
-/// 位置に展開されるものとして近似する。
-fn buildExpansion(allocator: std.mem.Allocator, modules: []*LoadedModule, entry: u32) !Expansion {
-    const stmt_ranks = try allocator.alloc([]usize, modules.len);
-    const marker_ranks = try allocator.alloc(usize, modules.len);
-    const visited = try allocator.alloc(bool, modules.len);
-    @memset(visited, false);
-    @memset(marker_ranks, std.math.maxInt(usize));
-    for (modules, 0..) |module, index| {
-        const count: usize = if (module.kind == .nako3 and module.parsed != null and module.parsed.?.root != null)
-            module.parsed.?.root.?.children.len
-        else
-            0;
-        stmt_ranks[index] = try allocator.alloc(usize, count);
-        @memset(stmt_ranks[index], std.math.maxInt(usize));
-    }
-    var rank: usize = 0;
-    try expandModule(allocator, modules, entry, visited, stmt_ranks, marker_ranks, &rank);
-    return .{ .stmt_ranks = stmt_ranks, .marker_ranks = marker_ranks };
-}
-
-fn expandModule(allocator: std.mem.Allocator, modules: []*LoadedModule, index: u32, visited: []bool, stmt_ranks: []const []usize, marker_ranks: []usize, rank: *usize) !void {
-    if (visited[index]) return;
-    visited[index] = true;
-    // 公式は展開先頭にプラグイン名設定マーカーを挿し、modListはその出現順に並ぶ
-    marker_ranks[index] = rank.*;
-    const module = modules[index];
-    if (module.kind != .nako3 or module.parsed == null or module.parsed.?.root == null) return;
-    for (module.parsed.?.root.?.children, 0..) |child, k| {
-        if (effectiveImportTarget(module, child.span.start)) |target| {
-            try expandModule(allocator, modules, target, visited, stmt_ranks, marker_ranks, rank);
-            continue;
-        }
-        stmt_ranks[index][k] = rank.*;
-        rank.* += 1;
-        // 文内部の取り込み文は、その文の直後へ展開されるものとして扱う
-        var nested: std.ArrayList(*ast.Node) = .empty;
-        try collectImports(child, &nested, allocator);
-        for (nested.items) |node| {
-            if (effectiveImportTarget(module, node.span.start)) |target| {
-                try expandModule(allocator, modules, target, visited, stmt_ranks, marker_ranks, rank);
-            }
-        }
-    }
-}
-
-/// 指定位置の取り込み文が実効辺なら取り込み先モジュールのindexを返す。
-fn effectiveImportTarget(module: *LoadedModule, position: usize) ?u32 {
-    for (module.imports) |item| {
-        if (item.span.start == position and item.effective and item.target != null) return item.target;
-    }
-    return null;
-}
-
-fn isNativeBuiltinPlugin(path: []const u8) bool {
-    const basename = std.fs.path.basename(path);
-    const names = [_][]const u8{
-        "plugin_httpserver.mjs",
-        "plugin_httpserver.js",
-        "plugin_markup.mjs",
-        "plugin_markup.js",
-        "plugin_csv.mjs",
-        "plugin_csv.js",
-        "plugin_toml.mjs",
-        "plugin_toml.js",
-        "plugin_caniuse.mjs",
-        "plugin_caniuse.js",
-        "plugin_kansuji.mjs",
-        "plugin_kansuji.js",
-        "plugin_datetime.mjs",
-        "plugin_datetime.js",
-    };
-    for (names) |name| if (std.ascii.eqlIgnoreCase(basename, name)) return true;
-    return false;
-}
-
-fn collectImports(node: *ast.Node, output: *std.ArrayList(*ast.Node), allocator: std.mem.Allocator) !void {
-    if (node.kind == .import) try output.append(allocator, node);
-    for (node.children) |child| try collectImports(child, output, allocator);
-}
-
 const JavaScriptTokenKind = js_scanner.JavaScriptTokenKind;
 const JavaScriptToken = js_scanner.JavaScriptToken;
 const JavaScriptScanner = js_scanner.JavaScriptScanner;
-
-/// `collectJavaScriptImports` の走査結果。
-const JavaScriptScan = struct {
-    imports: [][]const u8,
-    /// 静的に解決できない取り込み指定（非リテラル `import(expr)`、未終了の
-    /// 構造、走査不能なtemplate/interpolation等）が存在する。記録されない
-    /// importは実行時にQuickJS loaderのFS fallbackを通るため、package所有
-    /// moduleでは呼出し側が境界違反として拒否する。
-    has_opaque_dynamic: bool = false,
-    /// escape列を含む取り込み指定が存在する。復号しないと実pathが定まらず
-    /// `pathWithinRoot` 検査をすり抜けるため、所有の有無に関わらず呼出し側
-    /// が診断する（nested loadでのerror黙殺によるsilentな成功を生じさせない）。
-    has_unsupported_escape: bool = false,
-};
-
-/// JS moduleの `import`/`export … from` と動的 `import("…")` のリテラル
-/// 指定を収集する。動的formも収集しないとQuickJS側module loaderがFSへ
-/// fallbackしてpackage rootの外を読み得るため、リテラル指定は静的同様に
-/// 収集対象とする。ただし動的リテラルは `)` または第二引数の `,` で閉じる
-/// ものに限る — `import("a" + expr)` は実行時評価で別の指定になり得るため
-/// 先頭リテラルを記録すると誤った辺と境界検査のすり抜けになる。
-///
-/// `import`/`export` をstatementとして読み進める内側loopは、式中に別の
-/// `import`/`export` tokenを見つけた時点で巻き戻して外側loopへ返す —
-/// `export const p = import('./x')` のような式中の動的formや object key
-/// `{import: 1}` 直後の `import()` が内側のskip処理で消えないようにする。
-/// `.import` のようなメンバ呼出しはJSとしてmoduleを読み込まないため除外し、
-/// 誤ったedge記録とpackage codeの誤拒否を防ぐ。
-fn collectJavaScriptImports(allocator: std.mem.Allocator, source: []const u8) !JavaScriptScan {
-    var scan: JavaScriptScan = .{ .imports = &.{} };
-    var result: std.ArrayList([]const u8) = .empty;
-    var scanner = JavaScriptScanner{ .source = source };
-    // 直前に消費したtokenが `.` か。`o.import(...)` のようなメンバ呼出しを
-    // `import` statement/動的formと誤認しないための判定に使う。
-    var last_was_dot = false;
-    while (scanner.next()) |token| {
-        const dot_member = last_was_dot;
-        last_was_dot = token.kind == .punctuation and std.mem.eql(u8, token.text, ".");
-        if (token.kind != .identifier) continue;
-        const is_import = std.mem.eql(u8, token.text, "import");
-        const is_export = std.mem.eql(u8, token.text, "export");
-        if ((!is_import and !is_export) or dot_member) continue;
-        var saw_from = false;
-        var dynamic = false;
-        var dynamic_literal: ?[]const u8 = null;
-        var first = true;
-        while (true) {
-            const mark = scanner.mark();
-            const candidate = scanner.next() orelse {
-                // 動的formが閉じずにsource終端へ達した場合も記録不能として
-                // 報告する（非package moduleでは従来どおり無視される）。
-                if (dynamic) scan.has_opaque_dynamic = true;
-                break;
-            };
-            const candidate_dot = last_was_dot;
-            last_was_dot = candidate.kind == .punctuation and std.mem.eql(u8, candidate.text, ".");
-            if (dynamic) {
-                if (dynamic_literal == null) {
-                    // `(` 直後はspecifierリテラル文字列のみ受理する。escape
-                    // 列を含む文字列は復号しないと実pathが定まらないため
-                    // 収集せず、診断対象として報告する。
-                    if (candidate.kind == .string) {
-                        if (std.mem.indexOfScalar(u8, candidate.text, '\\') != null) {
-                            scan.has_unsupported_escape = true;
-                            break;
-                        }
-                        dynamic_literal = candidate.text;
-                        continue;
-                    }
-                    scan.has_opaque_dynamic = true;
-                    break;
-                }
-                // リテラル直後は `)`（呼出し終了）か `,`（第二引数=options
-                // object）のみ受理する。`+`・identifier・連続する文字列などは
-                // 式の一部であり、記録済みリテラルは実際の指定と一致しない。
-                // 確定した時点で打ち切る（第二引数はspecifierへ影響しない）。
-                if (candidate.kind == .punctuation and
-                    (std.mem.eql(u8, candidate.text, ")") or std.mem.eql(u8, candidate.text, ",")))
-                {
-                    try result.append(allocator, try allocator.dupe(u8, dynamic_literal.?));
-                    dynamic = false;
-                } else {
-                    scan.has_opaque_dynamic = true;
-                }
-                break;
-            }
-            // 文の内側で別の `import`/`export` を見つけた場合（export式中の
-            // `import()`、object key直後の `import()` 等）、そのtoken自体を
-            // 外側loopで再走査するため巻き戻して内側を抜ける。消費したまま
-            // 進むと式中の動的importが一切記録されない。
-            if (candidate.kind == .identifier and !candidate_dot and
-                (std.mem.eql(u8, candidate.text, "import") or std.mem.eql(u8, candidate.text, "export")))
-            {
-                // `next` の内部で行われたtemplate文脈の遷移（`${` push・
-                // `}` pop・text消費）ごと巻き戻す — indexのみ戻すと文脈
-                // stackが読み位置と不整合になり、後続tokenが誤った文脈で
-                // 解釈されてedgeの取りこぼし・誤拒否が起きる。
-                scanner.restore(mark);
-                break;
-            }
-            if (candidate.kind == .punctuation and std.mem.eql(u8, candidate.text, ";")) break;
-            if (candidate.kind == .punctuation and std.mem.eql(u8, candidate.text, "(")) {
-                // `import("…")` の動的formは先頭tokenとして `(` が来る。
-                if (is_import and first) {
-                    dynamic = true;
-                    first = false;
-                    continue;
-                }
-                break;
-            }
-            if (saw_from) {
-                saw_from = false;
-                if (candidate.kind == .string) {
-                    if (std.mem.indexOfScalar(u8, candidate.text, '\\') != null) {
-                        scan.has_unsupported_escape = true;
-                        break;
-                    }
-                    try result.append(allocator, try allocator.dupe(u8, candidate.text));
-                    break;
-                }
-                // `from` 直後が文字列でない場合はspecifierではない。
-                // そのtokenを通常どおり評価するため後続の判定へ進む。
-            }
-            if (candidate.kind == .identifier and !candidate_dot and std.mem.eql(u8, candidate.text, "from")) {
-                saw_from = true;
-                first = false;
-                continue;
-            }
-            if (candidate.kind != .string) {
-                first = false;
-                continue;
-            }
-            // specifier位置の文字列のみ収集する — `from` 直後か `import "…"`
-            // の文頭form。`export default "./x"` のような値としての文字列を
-            // 辺として記録しない。
-            if (is_import and first) {
-                if (std.mem.indexOfScalar(u8, candidate.text, '\\') != null) {
-                    scan.has_unsupported_escape = true;
-                    break;
-                }
-                try result.append(allocator, try allocator.dupe(u8, candidate.text));
-            }
-            break;
-        }
-    }
-    // source終端までに閉じない文字列・template・interpolationは残りtokenを
-    // 未走査にする — 収集不能なimportが残り得るためopaqueとして報告する。
-    if (scanner.truncated) scan.has_opaque_dynamic = true;
-    scan.imports = try result.toOwnedSlice(allocator);
-    return scan;
-}
-
-fn normalizePath(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
-    return std.fs.path.resolve(allocator, &.{path});
-}
-
-fn isNativePluginExtension(extension: []const u8) bool {
-    return std.ascii.eqlIgnoreCase(extension, ".dylib") or
-        std.ascii.eqlIgnoreCase(extension, ".so") or
-        std.ascii.eqlIgnoreCase(extension, ".dll");
-}
-
-fn isPackageSpecifier(requested: []const u8) bool {
-    return std.mem.startsWith(u8, requested, "パッケージ:") or std.mem.startsWith(u8, requested, "pkg:");
-}
-
-const ResolvedImport = struct {
-    path: []u8,
-    canonical_id: ?[]const u8 = null,
-    namespace: ?[]const u8 = null,
-    dispatch_namespace: ?[]const u8 = null,
-    package_root: ?[]const u8 = null,
-    package_owner: ?[]const u8 = null,
-};
-
-fn resolveRequestedImport(allocator: std.mem.Allocator, importer: []const u8, importer_owner: ?[]const u8, requested: []const u8, package_resolver: ?PackageResolver) !ResolvedImport {
-    if (!isPackageSpecifier(requested)) return .{ .path = try resolveImport(allocator, importer, requested) };
-    const resolver = package_resolver orelse return error.PackageResolverUnavailable;
-    const selected = try resolver.resolve(allocator, importer, importer_owner, requested);
-    return .{ .path = try normalizePath(allocator, selected.path), .canonical_id = selected.canonical_id, .namespace = selected.namespace, .dispatch_namespace = selected.dispatch_namespace, .package_root = selected.package_root, .package_owner = selected.package_owner };
-}
-
-/// Lexical containment of `path` strictly inside `root`. Both sides are
-/// canonicalized or lexically resolved before comparison by the callers.
-fn pathWithinRoot(root: []const u8, path: []const u8) bool {
-    // 空rootは任意pathのprefixに一致して境界を無効化するため拒否する。
-    if (root.len == 0) return false;
-    if (!std.mem.startsWith(u8, path, root) or path.len <= root.len) return false;
-    return path[root.len] == std.fs.path.sep;
-}
 
 /// package 境界検査用の比較対象 path。provider が canonicalize を供給する
 /// 環境（実 FS）では in-root symlink が指す実体まで解決してから
@@ -1606,28 +1371,6 @@ fn containmentTarget(self: *Loader, lexical: []const u8) ![]const u8 {
         }
     }
     return lexical;
-}
-
-/// canonical export・相対子孫を含むpackage所有のmoduleか。owner key未設定でも
-/// package root内のmoduleは外部から修飾名で到達させないpackage内容とする。
-fn moduleIsPackageContent(module: *const LoadedModule) bool {
-    return module.canonical_id != null or module.package_owner != null or module.package_root != null;
-}
-
-/// Ownership a package module passes to a relative descendant that stays inside
-/// its canonical root. Unrooted importers and escaped paths propagate nothing.
-/// owner が無いmodule（旧formatのembedded payload等）でもrootは継承する —
-/// 継承を失うと孫module以降のcanonical root包含検査が丸ごと消えるため。
-fn descendantInheritance(module: *LoadedModule, path: []const u8) ?Loader.PackageInheritance {
-    const root = module.package_root orelse return null;
-    if (!pathWithinRoot(root, path)) return null;
-    return .{ .root = root, .owner = module.package_owner };
-}
-
-fn resolveImport(allocator: std.mem.Allocator, importer: []const u8, requested: []const u8) ![]u8 {
-    if (std.mem.indexOfScalar(u8, requested, ':') != null and !std.fs.path.isAbsolute(requested)) return error.UnsupportedImport;
-    if (std.fs.path.isAbsolute(requested)) return normalizePath(allocator, requested);
-    return std.fs.path.resolve(allocator, &.{ std.fs.path.dirname(importer) orelse ".", requested });
 }
 
 test {

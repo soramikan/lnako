@@ -1,22 +1,34 @@
 #!/usr/bin/env node
-// `パッケージ:` / `pkg:` 取り込みの cnako/lnako 共通fixture比較（#210）。
+// `パッケージ:` / `pkg:` 取り込みの cnako/lnako 共通fixture比較（#210、v1）。
 //
-// 同一のfixtureソースを、lnako Interpreterと公式cnako3 v3.7.24の両方で実行し、
-// 観測stdoutが期待値と一致することを確認する。公式cnako3は `パッケージ:`
-// 構文を持たないため、仕様 §7.3 の委譲契約（環境は `lnako sync --json`、
-// cnakoはenvironment.jsonのalias対応だけを使う）を
-// tools/lib/package/cnako_package_loader.mjs でadapter化して接続する。
-// このadapterはfixtureソースを書き換えず、公式cnako3のresolvePathだけを
-// 差し替える。cnako本体への実装（#61）と上流公開リリースは別ゲート。
+// lnako 側は仕様 v1 の manifest と `.npkg` だけを使う。script が
+// `lnako package build` で各パッケージを pack し、実 SHA-256/サイズから
+// 静的ローカル index（`--v1-fixture`）を作って `lnako sync` する。
+// 旧 `[dependencies.path]`・旧 manifest・旧 lock は使わない。
+//
+// 公式 cnako3 v3.7.24 は `パッケージ:` 構文を持たないため、v1 で
+// materialize された package source を、テスト用 adapter
+// `tools/lib/package/cnako_package_loader.mjs` 経由で実行する。adapter は
+// `lnako sync --json` の v1 environment と `nako.lock`（JSON）だけを読み、
+// package の解決・構文解析・名前空間・実行は公式 cnako3 が行う。
+// fixture source 自体は書き換えない。
 //
 // 拒否系は両処理系が同じfixtureを拒否することを確認する（診断文言の一致は
-// 要求せず、処理系ごとの診断tokenをexpect.jsonで指定する）。
+// 要求せず、処理系ごとの診断tokenをexpect.jsonで指定する）。v1 では
+// symlink を含む package を pack できないため、その1件だけは
+// `lnako package build` の拒否として検査する。
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  buildArtifact,
+  registryUrl,
+  syncProject,
+  writeStaticIndex,
+} from "./lib/package/v1_static_fixture.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const fixtureRoot = path.join(root, "tests", "fixtures", "package-common");
@@ -24,6 +36,20 @@ const loader = path.join(root, "tools", "lib", "package", "cnako_package_loader.
 const executableSuffix = process.platform === "win32" ? ".exe" : "";
 const executable = path.join(root, "zig-out", "bin", `lnako${executableSuffix}`);
 const ansiPattern = /\u001b\[[0-9;]*m/g;
+
+// fixture の package source と index の対応。id/version/license は
+// 各 nako.toml と一致させる。artifact 名は fixture 内で一意にする。
+const packageSources = [
+  { id: "@example/demo", version: "1.0.0", license: "MIT", source: "packages/demo", artifactName: "demo.npkg" },
+  { id: "@example/util", version: "1.0.0", license: "MIT", source: "packages/util", artifactName: "util.npkg" },
+  {
+    id: "@example/scope-demo",
+    version: "1.0.0",
+    license: "MIT",
+    source: "reject-scope-alias/demo",
+    artifactName: "scope-demo.npkg",
+  },
+];
 
 function fail(message) {
   throw new Error(`package import共通fixture検査: ${message}`);
@@ -81,17 +107,12 @@ function createWorkDir() {
   fail("作業ディレクトリを作成できません");
 }
 
-function copyFixture(destination, options = {}) {
-  fs.cpSync(fixtureRoot, destination, {
-    recursive: true,
-    filter: options.excludeRejects
-      ? (source) => path.basename(source) !== "reject-symlink-escape" && !path.basename(source).startsWith("reject-")
-      : undefined,
-  });
+function copyFixture(destination) {
+  fs.cpSync(fixtureRoot, destination, { recursive: true });
 }
 
 // 委譲loaderがfixtureソースを書き換えていないことを、ツリー全体で固定する
-// （準備物 `.nako/` と `nako.lock` は実行時の生成物なので除外）。
+// （v1 の `.nako/` と `nako.lock` は実行時の生成物なので除外）。
 function snapshotTree(directory) {
   const snapshot = {};
   const walk = (current, prefix) => {
@@ -122,30 +143,53 @@ function readExpected() {
   return text;
 }
 
-function runLoader(app, oracle) {
-  return run(process.execPath, [
+/**
+ * fixture の複製から、v1 の静的 index と `.npkg` を work 内に作る。
+ * 戻り値は `lnako sync --v1-fixture` に渡す root。
+ */
+function prepareStaticFixture(fixtureCopy, work) {
+  const fixture = path.join(work, "registry");
+  const artifactBuildDir = path.join(work, "artifacts");
+  fs.mkdirSync(artifactBuildDir, { recursive: true });
+  const packages = [];
+  for (const packageSource of packageSources) {
+    const sourceDir = path.join(fixtureCopy, packageSource.source);
+    if (!fs.existsSync(sourceDir)) fail(`package sourceがありません: ${sourceDir}`);
+    const output = path.join(artifactBuildDir, packageSource.artifactName);
+    const built = buildArtifact(executable, sourceDir, output, work);
+    packages.push({ ...packageSource, ...built });
+  }
+  writeStaticIndex(fixture, packages);
+  return fixture;
+}
+
+function runLoader(app, oracle, v1Fixture, noSync = false) {
+  const args = [
     loader,
     "--root", app,
     "--entry", "main.nako3",
     "--oracle", oracle,
     "--lnako", executable,
-  ], { cwd: app });
+    "--v1-fixture", v1Fixture,
+    "--registry", registryUrl,
+  ];
+  if (noSync) args.push("--no-sync");
+  return run(process.execPath, args, { cwd: app });
 }
 
 function ensureExecutable() {
   if (!fs.existsSync(executable)) fail(`lnako実行ファイルがありません: ${executable}`);
 }
 
-function checkAccept(work, oracle, expected) {
-  const fixture = path.join(work, "package-common");
-  copyFixture(fixture, { excludeRejects: true });
-  const app = path.join(fixture, "app");
+function checkAccept(work, oracle, expected, v1Fixture) {
+  const app = path.join(work, "package-common", "app");
 
-  const lnako = run(executable, ["run", "main.nako3"], { cwd: app });
+  syncProject(executable, app, v1Fixture);
+  const lnako = run(executable, ["run", "--no-sync", "main.nako3"], { cwd: app });
   if (lnako.status !== 0) fail(`lnako Interpreterが失敗しました\n${lnako.stderr}`);
   if (lnako.stdout !== expected) fail(`lnako Interpreterの観測結果が期待値と一致しません\n期待:\n${expected}\n実際:\n${lnako.stdout}`);
 
-  const cnako = runLoader(app, oracle);
+  const cnako = runLoader(app, oracle, v1Fixture);
   if (cnako.status !== 0) fail(`公式cnako3（委譲loader経由）が失敗しました\n${cnako.stderr}`);
   if (cnako.stdout !== expected) fail(`公式cnako3（委譲loader経由）の観測結果が期待値と一致しません\n期待:\n${expected}\n実際:\n${cnako.stdout}`);
   if (lnako.stdout !== cnako.stdout) fail(`lnakoとcnakoのstdoutが一致しません\nlnako:\n${lnako.stdout}\ncnako:\n${cnako.stdout}`);
@@ -156,15 +200,8 @@ function checkAccept(work, oracle, expected) {
     fail("委譲loaderがfixtureソースを書き換えています");
   }
 
-  // 仕様 §7.3 の `--no-sync`（準備済み環境の単独検証）でも同じ出力になること。
-  const noSync = run(process.execPath, [
-    loader,
-    "--root", app,
-    "--entry", "main.nako3",
-    "--oracle", oracle,
-    "--lnako", executable,
-    "--no-sync",
-  ], { cwd: app });
+  // 準備済み v1 環境の単独検証でも同じ出力になること。
+  const noSync = runLoader(app, oracle, v1Fixture, true);
   if (noSync.status !== 0) fail(`公式cnako3（--no-sync）が失敗しました\n${noSync.stderr}`);
   if (noSync.stdout !== expected) fail(`公式cnako3（--no-sync）の観測結果が期待値と一致しません\n${noSync.stdout}`);
 
@@ -174,14 +211,7 @@ function checkAccept(work, oracle, expected) {
   const lockBytes = fs.readFileSync(lockPath);
   try {
     fs.appendFileSync(lockPath, "\n");
-    const tampered = run(process.execPath, [
-      loader,
-      "--root", app,
-      "--entry", "main.nako3",
-      "--oracle", oracle,
-      "--lnako", executable,
-      "--no-sync",
-    ], { cwd: app });
+    const tampered = runLoader(app, oracle, v1Fixture, true);
     if (tampered.status === 0) fail("lockを改変した--no-sync実行が成功しました（lockSha256検証が効いていません）");
     if (!tampered.stderr.includes("E034_INVALID_ENVIRONMENT_REFERENCE")) {
       fail(`lock改変時の--no-sync診断にE034_INVALID_ENVIRONMENT_REFERENCEが含まれません\n${tampered.stderr}`);
@@ -193,15 +223,13 @@ function checkAccept(work, oracle, expected) {
   return { lnako: lnako.stdout, cnako: cnako.stdout, noSync: noSync.stdout };
 }
 
-// symlink fixtureはリポジトリへsymlinkをコミットせず、作業コピー上で作る。
-// Windowsのcheckout設定やZIP配布に依存させないため。作成できない環境
+// v1 では package source の symlink は pack 時に拒否される。リポジトリへ
+// symlink をコミットせず、作業コピー上で作る。作成できない環境
 // （symlink権限なし）ではこのケースだけskipし、理由を記録する。
 function prepareSymlinkEscape(directory) {
-  const link = path.join(directory, "demo", "src", "link.nako3");
+  const link = path.join(directory, "bad", "src", "link.nako3");
   const target = path.join("..", "..", "secret.nako3");
   try {
-    // `demo/src/` は空ディレクトリなのでgitに収録されない。clean checkoutでも
-    // symlinkを作れるよう、親ディレクトリを先に作る。
     fs.mkdirSync(path.dirname(link), { recursive: true });
     fs.symlinkSync(target, link, "file");
     return { prepared: true };
@@ -216,22 +244,10 @@ function prepareSymlinkEscape(directory) {
 function readExpectation(directory) {
   const file = path.join(directory, "expect.json");
   if (!fs.existsSync(file)) fail(`expect.jsonがありません: ${directory}`);
-  const expectation = JSON.parse(fs.readFileSync(file, "utf8"));
-  const lnakoDiagnostic = expectation.lnakoDiagnostic ?? expectation.diagnostic;
-  const cnakoDiagnostic = expectation.cnakoDiagnostic ?? expectation.diagnostic;
-  if (typeof lnakoDiagnostic !== "string" || typeof cnakoDiagnostic !== "string") {
-    fail(`診断tokenを文字列で指定してください: ${directory}`);
-  }
-  return {
-    lnakoDiagnostic,
-    cnakoDiagnostic,
-    lnakoDetail: expectation.lnakoDetail ?? null,
-    cnakoDetail: expectation.cnakoDetail ?? null,
-    reason: expectation.reason ?? "",
-  };
+  return JSON.parse(fs.readFileSync(file, "utf8"));
 }
 
-function checkRejections(work, oracle, reported) {
+function checkRejections(work, oracle, v1Fixture, reported) {
   const names = fs.readdirSync(fixtureRoot, { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && entry.name.startsWith("reject-"))
     .map((entry) => entry.name)
@@ -241,32 +257,49 @@ function checkRejections(work, oracle, reported) {
   for (const name of names) {
     const source = path.join(fixtureRoot, name);
     const expectation = readExpectation(source);
+    if (typeof expectation.lnakoDiagnostic !== "string") {
+      fail(`lnakoDiagnosticを文字列で指定してください: ${name}`);
+    }
     const directory = path.join(work, "rejects", name);
     fs.cpSync(source, directory, { recursive: true });
-    if (name === "reject-symlink-escape") {
-      const prepared = prepareSymlinkEscape(directory);
-      if (!prepared.prepared) {
-        skipped.push(`${name}(${prepared.reason})`);
-        continue;
+    const label = expectation.reason.length === 0 ? name : `${name}（${expectation.reason}）`;
+
+    if (expectation.lnakoCommand === "package-build") {
+      if (name === "reject-symlink-escape") {
+        const prepared = prepareSymlinkEscape(directory);
+        if (!prepared.prepared) {
+          skipped.push(`${name}(${prepared.reason})`);
+          continue;
+        }
       }
+      const packageDir = path.join(directory, expectation.package ?? ".");
+      const output = path.join(work, `rejects-${name}${executableSuffix}`);
+      const built = run(executable, ["package", "build", packageDir, "-o", output], { cwd: work });
+      if (built.status === 0) fail(`拒否されるべきpackageがpackで成功しました: ${label}`);
+      if (!built.stderr.includes(expectation.lnakoDiagnostic)) {
+        fail(`packの診断に${expectation.lnakoDiagnostic}が含まれません: ${label}\n${built.stderr}`);
+      }
+      if (fs.existsSync(output)) fail(`拒否されたpackが生成物を残しました: ${label}`);
+      reported.push(`${name}(pack:${expectation.lnakoDiagnostic})`);
+      continue;
     }
 
-    const label = expectation.reason.length === 0 ? name : `${name}（${expectation.reason}）`;
-    const lnako = run(executable, ["run", "main.nako3"], { cwd: directory });
+    syncProject(executable, directory, v1Fixture);
+    const lnako = run(executable, ["run", "--no-sync", "main.nako3"], { cwd: directory });
     if (lnako.status === 0) fail(`拒否されるべきfixtureがlnako Interpreterで成功しました: ${label}`);
     if (!lnako.stderr.includes(expectation.lnakoDiagnostic)) {
       fail(`lnakoの診断に${expectation.lnakoDiagnostic}が含まれません: ${label}\n${lnako.stderr}`);
     }
-    if (expectation.lnakoDetail !== null && !lnako.stderr.includes(expectation.lnakoDetail)) {
+    if (expectation.lnakoDetail !== undefined && !lnako.stderr.includes(expectation.lnakoDetail)) {
       fail(`lnakoの診断に${expectation.lnakoDetail}が含まれません: ${label}\n${lnako.stderr}`);
     }
 
-    const cnako = runLoader(directory, oracle);
+    const cnako = runLoader(directory, oracle, v1Fixture);
     if (cnako.status === 0) fail(`拒否されるべきfixtureが公式cnako3（委譲loader経由）で成功しました: ${label}`);
     if (!cnako.stderr.includes(expectation.cnakoDiagnostic)) {
       fail(`cnako側の診断に${expectation.cnakoDiagnostic}が含まれません: ${label}\n${cnako.stderr}`);
     }
-    if (expectation.cnakoDetail !== null && !cnako.stderr.includes(expectation.cnakoDetail)) {
+    if (expectation.cnakoDetail !== undefined && !cnako.stderr.includes(expectation.cnakoDetail)) {
       fail(`cnako側の診断が${expectation.cnakoDetail}を含みません: ${label}\n${cnako.stderr}`);
     }
     reported.push(`${name}(${expectation.lnakoDiagnostic}/${expectation.cnakoDiagnostic})`);
@@ -292,11 +325,16 @@ function main() {
   const work = createWorkDir();
   console.log(`package import共通fixture検査: 作業ディレクトリ ${work}`);
   try {
-    const outputs = checkAccept(work, oracle, expected);
-    console.log(`package import共通fixture検査: 受理系 ${outputs.lnako.split("\n").filter(Boolean).length}行がlnako/cnako(--no-sync含む)で一致 (${path.basename(oracle)})`);
+    const fixture = path.join(work, "package-common");
+    copyFixture(fixture);
+    const v1Fixture = prepareStaticFixture(fixture, work);
+    console.log(`package import共通fixture検査: v1 index ${v1Fixture}（pack ${packageSources.length}件）`);
+
+    const outputs = checkAccept(work, oracle, expected, v1Fixture);
+    console.log(`package import共通fixture検査: 受理系 ${outputs.lnako.split("\n").filter(Boolean).length}行がlnako/cnako(v1 sync, --no-sync含む)で一致 (${path.basename(oracle)})`);
     const rejections = [];
-    const skipped = checkRejections(work, oracle, rejections);
-    console.log(`package import共通fixture検査: 拒否${rejections.length}件が両処理系で拒否 (${rejections.join(" / ")})`);
+    const skipped = checkRejections(work, oracle, v1Fixture, rejections);
+    console.log(`package import共通fixture検査: 拒否${rejections.length}件 (${rejections.join(" / ")})`);
     for (const name of skipped) console.log(`package import共通fixture検査: skip ${name}`);
     console.log("package import共通fixture検査: 成功");
   } finally {

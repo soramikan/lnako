@@ -1,8 +1,0 @@
-[package]
-name = "greeting"
-version = "1.0.0"
-license = "MIT"
-
-[[exports]]
-name = "main"
-path = "src/index.nako3"

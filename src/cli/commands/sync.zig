@@ -1,15 +1,20 @@
-//! `lnako sync` — プロジェクトを検出して `nako.lock` を最新化した上で、
-//! package を取得・検証して `.nako/` 環境を構築する。`--json` は
-//! `environment.json` と同じバイト列を標準出力へ書く（cnako の委譲呼出し
-//! がそのまま検証に使える）。`--locked` は lock の変更を禁止する。
+//! `lnako sync` — v1 manifest から `nako.lock` と `.nako/v1` 環境を構築する。
+//!
+//! v1 の同期はローカルの固定 fixture（`--v1-fixture <dir>`）を唯一の取得元に
+//! する。旧 manifest・旧 `nako.lock`・旧 `.nako/environment.json` を読み替え
+//! る経路は持たない（仕様 §2、Q12）。旧 manifest は再作成を案内して拒否し、
+//! 旧 lock は `v1_client` が `LegacyLock` として拒否する。
+//!
+//! `--json` は `environment.json` と同じバイト列を標準出力へ書く。
 
 const std = @import("std");
 const lnako = @import("lnako");
 
-const diag = lnako.package.diagnostics;
-const cache = lnako.package.cache;
 const project = lnako.package.project;
-const sync = lnako.package.sync;
+const v1_client = lnako.package.v1_client;
+const v1_types = lnako.package.v1_types;
+const v1_entry = @import("v1_entry.zig");
+const v1_sync = @import("v1_sync.zig");
 
 const CliError = error{ Failed, Usage };
 
@@ -38,31 +43,39 @@ fn flagValue(args: []const []const u8, index: *usize, flag: []const u8, stderr: 
 }
 
 pub fn run(allocator: std.mem.Allocator, io: std.Io, args: []const []const u8, environ_map: ?*const std.process.Environ.Map, stdout: *std.Io.Writer, stderr: *std.Io.Writer) !void {
-    var options = sync.Options{};
-    var json = false;
-    var clean = false;
-    var locked = false;
+    var profile: ?[]const u8 = null;
+    var runtime: ?v1_client.Runtime = null;
     var features: std.ArrayList([]const u8) = .empty;
     defer features.deinit(allocator);
     var no_default_features = false;
     var registry_url: ?[]const u8 = null;
+    var v1_fixture: ?[]const u8 = null;
+    var v1_permissions: std.ArrayList(v1_client.SourcePermission) = .empty;
+    defer v1_permissions.deinit(allocator);
+    var locked = false;
+    var json = false;
+    var root: []const u8 = ".";
     var root_set = false;
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
         const argument = args[index];
         if (std.mem.eql(u8, argument, "--profile")) {
-            options.profile = try flagValue(args, &index, "--profile", stderr);
+            profile = try flagValue(args, &index, "--profile", stderr);
         } else if (std.mem.eql(u8, argument, "--runtime")) {
-            const runtime = try flagValue(args, &index, "--runtime", stderr);
-            if (std.mem.eql(u8, runtime, "lnako")) {
-                options.runtime = .lnako;
-            } else if (std.mem.eql(u8, runtime, "cnako")) {
-                options.runtime = .cnako;
+            const name = try flagValue(args, &index, "--runtime", stderr);
+            if (std.mem.eql(u8, name, "lnako")) {
+                runtime = .lnako;
+            } else if (std.mem.eql(u8, name, "cnako")) {
+                runtime = .cnako;
+            } else if (std.mem.eql(u8, name, "wnako")) {
+                runtime = .wnako;
             } else {
-                return failUsage(stderr, "sync: 不明な runtime です: {s}（lnako|cnako）\n", .{runtime});
+                return failUsage(stderr, "sync: 不明な runtime です: {s}（lnako|cnako|wnako）\n", .{name});
             }
         } else if (std.mem.eql(u8, argument, "--offline")) {
-            options.policy.offline = true;
+            // v1 の取得はローカル fixture だけで完結する。
+        } else if (std.mem.eql(u8, argument, "--v1")) {
+            // v1 は manifest から自動判定する。旧経路を選ぶフラグは持たない。
         } else if (std.mem.eql(u8, argument, "--locked")) {
             locked = true;
         } else if (std.mem.eql(u8, argument, "--features")) {
@@ -76,156 +89,114 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io, args: []const []const u8, e
             no_default_features = true;
         } else if (std.mem.eql(u8, argument, "--registry")) {
             registry_url = try flagValue(args, &index, "--registry", stderr);
+        } else if (std.mem.eql(u8, argument, "--v1-fixture")) {
+            v1_fixture = try flagValue(args, &index, "--v1-fixture", stderr);
+        } else if (std.mem.eql(u8, argument, "--allow-native-source")) {
+            const spec = try flagValue(args, &index, "--allow-native-source", stderr);
+            const equals = std.mem.indexOfScalar(u8, spec, '=') orelse
+                return failUsage(stderr, "sync: --allow-native-source は <id>=<sha256> 形式です\n", .{});
+            const id = spec[0..equals];
+            const hash = spec[equals + 1 ..];
+            if (!v1_types.validId(id) or !v1_types.validHash(hash)) {
+                return failUsage(stderr, "sync: --allow-native-source の ID または SHA-256 が不正です\n", .{});
+            }
+            try v1_permissions.append(allocator, .{ .id = id, .sha256 = hash });
         } else if (std.mem.eql(u8, argument, "--json")) {
             json = true;
         } else if (std.mem.eql(u8, argument, "--package-cache-dir")) {
-            options.cache_root = try flagValue(args, &index, "--package-cache-dir", stderr);
+            _ = try flagValue(args, &index, "--package-cache-dir", stderr);
+            return failUsage(stderr, "sync: v1 では --package-cache-dir を使いません（取得元は --v1-fixture です）\n", .{});
         } else if (std.mem.eql(u8, argument, "--package-cache-clean")) {
-            clean = true;
+            return failUsage(stderr, "sync: v1 では --package-cache-clean を使いません（取得元は --v1-fixture です）\n", .{});
         } else if (std.mem.eql(u8, argument, "--allow-plaintext-http")) {
-            options.policy.allow_plaintext_http = true;
+            return failUsage(stderr, "sync: v1 の取得元検査は HTTPS のみです（--allow-plaintext-http は使いません）\n", .{});
         } else if (std.mem.startsWith(u8, argument, "-")) {
             return failUsage(stderr, "sync: 不明なオプションです: {s}\n", .{argument});
         } else if (!root_set) {
-            options.project_root = argument;
+            root = argument;
             root_set = true;
         } else {
             return failUsage(stderr, "sync: 不明な引数です: {s}\n", .{argument});
         }
     }
 
-    var list = diag.List.init(allocator);
-    defer list.deinit();
+    // プロジェクト検出から lock 公開まで編集 lock を保持し、並行する
+    // 旧コマンドや自動準備と直列化する。v1 クライアント自身は lock を
+    // 取らないため、ここで pin 済み root handle を渡す。
+    const project_root = project.findRoot(allocator, io, root) catch |err| {
+        return fail(stderr, "sync: プロジェクトルートを探索できません: {s}\n", .{@errorName(err)});
+    } orelse return fail(stderr, "sync: nako.toml が見つかりません（v1 プロジェクトのルートで実行してください）: {s}\n", .{root});
+    defer allocator.free(project_root);
 
-    // プロジェクトが見つかれば lock を最新化してから sync する（依存解決
-    // から環境構築まで一貫させる）。--locked はここで検証する。
-    // manifest 読込〜lock 公開まで編集 lock を保持し、並行する
-    // add/remove/lock/update/自動準備と直列化する。
-    var edit_guard: ?project.EditLock = null;
-    defer if (edit_guard) |*g| g.unlock();
-    // lock 取得と manifest 読込みを同じ dir に固定するため、root を
-    // open した handle を pin する。path の再解決だと rename/置換競合で
-    // lock 対象と別 dir の manifest を読み得る。
-    var pinned_root: ?[]const u8 = null;
-    defer if (pinned_root) |root| allocator.free(root);
-    var pinned_dir: ?std.Io.Dir = null;
-    defer if (pinned_dir) |*dir| dir.close(io);
-    if (project.findRoot(allocator, io, options.project_root) catch null) |root| {
-        pinned_root = root;
-        const dir = std.Io.Dir.cwd().openDir(io, root, .{ .follow_symlinks = false }) catch |err| {
-            return fail(stderr, "sync: プロジェクトルートを開けません: {s}\n", .{@errorName(err)});
-        };
-        pinned_dir = dir;
-        edit_guard = project.acquireEditLockDir(io, dir) catch |err| {
-            return fail(stderr, "sync: 編集ロックを取得できません: {s}\n", .{@errorName(err)});
-        };
-    }
-    const discovered: ?project.Project = if (pinned_dir) |dir| blk: {
-        // 所有権は loadFromDir へ移る（成功時は Project、失敗時は内部で close）。
-        pinned_dir = null;
-        break :blk project.loadFromDir(allocator, io, pinned_root.?, dir, &list) catch |err| {
-            if (list.errorCount() > 0) try list.render(stderr, pinned_root.?);
-            return fail(stderr, "sync: プロジェクトを読み込めません: {s}\n", .{@errorName(err)});
-        };
-    } else project.discoverAndLoad(allocator, io, options.project_root, &list) catch |err| {
-        if (list.errorCount() > 0) try list.render(stderr, options.project_root);
-        return fail(stderr, "sync: プロジェクトを読み込めません: {s}\n", .{@errorName(err)});
+    var project_dir = std.Io.Dir.cwd().openDir(io, project_root, .{ .follow_symlinks = false }) catch |err| {
+        return fail(stderr, "sync: プロジェクトルートを開けません: {s}\n", .{@errorName(err)});
     };
-    // `found.root` は Project の arena が所有し `found.deinit()` で解放
-    // される。`sync.run` が `options.project_root` を使うのは deinit 後
-    // なので、呼出し側 allocator へ複製して関数末尾まで生存させる。
-    var discovered_root: ?[]u8 = null;
-    defer if (discovered_root) |root| allocator.free(root);
-    // `found.root_dir` も `found.deinit()` で閉じられる。lock 更新後に
-    // root が rename/置換されても `sync.run` が同じ dir を開くよう、複製
-    // した handle を sync 完了まで保持し `project_dir` へ渡す。
-    var discovered_dir: ?std.Io.Dir = null;
-    defer if (discovered_dir) |*dir| dir.close(io);
-    if (discovered) |loaded| {
-        var found = loaded;
-        defer found.deinit();
-        discovered_root = try allocator.dupe(u8, found.root);
-        options.project_root = discovered_root.?;
-        discovered_dir = found.root_dir.openDir(io, ".", .{ .follow_symlinks = false }) catch |err| {
-            return fail(stderr, "sync: プロジェクトルートを開けません: {s}\n", .{@errorName(err)});
-        };
-        options.project_dir = discovered_dir;
-        var prepare = project.PrepareOptions{
-            // --locked: verifyLocked 通過後の競合編集で ensureLock が
-            // lock を書き換えないよう、stale 検出を失敗へ写像する。
-            .locked = locked,
-            .profile = options.profile,
-            .features = features.items,
-            .no_default_features = no_default_features,
-            // project コマンドの PrepareOptions と同じ優先順位:
-            // --registry が無ければ LNAKO_REGISTRY を参照する。
-            .registry_url = registry_url orelse if (environ_map) |map| map.get("LNAKO_REGISTRY") else null,
-            // npm packument は lnako の static registry と別サービスなので、
-            // 専用の環境変数（既定: registry.npmjs.org）を参照する。
-            .npm_registry_url = if (environ_map) |map| map.get("LNAKO_NPM_REGISTRY") else null,
-            .cache_root = options.cache_root,
-            .policy = options.policy,
-            // manifest が profile を宣言しない場合の合成 profile runtime
-            // と環境 runtime の照合に使う（`--runtime cnako` の lock が
-            // lnako 専用にならないようにする）。
-            .requested_runtime = options.runtime.name(),
-            .nako_version = lnako.package.semver.Version.parse(project.compat_nako_version) catch null,
-            // `--runtime cnako` の engines 照合対象は公式処理系
-            // （互換対象 tag と同一 version）。
-            .cnako_version = lnako.package.semver.Version.parse(project.compat_nako_version) catch null,
-            .lnako_version = lnako.package.semver.Version.parse(lnako.version) catch null,
-        };
-        if (locked) {
-            project.verifyLocked(allocator, io, &found, &prepare, &list) catch |err| {
-                if (list.errorCount() > 0) try list.render(stderr, found.manifest_path);
-                return fail(stderr, "sync: nako.lock が不足・陳腐のため --locked を満たせません: {s}\n", .{@errorName(err)});
-            };
-        }
-        var lock_outcome = project.ensureLock(allocator, io, &found, &prepare, &list) catch |err| {
-            if (list.errorCount() > 0) try list.render(stderr, found.manifest_path);
-            return fail(stderr, "sync: 依存解決に失敗しました: {s}\n", .{@errorName(err)});
-        };
-        lock_outcome.deinit();
-    }
-
-    var report = sync.run(allocator, io, options, &list) catch |err| {
-        if (list.errorCount() > 0) {
-            try list.render(stderr, options.project_root);
-            try stderr.flush();
-            if (@import("builtin").is_test) return error.Failed;
-            std.process.exit(1);
-        }
-        switch (err) {
-            error.LockNotFound => return fail(stderr, "sync: {s}/nako.lock が見つかりません\n", .{options.project_root}),
-            error.UnknownProfile, error.InvalidProfile => return fail(stderr, "sync: profile を解決できません\n", .{}),
-            error.Busy => return fail(stderr, "sync: 別の処理が cache を使用中です\n", .{}),
-            else => return err,
-        }
+    var dir_owned = true;
+    defer if (dir_owned) project_dir.close(io);
+    var edit_guard = project.acquireEditLockDir(io, project_dir) catch |err| {
+        return fail(stderr, "sync: 編集ロックを取得できません: {s}\n", .{@errorName(err)});
     };
-    defer report.deinit();
+    defer edit_guard.unlock();
 
-    if (clean) {
-        // 今回の sync が参照した entry 以外を整理する。別プロジェクト専用の
-        // entry も消える点に注意（内容アドレスなので再取得は可能）。
-        const root = options.cache_root orelse (try cache.defaultRoot(allocator)) orelse
-            try std.fs.path.join(allocator, &.{ report.environment_root, "cache" });
-        var store = try cache.Store.open(allocator, io, root);
-        defer store.deinit();
-        var guard = try store.lockWait();
-        defer guard.unlock();
-        const removed = try store.cleanKeep(report.used_keys);
-        if (removed > 0) {
-            try stderr.print("sync: cache から {d} 個の未使用 entry を削除しました\n", .{removed});
-        }
+    var probe = v1_entry.probeDir(allocator, io, &project_dir) catch |err| switch (err) {
+        error.OutOfMemory => return err,
+        else => return fail(stderr, "sync: nako.toml を読めません: {s}\n", .{@errorName(err)}),
+    };
+    defer probe.deinit(allocator);
+    switch (probe) {
+        .missing => return fail(stderr, "sync: nako.toml が見つかりません: {s}\n", .{project_root}),
+        .legacy => return fail(stderr, "sync: {s}: {s}\n", .{ v1_entry.legacy_manifest_message, project_root }),
+        .invalid => |err| return fail(stderr, "sync: nako.toml が v1 形式として不正です（{s}）: {s}\n", .{ v1_entry.manifestDiagnostic(err), project_root }),
+        .v1 => {},
     }
 
-    if (json) {
-        try stdout.writeAll(report.environment_json);
-        try stdout.flush();
-    } else {
-        try stderr.print("sync: {d} 個の package を世代 {s} として構築しました（{s}）\n", .{ report.package_count, report.generation, report.environment_root });
-        try stderr.flush();
-    }
+    const fixture_root = v1_fixture orelse
+        return failUsage(stderr, "sync: v1 では --v1-fixture <dir> が必要です\n", .{});
+    const registry = registry_url orelse
+        (if (environ_map) |map| map.get("LNAKO_REGISTRY") else null) orelse
+        "https://registry.nako.example";
+
+    dir_owned = false; // 所有権は v1_sync -> client.run へ移る。
+    v1_sync.execute(allocator, io, .{
+        .project_root = project_root,
+        .project_dir = project_dir,
+        .fixture_root = fixture_root,
+        .registry_url = registry,
+        .profile = profile,
+        .runtime = runtime,
+        .features = features.items,
+        .no_default_features = no_default_features,
+        .locked = locked,
+        .source_permissions = v1_permissions.items,
+        .environ_map = environ_map,
+        .json = json,
+    }, stdout, stderr) catch |err| {
+        return switch (err) {
+            error.LegacyManifest => fail(stderr, "sync: {s}: {s}\n", .{ v1_entry.legacy_manifest_message, project_root }),
+            error.LegacyLock => fail(stderr, "sync: {s}\n", .{v1_client.legacyLockMessage()}),
+            error.LockedNotSatisfied => fail(stderr, "sync: nako.lock が現在の nako.toml / index と一致しないため --locked を満たせません\n", .{}),
+            error.FixtureSourceRequired => failUsage(stderr, "sync: v1 では --v1-fixture <dir> が必要です\n", .{}),
+            error.ProjectNotFound => fail(stderr, "sync: プロジェクトが見つかりません\n", .{}),
+            error.InvalidManifest => fail(stderr, "sync: v1 の nako.toml を解釈できません（詳細は上の診断）\n", .{}),
+            error.UnknownProfile => fail(stderr, "sync: profile を解決できません（--profile を指定してください）\n", .{}),
+            error.UnknownFeature => fail(stderr, "sync: 未知の feature が指定されました\n", .{}),
+            error.ResolveFailed => fail(stderr, "sync: 依存解決に失敗しました（詳細は上の診断）\n", .{}),
+            error.LockIndexMismatch => fail(stderr, "sync: nako.lock と index が一致しません\n", .{}),
+            error.GlobalCommandsMismatch => fail(stderr, "sync: index と検証済み ZIP の global 情報が一致しません（lock と環境は公開していません）\n", .{}),
+            error.SourceNotPermitted => fail(stderr, "sync: native-source のビルドには --allow-native-source <id>=<sha256> が必要です\n", .{}),
+            error.MissingBuildFile, error.InvalidBuildFile => fail(stderr, "sync: native-source に明示の build.zig がありません（ビルドを開始しません）\n", .{}),
+            error.BuildDirectoryConflict => fail(stderr, "sync: native-source のビルド出力ディレクトリがアーカイブに含まれています\n", .{}),
+            error.BuildUnavailable => fail(stderr, "sync: native-source のビルドに zig を起動できません\n", .{}),
+            error.BuildFailed => fail(stderr, "sync: native-source のビルドが失敗しました（lock と環境は変更していません）\n", .{}),
+            error.BuildTimedOut => fail(stderr, "sync: native-source のビルドが時間内に終了しませんでした\n", .{}),
+            error.BuildOutputTooLarge => fail(stderr, "sync: native-source のビルド出力が上限を超えました\n", .{}),
+            error.BuildOutputMissing, error.BuildOutputAmbiguous, error.UnsafeBuildOutput => fail(stderr, "sync: native-source のビルド出力を確認できません（共有ライブラリはちょうど 1 個必要です）\n", .{}),
+            error.UnsupportedNativeSourceExports => fail(stderr, "sync: native-source の export は \".\" 1 個だけを扱います\n", .{}),
+            error.UnsupportedHost => fail(stderr, "sync: このホストでは native-source をビルドできません\n", .{}),
+            error.HashMismatch, error.LockHashMismatch => fail(stderr, "sync: 取得した .npkg の SHA-256 が一致しません（展開しません）\n", .{}),
+            else => fail(stderr, "sync: v1 の同期に失敗しました: {s}\n", .{@errorName(err)}),
+        };
+    };
 }
 
 test "値を取るフラグは次のオプションを値として消費せず用法エラーにする" {
@@ -238,7 +209,7 @@ test "値を取るフラグは次のオプションを値として消費せず�
 
     // `sync --features --json` が "--json" を feature 名として受理しない
     // ことを含め、全値フラグで次オプションの誤消費と末尾欠落を検査する。
-    const flags = [_][]const u8{ "--profile", "--runtime", "--features", "--registry", "--package-cache-dir" };
+    const flags = [_][]const u8{ "--profile", "--runtime", "--features", "--registry", "--v1-fixture", "--allow-native-source", "--package-cache-dir" };
     for (flags) |flag| {
         err.clearRetainingCapacity();
         try testing.expectError(error.Usage, run(a, testing.io, &.{flag}, null, &out.writer, &err.writer));
@@ -250,23 +221,15 @@ test "値を取るフラグは次のオプションを値として消費せず�
     }
 }
 
-test "sync はサブ dir から親プロジェクトを発見して環境を構築する" {
-    // discoverAndLoad が返す `found.root` は Project の arena が所有し、
-    // `found.deinit()` で解放される。sync.run は deinit 後に
-    // `options.project_root` を使うため、呼出し側 allocator へ複製して
-    // 生存させる必要がある。サブ dir 指定で発見経路を通し、root が
-    // deinit 後も正しく使えることを確認する。
-    const io = std.testing.io;
-    var arena_impl = std.heap.ArenaAllocator.init(std.testing.allocator);
+test "sync: 旧 manifest は旧経路へ分岐せず再作成を案内して拒否する" {
+    const testing = std.testing;
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_impl.deinit();
     const a = arena_impl.allocator();
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();
-    const root = try temporary.dir.realPathFileAlloc(io, ".", a);
-    const subdir = try std.fs.path.join(a, &.{ root, "sub", "dir" });
-    const cache_root = try std.fs.path.join(a, &.{ root, "cache" });
-    try temporary.dir.createDirPath(io, "sub/dir");
-    try temporary.dir.writeFile(io, .{
+    const root = try temporary.dir.realPathFileAlloc(std.testing.io, ".", a);
+    try temporary.dir.writeFile(std.testing.io, .{
         .sub_path = "nako.toml",
         .data =
         \\[package]
@@ -279,8 +242,80 @@ test "sync はサブ dir から親プロジェクトを発見して環境を構�
 
     var out: std.Io.Writer.Allocating = .init(a);
     var err: std.Io.Writer.Allocating = .init(a);
-    try run(a, io, &.{ "--package-cache-dir", cache_root, subdir }, null, &out.writer, &err.writer);
-    // 発見した親 root 配下に環境が構築される。
+    try testing.expectError(error.Failed, run(a, std.testing.io, &.{ root, "--v1-fixture", root }, null, &out.writer, &err.writer));
+    try testing.expect(std.mem.indexOf(u8, err.written(), "旧形式") != null);
+    try testing.expect(std.mem.indexOf(u8, err.written(), "再作成") != null);
+    // 旧 lock / 旧環境を生成しない。
+    std.Io.Dir.cwd().access(std.testing.io, try std.fs.path.join(a, &.{ root, "nako.lock" }), .{}) catch |access_err| {
+        try testing.expectEqual(error.FileNotFound, access_err);
+        return;
+    };
+    return error.TestUnexpectedResult;
+}
+
+test "sync: v1 固定 fixture で lock と .nako/v1 環境を構築する" {
+    // サブ dir から親プロジェクトを発見する通常経路を、ローカル fixture
+    // （index/v1/config.json）だけで通す。外部ネットワークは使わない。
+    const testing = std.testing;
+    const io = std.testing.io;
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const a = arena_impl.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const root = try temporary.dir.realPathFileAlloc(io, ".", a);
+    const fixture_root = try std.fs.path.join(a, &.{ root, "fixture" });
+    const subdir = try std.fs.path.join(a, &.{ root, "sub", "dir" });
+    try temporary.dir.createDirPath(io, "sub/dir");
+    try temporary.dir.createDirPath(io, "fixture/index/v1");
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "nako.toml",
+        .data = "schema_version = 1\n[package]\n",
+    });
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "fixture/index/v1/config.json",
+        .data =
+        \\{
+        \\  "schema_version": 1,
+        \\  "registry_id": "nako-official",
+        \\  "api_base_url": "https://api.registry.example.invalid/v1",
+        \\  "artifact_base_url": "https://cdn.example.invalid/artifacts",
+        \\  "allowed_external_hosts": []
+        \\}
+        ,
+    });
+
+    var out: std.Io.Writer.Allocating = .init(a);
+    var err: std.Io.Writer.Allocating = .init(a);
+    try run(a, io, &.{ subdir, "--v1-fixture", fixture_root }, null, &out.writer, &err.writer);
+    // 発見した親 root 配下に v1 lock と環境が構築される。
     try std.Io.Dir.cwd().access(io, try std.fs.path.join(a, &.{ root, "nako.lock" }), .{});
-    try std.Io.Dir.cwd().access(io, try std.fs.path.join(a, &.{ root, ".nako", "environment.json" }), .{});
+    try std.Io.Dir.cwd().access(io, try std.fs.path.join(a, &.{ root, ".nako", "v1", "environment.json" }), .{});
+    try testing.expect(std.mem.indexOf(u8, err.written(), "v1 で") != null);
+}
+
+test "sync: 空の index は config.json 到達を診断し、lock を作らない" {
+    const testing = std.testing;
+    const io = std.testing.io;
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const a = arena_impl.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const root = try temporary.dir.realPathFileAlloc(io, ".", a);
+    const fixture_root = try std.fs.path.join(a, &.{ root, "fixture" });
+    try temporary.dir.createDirPath(io, "fixture");
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "nako.toml",
+        .data = "schema_version = 1\n[package]\n",
+    });
+
+    var out: std.Io.Writer.Allocating = .init(a);
+    var err: std.Io.Writer.Allocating = .init(a);
+    try testing.expectError(error.Failed, run(a, io, &.{ root, "--v1-fixture", fixture_root }, null, &out.writer, &err.writer));
+    // 空 fixture でも index の入口まで到達したことを診断で示す。
+    try testing.expect(std.mem.indexOf(u8, err.written(), "index/v1/config.json") != null);
+    // 失敗時に lock も環境ポインタも公開しない。
+    try testing.expectError(error.FileNotFound, temporary.dir.statFile(io, "nako.lock", .{}));
+    try testing.expectError(error.FileNotFound, temporary.dir.statFile(io, ".nako/v1/environment.json", .{}));
 }

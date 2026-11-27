@@ -14,6 +14,7 @@ const DeclaredCommands = module_graph.DeclaredCommands;
 
 const MemoryProvider = struct {
     files: []const File,
+    reads: ?*usize = null,
 
     const File = struct { suffix: []const u8, source: []const u8 };
 
@@ -23,6 +24,7 @@ const MemoryProvider = struct {
 
     fn read(context: *anyopaque, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
         const self: *MemoryProvider = @ptrCast(@alignCast(context));
+        if (self.reads) |reads| reads.* += 1;
         for (self.files) |file| {
             if (pathHasSuffix(path, file.suffix)) return allocator.dupe(u8, file.source);
         }
@@ -658,4 +660,102 @@ test "semantic解析はpackageの初期化コードもnative pluginも実行し�
         return;
     };
     try std.testing.expect(false);
+}
+
+const SamePathResolver = struct {
+    fn resolver(self: *@This()) PackageResolver {
+        return .{ .context = self, .resolveFn = resolve };
+    }
+
+    fn resolve(context: *anyopaque, allocator: std.mem.Allocator, _: []const u8, _: ?[]const u8, specifier: []const u8) !ResolvedPackageImport {
+        _ = context;
+        const path = try std.fs.path.resolve(allocator, &.{"packages/lib/index.nako3"});
+        if (std.mem.eql(u8, specifier, "pkg:lib")) return .{
+            .path = path,
+            .canonical_id = try allocator.dupe(u8, "pkg:lib/."),
+            .namespace = try allocator.dupe(u8, "lib"),
+            .package_owner = try allocator.dupe(u8, "pkg:lib"),
+            .export_subpath = try allocator.dupe(u8, "."),
+        };
+        if (std.mem.eql(u8, specifier, "pkg:lib/client")) return .{
+            .path = path,
+            .canonical_id = try allocator.dupe(u8, "pkg:lib/./client"),
+            .namespace = try allocator.dupe(u8, "lib__client"),
+            .package_owner = try allocator.dupe(u8, "pkg:lib"),
+            .export_subpath = try allocator.dupe(u8, "./client"),
+        };
+        return error.PackageNotFound;
+    }
+};
+
+const SamePathProvider = struct {
+    root: DeclaredCommands,
+    client: DeclaredCommands,
+
+    fn provider(self: *@This()) module_graph.DeclaredCommandsProvider {
+        return .{ .context = self, .exportLookupFn = lookup };
+    }
+
+    fn lookup(context: *anyopaque, _: std.mem.Allocator, package_owner: []const u8, export_subpath: ?[]const u8) anyerror!?DeclaredCommands {
+        const self: *SamePathProvider = @ptrCast(@alignCast(context));
+        if (!std.mem.eql(u8, package_owner, "pkg:lib")) return null;
+        const subpath = export_subpath orelse return null;
+        if (std.mem.eql(u8, subpath, ".")) return self.root;
+        if (std.mem.eql(u8, subpath, "./client")) return self.client;
+        return null;
+    }
+};
+
+test "同じ実体fileを指す別入口は辺ごとの宣言形状で検査する（回帰）" {
+    // 同一 owner・同一 path・異なる canonical ID/入口。module 実体は共有
+    // するが、宣言索引は取り込み辺ごとに選ばれた入口のものでなければなら
+    // ない（共有 module の先着宣言へ寄せると同名命令の形状を誤る）。
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var resolver = SamePathResolver{};
+    var provider = SamePathProvider{
+        .root = try declaredAddCommand(arena, &.{ "A", "B" }, &.{ "を", "に" }),
+        .client = try declaredAddCommand(arena, &.{"A"}, &.{"を"}),
+    };
+    var reads: usize = 0;
+    var memory = MemoryProvider{
+        .files = &.{
+            .{ .suffix = "main.nako3", .source =
+            \\!「pkg:lib」を取り込む
+            \\1を2にlib__加算
+            \\!「pkg:lib/client」を取り込む
+            \\lib__client__加算(1)
+            \\
+            },
+            .{ .suffix = "packages/lib/index.nako3", .source =
+            \\●(AをBに)加算とは
+            \\  A+Bで戻る
+            \\ここまで
+            \\
+            },
+        },
+        .reads = &reads,
+    };
+    var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{
+        .package_resolver = resolver.resolver(),
+        .declared_commands_provider = provider.provider(),
+    });
+    defer graph.deinit();
+    try std.testing.expect(graph.succeeded());
+    // 同一 owner/path の実体は1 module、file read も1回だけ。
+    try std.testing.expectEqual(@as(usize, 2), graph.modules.len);
+    const main_imports = graph.modules[graph.entry].imports;
+    try std.testing.expectEqual(main_imports[0].target.?, main_imports[1].target.?);
+    try std.testing.expectEqual(@as(usize, 2), main_imports[0].declared_commands.?.commands[0].args.len);
+    try std.testing.expectEqual(@as(usize, 1), main_imports[1].declared_commands.?.commands[0].args.len);
+    try std.testing.expectEqual(@as(usize, 2), reads);
+
+    var program = try graph.analyze(std.testing.allocator);
+    defer program.deinit();
+    // client 入口の宣言は1引数。同じ file の root 入口（2引数）を
+    // 使い回すと診断が消えるため、入口ごとの宣言選択を固定する。
+    try std.testing.expectEqual(@as(usize, 1), countCode(program, .declared_command_signature_mismatch));
+    try std.testing.expectEqual(@as(usize, 0), countCode(program, .invalid_argument_count));
 }

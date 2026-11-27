@@ -12,6 +12,7 @@ import test from "node:test";
 import {
   PackageLoaderError,
   createResolver,
+  environmentFromV1,
   normalizeExportPath,
   selectExportEntry,
   validateEnvironmentLock,
@@ -219,21 +220,90 @@ test("symlinkでpackage境界の外を指すexportを拒否する", (t) => {
   assert.equal(errorCode(() => resolve(path.join(root, "main.nako3"), "パッケージ:demo")), "E029_INVALID_VALUE");
 });
 
-test("--no-syncのlockSha256照合と環境形状を検証する", (t) => {
+test("--no-syncのlockSha256照合と v1 環境形状を検証する", (t) => {
   const root = makeTree(t);
   const lockPath = path.join(root, "nako.lock");
   const lockText = "{}\n";
   fs.writeFileSync(lockPath, lockText);
   const digest = createHash("sha256").update(Buffer.from(lockText)).digest("hex");
-  const valid = { schemaVersion: 1, lockSha256: `sha256:${digest}`, profile: "default", runtime: "lnako", packages: {}, dependencies: [] };
+  const valid = {
+    schema_version: 1,
+    generation: "gen-0123456789abcdef",
+    lock_sha256: `sha256:${digest}`,
+    profile: "default",
+    runtime: "lnako",
+    packages: [],
+  };
   assert.doesNotThrow(() => validateEnvironmentLock(valid, lockPath));
-  assert.equal(errorCode(() => validateEnvironmentLock({ ...valid, lockSha256: `sha256:${"0".repeat(64)}` }, lockPath)), "E034_INVALID_ENVIRONMENT_REFERENCE");
-  assert.equal(errorCode(() => validateEnvironmentLock({ ...valid, schemaVersion: 2 }, lockPath)), "E034_INVALID_ENVIRONMENT_REFERENCE");
+  assert.equal(errorCode(() => validateEnvironmentLock({ ...valid, lock_sha256: `sha256:${"0".repeat(64)}` }, lockPath)), "E034_INVALID_ENVIRONMENT_REFERENCE");
+  assert.equal(errorCode(() => validateEnvironmentLock({ ...valid, schema_version: 2 }, lockPath)), "E034_INVALID_ENVIRONMENT_REFERENCE");
+  assert.equal(errorCode(() => validateEnvironmentLock({ ...valid, generation: undefined }, lockPath)), "E034_INVALID_ENVIRONMENT_REFERENCE");
   assert.equal(errorCode(() => validateEnvironmentLock({ ...valid, profile: undefined }, lockPath)), "E034_INVALID_ENVIRONMENT_REFERENCE");
   assert.equal(errorCode(() => validateEnvironmentLock({ ...valid, runtime: undefined }, lockPath)), "E034_INVALID_ENVIRONMENT_REFERENCE");
   assert.equal(errorCode(() => validateEnvironmentLock({ ...valid, runtime: "cnako" }, lockPath)), "E034_INVALID_ENVIRONMENT_REFERENCE");
   // §7.3 の3形式（raw hex / SRI）も受理する。
-  assert.doesNotThrow(() => validateEnvironmentLock({ ...valid, lockSha256: digest }, lockPath));
-  assert.doesNotThrow(() => validateEnvironmentLock({ ...valid, lockSha256: `sha256-${Buffer.from(digest, "hex").toString("base64")}` }, lockPath));
+  assert.doesNotThrow(() => validateEnvironmentLock({ ...valid, lock_sha256: digest }, lockPath));
+  assert.doesNotThrow(() => validateEnvironmentLock({ ...valid, lock_sha256: `sha256-${Buffer.from(digest, "hex").toString("base64")}` }, lockPath));
   assert.equal(errorCode(() => validateEnvironmentLock(valid, path.join(root, "missing.lock"))), "E034_INVALID_ENVIRONMENT_REFERENCE");
+});
+
+test("v1 environment を resolver 用の package/path/export へ写す", (t) => {
+  const root = makeTree(t);
+  const lock = {
+    schema_version: 1,
+    profiles: [{
+      name: "default",
+      runtime: "lnako",
+      nodes: [{
+        key: "@example/demo@1.0.0",
+        id: "@example/demo",
+        version: "1.0.0",
+        sha256: `sha256:${"a".repeat(64)}`,
+        kind: "universal",
+        global: false,
+      }],
+      root: [{
+        to: "@example/demo@1.0.0",
+        id: "@example/demo",
+        req: "^1.0.0",
+        alias: "demo",
+        features: [],
+        default_features: true,
+        optional: false,
+        allow_global_commands: false,
+        runtimes: [],
+      }],
+      edges: [],
+    }],
+  };
+  const v1Environment = {
+    schema_version: 1,
+    generation: "gen-0123456789abcdef",
+    profile: "default",
+    runtime: "lnako",
+    lock_sha256: `sha256:${"b".repeat(64)}`,
+    packages: [{
+      id: "@example/demo",
+      version: "1.0.0",
+      kind: "universal",
+      sha256: `sha256:${"a".repeat(64)}`,
+      root: "packages/aaaa",
+      exports: [
+        { subpath: ".", entry: "src/main.nako3", binding: "scoped" },
+        { subpath: "./calc", entry: "src/calc.nako3", binding: "scoped" },
+      ],
+      exports_global_commands: false,
+      global_commands: [],
+    }],
+  };
+  const environment = environmentFromV1(v1Environment, lock);
+  assert.deepEqual(environment.dependencies, [{ alias: "demo", package: "@example/demo@1.0.0" }]);
+  const pkg = environment.packages["@example/demo@1.0.0"];
+  assert.equal(pkg.path, path.posix.join(".nako", "v1", "generations", v1Environment.generation, "packages/aaaa"));
+  assert.deepEqual(pkg.exports, [
+    { name: "main", path: "src/main.nako3" },
+    { name: "calc", path: "src/calc.nako3" },
+  ]);
+  assert.deepEqual(pkg.dependencies, []);
+  assert.equal(environmentFromV1({ ...v1Environment, packages: [] }, lock).packages["@example/demo@1.0.0"], undefined);
 });

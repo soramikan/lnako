@@ -1,8 +1,15 @@
-# 参照パッケージ publish→取得 E2E fixture
+# 参照パッケージ publish→取得 E2E fixture（旧形式）
+
+> **v1 での位置付け:** この fixture は旧形式の参照資料です。CI の
+> `tools/check_package_publish_e2e.mjs` は `leftpad/` を旧 manifest の負例として
+> 使い、旧 `package publish` が送信せずローカルで対象外を診断することだけを
+> 検証します。旧 static PUT・PS01 registry・.npkg publish・npm 依存解決は
+> v1 の対象外（P07/P11）であり、CI では公開しません。新 v1 の
+> `package build → verify → ローカル実行` は同スクリプトが一時 project で行います。
 
 `lnako package publish` でローカル fixture registry へ公開し、別 project から
-`lock → sync → run --compat-js` で取得・実行できることを検証する
-`tools/check_package_publish_e2e.mjs` 用の参照パッケージ群。
+`lock → sync → run --compat-js` で取得・実行できることを検証する旧 E2E 用の
+参照パッケージ群（現在の CI では実行しません）。
 
 | package | 構成 | E2E での役割 |
 | --- | --- | --- |

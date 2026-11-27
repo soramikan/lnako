@@ -18,3 +18,7 @@ pub fn main(init: std.process.Init) !void {
     const executable_path = try std.process.executablePathAlloc(init.io, allocator);
     try cli.app.run(allocator, init.io, args, executable_path, process_args, init, stdout, stderr);
 }
+
+test {
+    _ = @import("cli/commands/v1_prepare_test.zig");
+}
