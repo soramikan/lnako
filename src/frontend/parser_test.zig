@@ -564,6 +564,26 @@ test "利用者が定義した範囲を連鎖とC風呼出しの引数で組み�
     }
 }
 
+test "同名の仮引数に束縛される範囲は連鎖内で実引数を全て保持する" {
+    const source =
+        "●(範囲を)確認とは\n" ++
+        "2から3を範囲を表示\n" ++
+        "JSONエンコード(2から3を範囲)を表示\n" ++
+        "ここまで\n";
+    var parsed = try parse(std.testing.allocator, source, "main.nako3");
+    defer parsed.deinit();
+    try std.testing.expect(parsed.succeeded());
+    const body = parsed.root.?.children[0].children[0];
+    const statement_range = body.children[0].children[0];
+    const expression_range = body.children[2].children[0].children[0];
+    for ([_]*ast.Node{ statement_range, expression_range }) |call| {
+        try std.testing.expectEqualStrings("範囲", call.name);
+        try std.testing.expectEqual(@as(usize, 2), call.children.len);
+        try std.testing.expectEqualStrings("から", call.children[0].josi);
+        try std.testing.expectEqualStrings("を", call.children[1].josi);
+    }
+}
+
 test "片端省略の範囲を『それ』で補完し外側の引数を参照へ残す" {
     // Issue #297: 公式`yCallFunc`は範囲の助詞スロットに一致する引数だけを
     // 消費する。`Aの4まで`では`Aの`が外側の参照の第1引数として残り、

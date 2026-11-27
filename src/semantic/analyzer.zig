@@ -144,6 +144,8 @@ pub const Symbol = struct {
     is_export: bool,
     is_mutable: bool,
     explicit_definition: bool = false,
+    /// 分割定数化でkindが変わった後も、ループによる暗黙宣言と判別できる。
+    implicit_loop_target: bool = false,
     argument_count: usize = 0,
     /// 仮引数の助詞（宣言順）。公式`yCallFunc`と同じ助詞補完で、
     /// どのスロットへ引数を割り当てるかの判定に使う。
@@ -607,7 +609,8 @@ pub const Analyzer = struct {
             .for_statement, .foreach_statement => if (node.name.len > 0 and !std.mem.eql(u8, node.name, "それ")) {
                 if (self.lookupLexical(scope, node.name)) |symbol| {
                     // 公式は暗黙のループ変数を作る前に、可視な同名定数も検査する。
-                    const existing = if (symbol.kind == .loop_variable and !symbol.explicit_definition)
+                    const existing = if (symbol.implicit_loop_target and
+                        (!symbol.explicit_definition or self.writeBeforeConstantDeclaration(symbol, module_index, scope, node)))
                         self.resolveSymbolExcluding(module_index, scope, node.name, node.span, symbol.id) orelse symbol
                     else
                         symbol;
@@ -1186,6 +1189,7 @@ pub const Analyzer = struct {
             .is_export = is_export,
             .is_mutable = is_mutable,
             .explicit_definition = explicit_def,
+            .implicit_loop_target = kind == .loop_variable,
             .argument_count = argument_count,
         });
         return id;

@@ -196,6 +196,7 @@ pub const Parser = struct {
     /// 命令呼出しとして解決できるようにする。
     user_functions: []const []const u8 = &.{},
     has_exported_range_function: bool = false,
+    range_parameter_visible: bool = false,
     tail_cursor: usize = 0,
     import_modes: std.ArrayList(ImportMode) = .empty,
     index: usize = 0,
@@ -506,6 +507,11 @@ pub const Parser = struct {
         if (name_token.josi.len != 0 and !std.mem.eql(u8, name_token.josi, "とは")) {
             return self.fail(.invalid_function_definition, "関数名の後ろには『とは』が必要です", name_token);
         }
+
+        // 名前付き関数の本体は外側の仮引数を捕捉しない。
+        const saved_range_parameter = self.range_parameter_visible;
+        self.range_parameter_visible = helpers.hasRangeParameter(arguments);
+        defer self.range_parameter_visible = saved_range_parameter;
 
         const body = if (self.at(.eol) or self.at(.keyword_here_from)) blk: {
             if (self.at(.keyword_here_from)) _ = self.advance();
@@ -1141,6 +1147,9 @@ pub const Parser = struct {
     pub fn parseAnonymousFunction(self: *Parser) ParseFailure!*ast.Node {
         const start = self.advance();
         const arguments: []ast.Argument = if (self.at(.left_paren)) try self.parseArguments() else &.{};
+        const saved_range_parameter = self.range_parameter_visible;
+        self.range_parameter_visible = saved_range_parameter or helpers.hasRangeParameter(arguments);
+        defer self.range_parameter_visible = saved_range_parameter;
         if (self.at(.eol)) self.skipEols();
         const body = try self.parseBlock(.{ .end = true });
         try self.requireEnd("無名関数");

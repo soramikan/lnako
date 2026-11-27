@@ -298,7 +298,8 @@ pub const RangeCallParts = struct {
 pub fn rangeCallParts(self: *Parser, command: Token, items: []*ast.Node) ParseFailure!?RangeCallParts {
     if (!std.mem.eql(u8, command.value, "範囲") or
         !self.isBuiltinCommandName(command.value) or
-        self.has_exported_range_function or isUserFunctionName(self, command.value)) return null;
+        self.has_exported_range_function or self.range_parameter_visible or
+        isUserFunctionName(self, command.value)) return null;
 
     const selection = selectRangeArguments(items);
     // 一致する助詞がないときも外側の実引数は全て残す。範囲自身の2引数の
@@ -400,6 +401,9 @@ pub fn makeCommandCall(self: *Parser, command: Token, arguments: []*ast.Node) Pa
 
 pub fn parseImplicitCallbackCall(self: *Parser, command: Token, arguments: []const *ast.Node) ParseFailure!*ast.Node {
     const callback_arguments: []ast.Argument = if (self.at(.left_paren)) try self.parseArguments() else &.{};
+    const saved_range_parameter = self.range_parameter_visible;
+    self.range_parameter_visible = saved_range_parameter or helpers.hasRangeParameter(callback_arguments);
+    defer self.range_parameter_visible = saved_range_parameter;
     if (self.at(.eol)) self.skipEols();
     const body = try self.parseBlock(.{ .end = true });
     try self.requireEnd("『には』コールバック");

@@ -1145,6 +1145,11 @@ test "分割定数宣言は宣言位置以降の代入だけを拒否する" {
     try Case.expectAssignments("A=0\n" ++ declaration ++ "●Fとは\n" ++ loops[0] ++ "ここまで\nF\n", 1, 3);
     try Case.expectAssignments("●Fとは\nA=0\n" ++ declaration ++ "G=関数()\n" ++ loops[1] ++ "ここまで\nG()\nここまで\nF\n", 1, 4);
 
+    inline for (loops) |loop| {
+        try Case.expectAssignments("定数 A=13\n●Fとは\n" ++ loop ++ declaration ++ "ここまで\nF\n", 1, 2);
+        try Case.expectAssignments("定数 A=13\n●Fとは\n変数 A=0\n" ++ loop ++ "ここまで\nF\n", 0, null);
+    }
+
     // 初期化式に含まれる匿名関数の変換は、分割宣言が束縛を定数化する前。
     try Case.expectAssignments("●Fとは\nA=0\n定数[A,B]=実行(関数()\nA=8\n[A,5]で戻る\nここまで)\nAを表示\nここまで\nF\n", 0, null);
     try Case.expectAssignments("●Fとは\nA=0\n定数[A,B]=[4,5]\nG=関数()\nA=8\nここまで\nG()\nここまで\nF\n", 1, 4);
