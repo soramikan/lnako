@@ -472,7 +472,7 @@ const CommandProvider = struct {
     fn read(context: *anyopaque, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
         const self: *CommandProvider = @ptrCast(@alignCast(context));
         for (self.files) |file| {
-            if (std.mem.endsWith(u8, path, file.suffix)) return allocator.dupe(u8, file.source);
+            if (pathHasSuffix(path, file.suffix)) return allocator.dupe(u8, file.source);
         }
         return error.FileNotFound;
     }
@@ -481,6 +481,34 @@ const CommandProvider = struct {
         return .{ .context = self, .readFn = read };
     }
 };
+
+/// `module_graph.load` は取り込みパスを `std.fs.path.resolve` で正規化する。
+/// Windows では区切り文字が `\\` になるため、fixture の POSIX 表記接尾辞を
+/// そのまま `endsWith` で比較すると package source を読めない。
+fn pathHasSuffix(path: []const u8, suffix: []const u8) bool {
+    if (path.len < suffix.len) return false;
+    const tail = path[path.len - suffix.len ..];
+    for (tail, suffix) |actual, expected| {
+        const actual_separator = actual == '/' or actual == '\\';
+        const expected_separator = expected == '/' or expected == '\\';
+        if (actual_separator and expected_separator) continue;
+        if (actual != expected) return false;
+    }
+    return true;
+}
+
+test "v1 runtime fixture: Windows の解決済み package path を照合する" {
+    const a = testing.allocator;
+    const windows_path = try std.fs.path.resolveAllocWindows(a, &.{ "D:\\a\\lnako\\lnako", "packages/demo/index.nako3" });
+    defer a.free(windows_path);
+
+    var provider = CommandProvider{ .files = &.{
+        .{ .suffix = "packages/demo/index.nako3", .source = "●共通取得とは\n「ok」と表示\nここまで\n" },
+    } };
+    const source = try provider.provider().readFn(provider.provider().context, a, windows_path);
+    defer a.free(source);
+    try testing.expectEqualStrings("●共通取得とは\n「ok」と表示\nここまで\n", source);
+}
 
 const CommandResolver = struct {
     global: bool,
@@ -496,11 +524,14 @@ const CommandResolver = struct {
             &.{.{ .name = "共通取得" }}
         else
             &.{};
+        // 本番の Environment resolver と同じく、取り込み先と package root は
+        // 絶対パスで返す。fixture 側だけ相対 root を渡すと、Windows の
+        // 区切り文字差で境界判定が本番とずれる。
         return .{
-            .path = try allocator.dupe(u8, "packages/demo/index.nako3"),
+            .path = try std.fs.path.resolve(allocator, &.{"packages/demo/index.nako3"}),
             .canonical_id = try allocator.dupe(u8, "pkg:demo@1.0.0/."),
             .namespace = try allocator.dupe(u8, "demo"),
-            .package_root = try allocator.dupe(u8, "packages/demo"),
+            .package_root = try std.fs.path.resolve(allocator, &.{"packages/demo"}),
             .package_owner = try allocator.dupe(u8, "pkg:demo@1.0.0"),
             .global_commands = globals,
         };

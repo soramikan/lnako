@@ -2,6 +2,11 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
+import {
+  buildArtifact,
+  syncProject,
+  writeStaticIndex,
+} from "./lib/package/v1_static_fixture.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const oracleArg = process.argv.indexOf("--oracle");
@@ -159,72 +164,87 @@ try {
     console.error(`QuickJS互換の不正emitを拒否しませんでした: ${JSON.stringify(normalize(invalidEmit))}`);
   }
 
-  // ESM pluginの戻り値候補（`3を外部倍算で戻る`）は、既存のpackage動的
-  // 呼出し経路を通る。公式・Interpreter・AOTを同じ一時packageで比較し、
+  // ESM pluginの戻り値候補（`3を外部倍算で戻る`）は、v1 の package 動的
+  // 呼出し経路を通る。公式・Interpreter・AOTを同じ v1 package で比較し、
   // 助詞付き候補が6を返すことを固定する。fixture件数契約は増やさない。
+  // universal の .nako3 入口から同梱の補助 plugin を明示的に取り込む。
   {
     const pkgRoot = join(temporary, "esm-return-package");
-    const ownedRoot = join(pkgRoot, "packages", "owned");
-    await mkdir(ownedRoot, { recursive: true });
+    const packageRoot = join(temporary, "esm-return-owned");
+    const srcRoot = join(packageRoot, "src");
+    await mkdir(srcRoot, { recursive: true });
+    await mkdir(pkgRoot, { recursive: true });
     await writeFile(
-      join(pkgRoot, "nako.toml"),
+      join(packageRoot, "nako.toml"),
       [
+        "schema_version = 1",
+        "",
         "[package]",
-        'name = "esm-return-host"',
-        'version = "0.1.0"',
-        'license = "MIT"',
-        "",
-        "[profiles.compat]",
-        'runtime = "lnako"',
-        'os = "linux"',
-        'cpu = "x86_64"',
-        'abi = "gnu"',
-        "compat-js = true",
-        "",
-        "[dependencies.path]",
-        'owned = { path = "packages/owned" }',
-        "",
-      ].join("\n"),
-    );
-    await writeFile(
-      join(ownedRoot, "nako.toml"),
-      [
-        "[package]",
-        'name = "owned"',
+        'id = "@esm/owned"',
         'version = "1.0.0"',
         'license = "MIT"',
+        'capabilities = ["pure-nako"]',
         "",
-        "[[exports]]",
-        'name = "main"',
-        'path = "main.nako3"',
+        "[exports]",
+        '"." = { entry = "src/main.nako3" }',
+        "",
+        "[artifacts.universal]",
+        'include = ["src/**"]',
         "",
       ].join("\n"),
     );
     await writeFile(
-      join(ownedRoot, "plugin.mjs"),
+      join(srcRoot, "plugin.mjs"),
       'export default { 外部倍算: { type: "func", josi: [["を"]], fn: (value) => Number(value) * 2 }, 外部命令: { type: "func", josi: [["を"]], fn: (...args) => args.length, isVariableJosi: Boolean(0) } };\n',
     );
     await writeFile(
-      join(ownedRoot, "main.nako3"),
+      join(srcRoot, "main.nako3"),
       "!「./plugin.mjs」を取り込む。\n●試験とは\n3を外部倍算で戻る。\nここまで\n●連文とは\n「x」と表示して3を外部命令で戻る。\nここまで\n",
     );
-    await writeFile(join(ownedRoot, "oracle.nako3"), "!「./plugin.mjs」を取り込む。\n●試験とは\n3を外部倍算で戻る。\nここまで\n試験()を表示。\n");
-    await writeFile(join(pkgRoot, "main.nako3"), "!「pkg:owned」を取り込む。\nowned__試験()を表示。\nowned__連文()を表示。\n");
+    await writeFile(
+      join(pkgRoot, "nako.toml"),
+      [
+        "schema_version = 1",
+        "",
+        "[package]",
+        "",
+        "[profiles.compat]",
+        'runtime = "lnako"',
+        "",
+        "[dependencies]",
+        '"@esm/owned" = { version = "^1.0.0", alias = "owned" }',
+        "",
+      ].join("\n"),
+    );
+    await writeFile(join(pkgRoot, "main.nako3"), "!「パッケージ:owned」を取り込む\nowned__試験()を表示。\nowned__連文()を表示。\n");
+
+    const artifact = buildArtifact(executable, packageRoot, join(temporary, "esm-return-owned.npkg"), temporary);
+    const registryRoot = join(temporary, "esm-return-registry");
+    writeStaticIndex(registryRoot, [{
+      id: "@esm/owned",
+      version: "1.0.0",
+      license: "MIT",
+      capabilities: ["pure-nako"],
+      artifactName: "esm-return-owned.npkg",
+      ...artifact,
+    }]);
+    syncProject(executable, pkgRoot, registryRoot);
+    await writeFile(join(srcRoot, "oracle.nako3"), "!「./plugin.mjs」を取り込む。\n●試験とは\n3を外部倍算で戻る。\nここまで\n試験()を表示。\n");
 
     const packageOptions = { ...options, cwd: pkgRoot };
-    const officialCandidate = spawnSync(process.execPath, [officialCli, join(ownedRoot, "oracle.nako3")], {
+    const officialCandidate = spawnSync(process.execPath, [officialCli, join(srcRoot, "oracle.nako3")], {
       ...options,
-      cwd: ownedRoot,
+      cwd: srcRoot,
     });
     const interpreterCandidate = spawnSync(
       executable,
-      ["run", "main.nako3", "--compat-js", "--profile", "compat", "--offline"],
+      ["run", "main.nako3", "--compat-js", "--profile", "compat", "--no-sync"],
       packageOptions,
     );
     const generatedCandidate = join(pkgRoot, `native${executableSuffix}`);
     const buildCandidate = spawnSync(
       executable,
-      ["build", "main.nako3", "-o", generatedCandidate, "--compat-js", "--profile", "compat", "--offline", "--backend", "aot"],
+      ["build", "main.nako3", "-o", generatedCandidate, "--compat-js", "--profile", "compat", "--no-sync", "--backend", "aot"],
       packageOptions,
     );
     const aotCandidate = buildCandidate.status === 0 ? spawnSync(generatedCandidate, [], packageOptions) : buildCandidate;
@@ -244,6 +264,10 @@ try {
           `build=${JSON.stringify(normalize(buildCandidate), null, 2)}\n` +
           `aot=${JSON.stringify(normalize(aotCandidate), null, 2)}`,
       );
+      if (officialCandidate.stderr) console.error(`公式stderr:\n${officialCandidate.stderr}`);
+      if (interpreterCandidate.stderr) console.error(`interpreter stderr:\n${interpreterCandidate.stderr}`);
+      if (buildCandidate.stderr) console.error(`AOT build stderr:\n${buildCandidate.stderr}`);
+      if (aotCandidate.stderr) console.error(`AOT stderr:\n${aotCandidate.stderr}`);
     }
   }
 
