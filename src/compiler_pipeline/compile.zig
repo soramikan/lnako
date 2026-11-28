@@ -38,15 +38,47 @@ pub const InputOptions = struct {
     report_uninspected_packages: bool = false,
 };
 
-/// module の package 帰属。npm instance は `package_owner` が package root
-/// 自身、nako path 依存は canonical id（`pkg:...`）になるため、その差で
-/// 依存の出自を後段（manifest/SBOM）へ引き継ぐ。
+/// module の package 帰属。npm instance は `package_owner` が解決済み
+/// instance の FS 絶対 path、nako package は lock key（v1 は
+/// `@scope/name@version`、旧形式は `pkg:...`）になるため、絶対 path か
+/// どうかで依存の出自を後段（manifest/SBOM）へ引き継ぐ。
 fn attributionFor(allocator: std.mem.Allocator, module: *const lnako.semantic.module_graph.LoadedModule) !?lnako.ir.nako_ir.PackageAttribution {
     const root = module.package_root orelse return null;
     // owner が無い場合は出自を断定できない。帰属を作らず、後段で
     // package.json → nako.toml の順に試す unknown 経路へ委ねる。
     const owner = module.package_owner orelse return null;
-    return .{ .root = try allocator.dupe(u8, root), .npm = !std.mem.startsWith(u8, owner, "pkg:") };
+    // npm の owner は解決済み npm instance の FS 絶対 path。v1 package の
+    // owner は `@scope/name@version` の lock key、旧 package は `pkg:` で
+    // 始まる。owner の接頭辞ではなく絶対 path かどうかで npm を判定する。
+    return .{ .root = try allocator.dupe(u8, root), .npm = std.fs.path.isAbsolute(owner) };
+}
+
+test "package帰属はv1 lock keyをnako、絶対pathをnpmとして記録する" {
+    const allocator = std.testing.allocator;
+    const root = try allocator.dupe(u8, "/pkg/root");
+    defer allocator.free(root);
+    var module = lnako.semantic.module_graph.LoadedModule{
+        .index = 0,
+        .kind = .javascript,
+        .state = .loaded,
+        .path = "plugin.mjs",
+        .name = "plugin",
+        .source = @constCast("export default {};"),
+        .parsed = null,
+        .package_root = root,
+        .package_owner = "@esm/owned@1.0.0",
+    };
+    const v1 = (try attributionFor(allocator, &module)).?;
+    defer allocator.free(v1.root);
+    try std.testing.expect(!v1.npm);
+
+    module.package_owner = "/npm-instance/leftpad";
+    const npm = (try attributionFor(allocator, &module)).?;
+    defer allocator.free(npm.root);
+    try std.testing.expect(npm.npm);
+
+    module.package_owner = null;
+    try std.testing.expect((try attributionFor(allocator, &module)) == null);
 }
 
 pub fn compileInput(allocator: std.mem.Allocator, io: std.Io, path: []const u8, options: InputOptions, stderr: *std.Io.Writer) !?lnako.ir.nako_ir.Program {

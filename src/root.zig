@@ -109,6 +109,7 @@ pub const package = struct {
     pub const v1_manifest = @import("package/v1_manifest.zig");
     pub const v1_types = @import("package/v1_types.zig");
     pub const v1_archive = @import("package/v1_archive.zig");
+    pub const v1_metadata = @import("package/v1_metadata.zig");
     pub const v1_cross = @import("package/v1_cross.zig");
     pub const v1_selection = @import("package/v1_selection.zig");
     pub const v1_native_source = @import("package/v1_native_source.zig");

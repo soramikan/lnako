@@ -1,19 +1,23 @@
 #!/usr/bin/env node
 // `build --bundle-deps` E2E（Issue #56）。
 //
-// path 依存の source-only package と native plugin export を持つ参照
-// project を `--bundle-deps` でビルドし、生成物 + `<out>.deps/` payload を
+// v1 の source-only package と native plugin package を静的ローカル index
+// （`--v1-fixture`）から `lnako sync` で materialize し、参照 project を
+// `--bundle-deps` でビルドする。生成物 + `<out>.deps/` payload を
 // 空白・日本語入りの別ディレクトリへコピーしてから実行する。元 project の
-// `.nako`（依存環境）・`packages/` を退避し、cwd も変えることで、payload
+// `.nako`（依存環境）・`nako.lock` を退避し、cwd も変えることで、payload
 // と生成物だけで動くこと（cwd 非依存・cache 非依存）を確認する。
 // `--sbom` の package 集合が payload（bundle.json）と厳密一致することも
 // 検証する。native plugin fixture は `zig build native-plugin-fixture` の
-// 成果物を流用する。
+// 成果物を流用する。package archive は `lnako package build` で生成し、
+// 実 SHA-256 とサイズから静的 index を組み立てる（旧 `[package].name` /
+// `[[exports]]` / `[dependencies.path]` は使わない）。
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildArtifact, syncProject, writeStaticIndex } from "./lib/package/v1_static_fixture.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const executableSuffix = process.platform === "win32" ? ".exe" : "";
@@ -89,6 +93,69 @@ function findPlugin(namePattern) {
   return found[0];
 }
 
+// native-prebuilt .npkg の index に記録するホスト triple。選択器はこの値と
+// 実行環境を照合するため、E2E を動かすホスト自身の triple を使う。
+function nativeTargetTriple() {
+  const arch = process.arch === "arm64" ? "aarch64" : "x86_64";
+  switch (process.platform) {
+    case "linux":
+      return { triple: `${arch}-linux-gnu`, glibcMin: "2.17" };
+    case "darwin":
+      return { triple: `${arch}-macos-none` };
+    case "win32":
+      return { triple: `${arch}-windows-msvc` };
+    default:
+      fail(`未対応のプラットフォームです: ${process.platform}/${process.arch}`);
+  }
+}
+
+function writeSourceFiles(source, files) {
+  for (const [relative, data] of Object.entries(files)) {
+    const target = path.join(source, relative);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, data);
+  }
+}
+
+// v1 package source を作り、native-prebuilt だけはホスト向けの library を
+// 明示して pack する。source-only は universal として pack する。
+function buildPackage(compiler, work, name, manifest, files, options = {}) {
+  const source = path.join(work, "sources", name);
+  fs.mkdirSync(source, { recursive: true });
+  writeSourceFiles(source, { "nako.toml": manifest, ...files });
+  const output = path.join(work, "artifacts", `${name}.npkg`);
+  fs.mkdirSync(path.dirname(output), { recursive: true });
+  const extraArgs = options.native
+    ? [
+        "--kind", "native-prebuilt",
+        "--target-triple", options.native.triple,
+        ...(options.native.glibcMin ? ["--glibc-min", options.native.glibcMin] : []),
+        "--library-path", options.libraryPath,
+      ]
+    : [];
+  return buildArtifact(compiler, source, output, work, extraArgs);
+}
+
+function packageManifest({ id, version, license, capabilities, extension }) {
+  const kind = extension ? "native" : "pure-nako";
+  const includes = ["src/**"];
+  if (extension) includes.push(`*${extension}`);
+  return `schema_version = 1
+
+[package]
+id = "${id}"
+version = "${version}"
+license = "${license}"
+capabilities = ["${capabilities ?? kind}"]
+
+[exports]
+"." = { entry = "src/index.nako3" }
+
+[artifacts.universal]
+include = [${includes.map((item) => JSON.stringify(item)).join(", ")}]
+${extension ? `\n[artifacts.native]\nabi_version = 1\n` : ""}`;
+}
+
 function readManifest(payloadRoot) {
   const manifestPath = path.join(payloadRoot, "bundle.json");
   if (!fs.existsSync(manifestPath)) fail(`bundle.json がありません: ${manifestPath}`);
@@ -132,56 +199,86 @@ async function main() {
   const compiler = path.join(root, "zig-out", "bin", `lnako${executableSuffix}`);
   if (!fs.existsSync(compiler)) fail(`compilerがありません: ${compiler}（先に zig build を実行してください）`);
   ensurePluginFixture();
-  const plugin = findPlugin(/lnako[_-]test[_-]plugin/i);
+  const plugin = findPlugin(/^(?:lib)?lnako[_-]test[_-]plugin\./i);
+  const native = nativeTargetTriple();
+  const nativeArtifact = {
+    kind: "native-prebuilt",
+    runtimes: ["lnako"],
+    target: {
+      target_triple: native.triple,
+      abi_version: 1,
+      ...(native.glibcMin ? { glibc_min: native.glibcMin } : {}),
+    },
+  };
+  const extension = pluginExtension.slice(1);
 
   const work = createWorkDir();
   const app = path.join(work, "app");
   try {
-    fs.mkdirSync(path.join(app, "packages", "puremath", "src"), { recursive: true });
-    fs.mkdirSync(path.join(app, "packages", "fastmath"), { recursive: true });
-    fs.writeFileSync(path.join(app, "nako.toml"), `# 参照 fixture: source-only 依存と native plugin export を同時に持つ。
-[package]
-name = "bundle-app"
-version = "0.1.0"
-license = "MIT"
-
-[dependencies.path]
-puremath = { path = "packages/puremath" }
-fastmath = { path = "packages/fastmath" }
-`);
-    fs.writeFileSync(path.join(app, "packages", "puremath", "nako.toml"), `# source-only 依存（.nako3 のみ）。license 宣言あり。
-[package]
-name = "puremath"
-version = "1.0.0"
-license = "MIT"
-
-[[exports]]
-name = "main"
-path = "src/index.nako3"
-`);
-    fs.writeFileSync(path.join(app, "packages", "puremath", "src", "index.nako3"), `●(AとBの)足し算とは
+    const puremath = buildPackage(
+      compiler,
+      work,
+      "puremath",
+      packageManifest({ id: "@example/puremath", version: "1.0.0", license: "MIT" }),
+      {
+        "src/index.nako3": `●(AとBの)足し算とは
 R=A+B
 「pure:{R}」を表示
 ここまで
-`);
-    // license 未宣言 package → SBOM は NOASSERTION になる。manifest schema
-    // は SPDX 式を要求するため、「未主張」は NOASSERTION で宣言する。
-    fs.writeFileSync(path.join(app, "packages", "fastmath", "nako.toml"), `# native export を持つ依存。license 未宣言（NOASSERTION の検証対象）。
-[package]
-name = "fastmath"
-version = "2.0.0"
-license = "NOASSERTION"
+`,
+      },
+    );
+    const fastmath = buildPackage(
+      compiler,
+      work,
+      "fastmath",
+      packageManifest({ id: "@example/fastmath", version: "2.0.0", license: "MIT", capabilities: "native", extension: pluginExtension }),
+      {
+        [`libfastmath.${extension}`]: fs.readFileSync(plugin),
+        "src/index.nako3": "# native-prebuilt の既定入口は library へ差し替わる。\n",
+      },
+      { native, libraryPath: `libfastmath.${extension}` },
+    );
+    const fixtureRoot = path.join(work, "fixture");
+    writeStaticIndex(fixtureRoot, [
+      {
+        id: "@example/puremath",
+        version: "1.0.0",
+        license: "MIT",
+        capabilities: ["pure-nako"],
+        artifactName: "puremath-1.0.0.npkg",
+        ...puremath,
+      },
+      {
+        id: "@example/fastmath",
+        version: "2.0.0",
+        license: "MIT",
+        capabilities: ["native"],
+        artifactName: "fastmath-2.0.0.npkg",
+        artifact: nativeArtifact,
+        ...fastmath,
+      },
+    ]);
 
-[[exports]]
-name = "plugin"
-native = "libfastmath.${pluginExtension.slice(1)}"
+    fs.mkdirSync(app, { recursive: true });
+    fs.writeFileSync(path.join(app, "nako.toml"), `# 参照 fixture: source-only 依存と native plugin package を同時に持つ。
+schema_version = 1
+
+[package]
+id = "@example/bundle-app"
+version = "0.1.0"
+license = "MIT"
+
+[dependencies]
+"@example/puremath" = { version = "^1.0.0", alias = "puremath" }
+"@example/fastmath" = { version = "^2.0.0", alias = "fastmath" }
 `);
-    fs.copyFileSync(plugin, path.join(app, "packages", "fastmath", `libfastmath.${pluginExtension.slice(1)}`));
     fs.writeFileSync(path.join(app, "main.nako3"), `!「パッケージ:puremath」を取り込む
-!「pkg:fastmath/plugin」を取り込む
-1と2の足し算
-fastmath__plugin__ネイティブ加算(2,3)を表示
+!「パッケージ:fastmath」を取り込む
+puremath__足し算(1,2)
+fastmath__ネイティブ加算(2,3)を表示
 `);
+    syncProject(compiler, app, fixtureRoot);
 
     const output = path.join(work, "app-bin");
     const sbomPath = path.join(work, "app-bin.spdx.json");
@@ -194,27 +291,27 @@ fastmath__plugin__ネイティブ加算(2,3)を表示
     const manifest = validateBundleMatchesSbom(payloadRoot, sbomPath);
     // project 自身が package として同梱されていないこと（entry の path も
     // module_paths に載るため、境界が無いと project 全体が payload へ漏れる）。
-    if (manifest.packages.some((item) => item.name === "app")) fail("project 自身が同梱 package に含まれています");
-    const expected = ["fastmath", "puremath"];
+    if (manifest.packages.some((item) => item.name === "@example/bundle-app")) fail("project 自身が同梱 package に含まれています");
+    const expected = ["@example/fastmath", "@example/puremath"];
     const actual = manifest.packages.map((item) => item.name).sort();
     if (JSON.stringify(actual) !== JSON.stringify(expected)) {
       fail(`同梱 package が想定と異なります: expected=${expected.join(",")} actual=${actual.join(",")}`);
     }
-    const fastmath = manifest.packages.find((item) => item.name === "fastmath");
-    if (!fastmath) fail("fastmath が同梱 package にありません");
-    if (fastmath.license !== "NOASSERTION") fail(`fastmath の license が NOASSERTION ではありません: ${fastmath.license}`);
+    const fastmathRecord = manifest.packages.find((item) => item.name === "@example/fastmath");
+    if (!fastmathRecord) fail("fastmath が同梱 package にありません");
+    if (fastmathRecord.license !== "MIT") fail(`fastmath の license が MIT ではありません: ${fastmathRecord.license}`);
     console.log(`bundle-deps E2E: build + bundle.json/SBOM 一致 OK（packages: ${manifest.packages.map((item) => item.name).join(", ")}）`);
 
     // native plugin path が marker 化されていること（build 機の絶対 path を
     // 埋め込まない = 移動可能の前提）。
     const image = fs.readFileSync(executablePath);
     if (!image.includes(Buffer.from("@self/"))) fail("生成物に @self/ marker がありません");
-    if (image.includes(Buffer.from(path.join(work, "app", "packages")))) {
+    if (image.includes(Buffer.from(path.join(app, ".nako")))) {
       fail("生成物に build 機の絶対 path が残っています");
     }
 
     // --- 移動 E2E: 空白・日本語入りの別ディレクトリへ生成物と payload だけ
-    // コピーし、元 project 状態（.nako・packages・manifest）を退避してから
+    // コピーし、元 project 状態（.nako・manifest・lock）を退避してから
     // 別 cwd で実行する。
     const movedBase = path.join(work, "移動 先", "prog");
     const moved = `${movedBase}${executableSuffix}`;
@@ -224,7 +321,6 @@ fastmath__plugin__ネイティブ加算(2,3)を表示
     const parked = path.join(work, "parked-project-state");
     fs.mkdirSync(parked);
     fs.renameSync(path.join(app, ".nako"), path.join(parked, "nako-env"));
-    fs.renameSync(path.join(app, "packages"), path.join(parked, "packages"));
     fs.renameSync(path.join(app, "nako.toml"), path.join(parked, "nako.toml"));
     fs.renameSync(path.join(app, "nako.lock"), path.join(parked, "nako.lock"));
 
@@ -237,7 +333,7 @@ fastmath__plugin__ネイティブ加算(2,3)を表示
 
     // payload の plugin artifact を消すと明示エラーになる（marker 解決が
     // 実際に payload を使っている証拠。build 機の path へ fallback しない）。
-    const dylib = manifest.packages.map((item) => item.name === "fastmath" ? path.join(payloadRoot, item.directory) : null)
+    const dylib = manifest.packages.map((item) => item.name === "@example/fastmath" ? path.join(payloadRoot, item.directory) : null)
       .filter(Boolean)[0];
     const pluginArtifact = fs.readdirSync(path.join(`${movedBase}.deps`, path.basename(dylib)))
       .find((name) => name.endsWith(pluginExtension));
@@ -261,37 +357,50 @@ fastmath__plugin__ネイティブ加算(2,3)を表示
   function checkTransitiveDependency() {
     const depPlugin = findPlugin(/lnako[_-]test[_-]plugin[_-]with[_-]dependency/i);
     const depHelper = findPlugin(/lnako[_-]test[_-]plugin[_-]dependency/i);
+    // 推移的依存 fixture: plugin と同じ package root に private 共有
+    // ライブラリを置き、native-prebuilt の payload へ一緒に収録する。
+    const depmath = buildPackage(
+      compiler,
+      work,
+      "depmath",
+      packageManifest({ id: "@example/depmath", version: "1.0.0", license: "MIT", capabilities: "native", extension: pluginExtension }),
+      {
+        [`libdepmath.${extension}`]: fs.readFileSync(depPlugin),
+        [path.basename(depHelper)]: fs.readFileSync(depHelper),
+        "src/index.nako3": "# 推移的依存の検証用 native-prebuilt。\n",
+      },
+      { native, libraryPath: `libdepmath.${extension}` },
+    );
+
+    const depFixtureRoot = path.join(work, "dep-fixture");
+    writeStaticIndex(depFixtureRoot, [{
+      id: "@example/depmath",
+      version: "1.0.0",
+      license: "MIT",
+      capabilities: ["native"],
+      artifactName: "depmath-1.0.0.npkg",
+      artifact: nativeArtifact,
+      ...depmath,
+    }]);
     const depApp = path.join(work, "dep-app");
-    fs.mkdirSync(path.join(depApp, "packages", "depmath"), { recursive: true });
-    fs.writeFileSync(path.join(depApp, "packages", "depmath", "nako.toml"), `[package]
-name = "depmath"
-version = "1.0.0"
-license = "MIT"
+    fs.mkdirSync(depApp, { recursive: true });
+    fs.writeFileSync(path.join(depApp, "nako.toml"), `schema_version = 1
 
-[[exports]]
-name = "plugin"
-native = "libdepmath.${pluginExtension.slice(1)}"
-`);
-    fs.copyFileSync(depPlugin, path.join(depApp, "packages", "depmath", `libdepmath.${pluginExtension.slice(1)}`));
-    // 依存 helper は plugin と同じ directory へ置く（build 時の実体）。
-    fs.copyFileSync(depHelper, path.join(depApp, "packages", "depmath", path.basename(depHelper)));
-    fs.writeFileSync(path.join(depApp, "nako.toml"), `[package]
-name = "dep-app"
-version = "0.1.0"
-license = "MIT"
+[package]
 
-[dependencies.path]
-depmath = { path = "packages/depmath" }
+[dependencies]
+"@example/depmath" = { version = "^1.0.0", alias = "depmath" }
 `);
-    fs.writeFileSync(path.join(depApp, "main.nako3"), `!「pkg:depmath/plugin」を取り込む
-depmath__plugin__依存経由加算(2,3)を表示
+    fs.writeFileSync(path.join(depApp, "main.nako3"), `!「パッケージ:depmath」を取り込む
+depmath__依存経由加算(2,3)を表示
 `);
+    syncProject(compiler, depApp, depFixtureRoot);
     const depOutput = path.join(work, "dep-bin");
     runChecked(compiler, ["build", "main.nako3", "-o", depOutput, "--bundle-deps"], "推移的依存つき build", { cwd: depApp });
     const depExe = fs.existsSync(`${depOutput}${executableSuffix}`) ? `${depOutput}${executableSuffix}` : depOutput;
     const depPayload = `${depOutput}.deps`;
     const depManifest = JSON.parse(fs.readFileSync(path.join(depPayload, "bundle.json"), "utf8"));
-    const depPackage = depManifest.packages.find((item) => item.name === "depmath");
+    const depPackage = depManifest.packages.find((item) => item.name === "@example/depmath");
     if (!depPackage) fail("depmath が同梱 package にありません");
     if (!Array.isArray(depPackage.dependencies) || depPackage.dependencies.length === 0) {
       fail("bundle.json に推移的依存が記録されていません");
@@ -306,8 +415,9 @@ depmath__plugin__依存経由加算(2,3)を表示
     fs.mkdirSync(path.dirname(depMoved), { recursive: true });
     fs.copyFileSync(depExe, depMoved);
     fs.cpSync(depPayload, `${depMovedBase}.deps`, { recursive: true });
-    fs.rmSync(path.join(depApp, "packages"), { recursive: true, force: true });
     fs.rmSync(path.join(depApp, ".nako"), { recursive: true, force: true });
+    fs.rmSync(path.join(depApp, "nako.toml"), { force: true });
+    fs.rmSync(path.join(depApp, "nako.lock"), { force: true });
     const depRun = run(depMoved, [], { cwd: work });
     if (depRun.status !== 0) fail(`推移的依存つき移動後の実行が失敗しました: ${depRun.stdout}${depRun.stderr}`);
     if (depRun.stdout.trim() !== "7") fail(`推移的依存つき移動後の出力が想定と異なります: ${depRun.stdout}`);

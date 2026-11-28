@@ -23,17 +23,43 @@ const MemoryProvider = struct {
 
     fn read(context: *anyopaque, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
         const self: *MemoryProvider = @ptrCast(@alignCast(context));
-        if (std.mem.endsWith(u8, path, "main.nako3")) return allocator.dupe(u8, self.main_source);
+        if (pathHasSuffix(path, "main.nako3")) return allocator.dupe(u8, self.main_source);
         for (self.files) |file| {
-            if (path.len >= file.suffix.len and
-                std.mem.eql(u8, path[path.len - file.suffix.len ..], file.suffix))
-            {
+            if (pathHasSuffix(path, file.suffix)) {
                 return allocator.dupe(u8, file.source);
             }
         }
         return error.FileNotFound;
     }
 };
+
+/// `SourceProvider` が受け取るパスは `std.fs.path.resolve` で正規化される。
+/// Windows では区切り文字が `\\` になるため、POSIX 表記の fixture 接尾辞を
+/// そのまま `endsWith` で比較すると package source を見失う。
+fn pathHasSuffix(path: []const u8, suffix: []const u8) bool {
+    if (path.len < suffix.len) return false;
+    const tail = path[path.len - suffix.len ..];
+    for (tail, suffix) |actual, expected| {
+        const actual_separator = actual == '/' or actual == '\\';
+        const expected_separator = expected == '/' or expected == '\\';
+        if (actual_separator and expected_separator) continue;
+        if (actual != expected) return false;
+    }
+    return true;
+}
+
+test "fixture: Windows の解決済みパスを POSIX 表記の接尾辞で照合する" {
+    const a = std.testing.allocator;
+    const windows_path = try std.fs.path.resolveAllocWindows(a, &.{ "D:\\a\\lnako\\lnako", "packages/gcmd/index.nako3" });
+    defer a.free(windows_path);
+    try std.testing.expect(pathHasSuffix(windows_path, "packages/gcmd/index.nako3"));
+    try std.testing.expect(!pathHasSuffix(windows_path, "packages/gcmd/extra.nako3"));
+
+    var memory = MemoryProvider{ .files = &files, .main_source = "main" };
+    const source = try memory.provider().readFn(memory.provider().context, a, windows_path);
+    defer a.free(source);
+    try std.testing.expectEqualStrings("●(Xを)加算確認とは\nX+2で戻る\nここまで\n", source);
+}
 
 const gcmd_globals = [_]module_graph.GlobalCommand{.{ .name = "加算確認" }};
 const extra_globals = [_]module_graph.GlobalCommand{.{ .name = "別取得" }};

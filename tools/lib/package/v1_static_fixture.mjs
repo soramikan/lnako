@@ -43,8 +43,8 @@ function runChecked(executable, args, cwd) {
  * `lnako package build` で `.npkg` を作り、実バイト列と SHA-256 を返す。
  * 出力先は package source の外に置き、include 対象へ混ざらないようにする。
  */
-export function buildArtifact(executable, packageRoot, outputPath, cwd) {
-  const result = runChecked(executable, ["package", "build", packageRoot, "-o", outputPath], cwd);
+export function buildArtifact(executable, packageRoot, outputPath, cwd, extraArgs = []) {
+  const result = runChecked(executable, ["package", "build", packageRoot, "-o", outputPath, ...extraArgs], cwd);
   if (result.status !== 0) {
     fail(`package buildが失敗しました: ${packageRoot}\n${result.stderr}`);
   }
@@ -58,6 +58,19 @@ export function buildArtifact(executable, packageRoot, outputPath, cwd) {
 }
 
 function releaseDocument(entry) {
+  // `artifact` は native-prebuilt のようなプラットフォーム固有の
+  // アーティファクトを index へ載せるための任意指定。省略時は従来どおり
+  // universal（全ランタイム）として公開する。
+  const artifact = entry.artifact ?? {};
+  const document = {
+    kind: artifact.kind ?? "universal",
+    runtimes: artifact.runtimes ?? ["lnako", "cnako", "wnako"],
+    target: artifact.target ?? null,
+    hosting: "registry",
+    url: `${artifactBaseUrl}/${entry.artifactName}`,
+    sha256: entry.sha256,
+    size: entry.size,
+  };
   return {
     version: entry.version,
     published_at: publishedAt,
@@ -72,17 +85,7 @@ function releaseDocument(entry) {
     dependencies: entry.dependencies ?? [],
     provenance: { verified: false },
     advisories: [],
-    artifacts: [
-      {
-        kind: "universal",
-        runtimes: ["lnako", "cnako", "wnako"],
-        target: null,
-        hosting: "registry",
-        url: `${artifactBaseUrl}/${entry.artifactName}`,
-        sha256: entry.sha256,
-        size: entry.size,
-      },
-    ],
+    artifacts: [document],
   };
 }
 
@@ -90,7 +93,8 @@ function releaseDocument(entry) {
  * fixture ルートへ config・package index・`.npkg` を書き出す。
  *
  * `packages` の各要素は `{ id, version, license, capabilities, artifactName,
- * sha256, size, bytes, dependencies? }`。`artifactName` は
+ * sha256, size, bytes, dependencies?, artifact? }`。`artifact` を指定する場合は
+ * index の `{ kind, runtimes, target }` を渡す。`artifactName` は
  * `https://cdn.example.invalid/artifacts/<artifactName>` に対応する。
  */
 export function writeStaticIndex(fixtureRoot, packages) {
